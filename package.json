@@ -9,6 +9,11 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
+    "cookie": "^1.1.1",
+    "jose": "^6.2.3",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^1.20.0",
     "next": "16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4"
