@@ -16,19 +16,13 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const decodedTag = decodeURIComponent(tag);
     await auth(request);
     
-    // Check if player exists
-    const { data: player } = await supabase.from('player_accounts').select('person_id').eq('player_tag', decodedTag).single();
-    
     const { error } = await supabase.from('player_accounts').delete().eq('player_tag', decodedTag);
     if (error) throw error;
 
-    // Cleanup person if they have no more accounts
-    if (player?.person_id) {
-        const { count } = await supabase.from('player_accounts').select('*', { count: 'exact', head: true }).eq('person_id', player.person_id);
-        if (count === 0) {
-            await supabase.from('persons').delete().eq('id', player.person_id);
-        }
-    }
+    // NOTE: We intentionally do NOT delete the linked person here, even if it now has no accounts.
+    // A person is a clan-independent identity: deleting it loses their warning history (warnings
+    // cascade on person delete) and prevents re-linking if the player returns to a family clan.
+    // Orphaned persons are kept so they can be re-linked manually via /api/members/link.
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

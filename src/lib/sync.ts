@@ -25,15 +25,25 @@ export async function syncClan(clanId: string) {
 
     if (dbError) throw new Error('Failed to fetch DB accounts');
 
-    const dbAccountMap = new Map(dbAccounts.map(a => [a.player_tag, a]));
     const cocAccountTags = new Set(cocMembers.map(m => m.tag));
+
+    // 3b. Resolve existing account records GLOBALLY by player_tag.
+    // player_accounts.player_tag is the global primary key (one row per tag, not per clan),
+    // so a player who moves between family clans — or rejoins after leaving — keeps the SAME row.
+    // Looking these up only within the current clan would miss those rows and treat the player as
+    // brand new, wiping their persona link (person_id), db_role, and access. Look up by tag instead.
+    const cocMemberTags = cocMembers.map(m => m.tag);
+    const { data: globalAccounts } = cocMemberTags.length
+      ? await supabase.from('player_accounts').select('*').in('player_tag', cocMemberTags)
+      : { data: [] as PlayerAccount[] };
+    const existingByTag = new Map((globalAccounts || []).map(a => [a.player_tag, a]));
 
     // 4. Update or Insert accounts
     const upsertData = [];
     const now = new Date().toISOString();
 
     for (const member of cocMembers) {
-      const existing = dbAccountMap.get(member.tag);
+      const existing = existingByTag.get(member.tag);
       
       // Determine role - only use CoC role if not already a leader/coLeader in DB
       let role: DatabaseRole = 'member';
