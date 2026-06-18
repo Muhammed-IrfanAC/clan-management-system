@@ -1,11 +1,11 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
 import { syncClan } from '@/lib/sync';
 import { supabase } from '@/lib/supabase';
 import { jwtVerify } from 'jose';
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     // 1. Auth check
     const token = request.cookies.get('clanops-auth')?.value;
