@@ -28,6 +28,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const router = useRouter();
   const [person, setPerson] = useState<FullPerson | null>(null);
+  const [loggerNames, setLoggerNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   
   // Modal state
@@ -66,6 +67,20 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
 
       if (pError) throw pError;
       setPerson(pData as FullPerson);
+
+      // Resolve each warning's logged_by (a player_tag) to the logger's person name.
+      const loggerTags = Array.from(new Set(((pData as FullPerson)?.warnings || []).map(w => w.logged_by).filter(Boolean)));
+      if (loggerTags.length) {
+        const { data: loggers } = await supabase
+          .from('player_accounts')
+          .select('player_tag, in_game_name, person:persons (display_name)')
+          .in('player_tag', loggerTags);
+        const map: Record<string, string> = {};
+        for (const l of (loggers as any[]) || []) {
+          map[l.player_tag] = l.person?.display_name || l.in_game_name || l.player_tag;
+        }
+        setLoggerNames(map);
+      }
     } catch (err) {
       console.error('Error fetching person:', err);
     } finally {
@@ -170,7 +185,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                          <span style={{ fontSize: '0.7rem' }} className="text-muted">{new Date(w.logged_at).toLocaleDateString()}</span>
                        </div>
                        <p style={{ fontSize: '0.85rem', margin: '8px 0' }}>{w.description}</p>
-                       <div style={{ fontSize: '0.7rem' }} className="text-muted">Logged by {w.logged_by} on account {w.player_account.in_game_name}</div>
+                       <div style={{ fontSize: '0.7rem' }} className="text-muted">Logged by {loggerNames[w.logged_by] || w.logged_by} on account {w.player_account.in_game_name}</div>
                     </div>
                   ))}
                 </div>

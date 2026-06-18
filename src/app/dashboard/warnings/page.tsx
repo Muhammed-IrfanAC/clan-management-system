@@ -26,6 +26,7 @@ type ExtendedWarning = Warning & {
 export default function WarningsPage() {
   const { selectedClanId } = useClan();
   const [warnings, setWarnings] = useState<ExtendedWarning[]>([]);
+  const [loggerNames, setLoggerNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [escalationDays, setEscalationDays] = useState(3);
   const [showLogModal, setShowLogModal] = useState(false);
@@ -72,6 +73,24 @@ export default function WarningsPage() {
       
       const { data: warningsData } = await req;
       setWarnings(warningsData as ExtendedWarning[] || []);
+
+      // Resolve each warning's logged_by (a player_tag) to the logger's person name.
+      // warnings.logged_by has no FK to player_accounts, so we resolve it with a
+      // separate lookup: player_tag -> person.display_name (falling back to in_game_name).
+      const loggerTags = Array.from(new Set((warningsData || []).map((w: any) => w.logged_by).filter(Boolean)));
+      if (loggerTags.length) {
+        const { data: loggers } = await supabase
+          .from('player_accounts')
+          .select('player_tag, in_game_name, person:persons (display_name)')
+          .in('player_tag', loggerTags);
+        const map: Record<string, string> = {};
+        for (const l of (loggers as any[]) || []) {
+          map[l.player_tag] = l.person?.display_name || l.in_game_name || l.player_tag;
+        }
+        setLoggerNames(map);
+      } else {
+        setLoggerNames({});
+      }
 
       const { data: rulesData } = await supabase.from('rules').select('*');
       setRules(rulesData || []);
@@ -205,7 +224,7 @@ export default function WarningsPage() {
                     <p style={{ fontSize: '0.85rem', color: 'var(--color-text)', marginBottom: 'var(--space-md)', lineHeight: '1.5' }}>{w.description}</p>
                     <div style={{ display: 'flex', gap: 'var(--space-xl)', fontSize: '0.75rem' }} className="text-muted">
                        <span>Account: <strong>{w.player_account.in_game_name} ({w.player_account_tag})</strong></span>
-                       <span>Logged by: <strong>{w.logged_by}</strong></span>
+                       <span>Logged by: <strong>{loggerNames[w.logged_by] || w.logged_by}</strong></span>
                        <span>When: <strong>{new Date(w.logged_at).toLocaleString()}</strong></span>
                     </div>
                   </div>
