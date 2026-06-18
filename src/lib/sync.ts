@@ -104,10 +104,15 @@ export async function syncClan(clanId: string) {
     const cleanupDate = new Date();
     cleanupDate.setDate(cleanupDate.getDate() - cleanupDays);
 
+    // Never auto-delete accounts that hold dashboard access (registered leaders/co-leaders).
+    // Their access must only be removed by an explicit manual revoke in Settings (which sets
+    // access_enabled = false), guaranteeing they cannot lose access just by hopping between
+    // family clans or sitting in 'left' state past the cleanup window.
     const { error: cleanupError } = await supabase
       .from('player_accounts')
       .delete()
       .eq('status', 'left')
+      .eq('access_enabled', false)
       .lt('last_synced_at', cleanupDate.toISOString());
     
     if (cleanupError) console.error('Cleanup error:', cleanupError);
