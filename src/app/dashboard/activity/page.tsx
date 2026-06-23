@@ -144,19 +144,19 @@ export default function ActivityPage() {
 
   return (
     <div>
-      <div style={{ marginBottom: 'var(--space-2xl)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+      <div className="responsive-header">
         <div>
           <h1 style={{ fontSize: '2rem', marginBottom: 'var(--space-xs)' }}>Leadership Activity</h1>
           <p className="text-muted">Global record of leadership decisions and clan events.</p>
         </div>
         
-        <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+        <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
            <select className="input" style={{ width: '180px' }} value={filterStatus} onChange={(e: any) => setFilterStatus(e.target.value)}>
              <option value="all">All Entries</option>
              <option value="active">Active Tasks</option>
              <option value="completed">Completed</option>
            </select>
-           <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
+           <button className="btn btn-primary" onClick={() => setShowAddModal(true)} style={{ whiteSpace: 'nowrap' }}>
              <Plus size={20} /> Add Entry
            </button>
         </div>
@@ -175,42 +175,45 @@ export default function ActivityPage() {
               borderLeft: log.pinned ? '4px solid var(--color-cta)' : '1px solid rgba(255,255,255,0.05)',
               opacity: log.completed ? 0.7 : 1
             }}>
-              <div style={{ display: 'flex', gap: 'var(--space-lg)' }}>
-                <div style={{ 
-                  width: '40px', height: '40px', 
-                  background: 'var(--color-primary)', 
-                  borderRadius: 'var(--radius-md)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center'
-                }}>
-                  {categoryIcons[log.category] || <History size={16} />}
-                </div>
-                
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-xs)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-                      <span style={{ fontWeight: '700', textTransform: 'uppercase', fontSize: '0.75rem', color: 'var(--color-muted)' }}>
-                        {log.category}
-                      </span>
-                      {log.pinned && <Pin size={14} className="text-cta" />}
-                      {log.completed && <span style={{ fontSize: '0.6rem', padding: '1px 6px', background: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-cta)', borderRadius: '4px' }}>COMPLETED</span>}
-                    </div>
-                    <span className="text-muted" style={{ fontSize: '0.75rem' }}>
-                      {new Date(log.logged_at).toLocaleString()}
-                    </span>
+              <div className="warning-card-layout" style={{ gap: 'var(--space-lg)' }}>
+                <div style={{ display: 'flex', gap: 'var(--space-lg)', flex: 1, minWidth: 0 }}>
+                  <div style={{ 
+                    width: '40px', height: '40px', 
+                    background: 'var(--color-primary)', 
+                    borderRadius: 'var(--radius-md)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0
+                  }}>
+                    {categoryIcons[log.category] || <History size={16} />}
                   </div>
                   
-                  <p style={{ margin: 0, lineHeight: '1.6', color: log.completed ? 'var(--color-muted)' : 'var(--color-text)', textDecoration: log.completed ? 'line-through' : 'none' }}>
-                    {log.description}
-                  </p>
-                  
-                  <div style={{ display: 'flex', gap: 'var(--space-xl)', marginTop: 'var(--space-sm)', fontSize: '0.7rem' }} className="text-muted">
-                    {log.clan && <span>Clan: <strong>{log.clan.display_name}</strong></span>}
-                    {log.person && <span>Related: <strong>{log.person.display_name}</strong></span>}
-                    <span>By: <strong>{log.logged_by}</strong></span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-xs)', flexWrap: 'wrap', gap: 'var(--space-sm)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+                        <span style={{ fontWeight: '700', textTransform: 'uppercase', fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+                          {log.category}
+                        </span>
+                        {log.pinned && <Pin size={14} className="text-cta" />}
+                        {log.completed && <span style={{ fontSize: '0.6rem', padding: '1px 6px', background: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-cta)', borderRadius: '4px' }}>COMPLETED</span>}
+                      </div>
+                      <span className="text-muted" style={{ fontSize: '0.75rem' }}>
+                        {new Date(log.logged_at).toLocaleString()}
+                      </span>
+                    </div>
+                    
+                    <p style={{ margin: 0, lineHeight: '1.6', color: log.completed ? 'var(--color-muted)' : 'var(--color-text)', textDecoration: log.completed ? 'line-through' : 'none' }}>
+                      {log.description}
+                    </p>
+                    
+                    <div className="warning-card-meta text-muted" style={{ marginTop: 'var(--space-sm)' }}>
+                      {log.clan && <span>Clan: <strong>{log.clan.display_name}</strong></span>}
+                      {log.person && <span>Related: <strong>{log.person.display_name}</strong></span>}
+                      <span>By: <strong>{log.logged_by}</strong></span>
+                    </div>
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                <div className="warning-card-actions">
                    <button 
                     onClick={() => handleToggleComplete(log.id, log.completed)}
                     className={`btn ${log.completed ? 'btn-outline' : 'btn-primary'}`}
@@ -241,7 +244,7 @@ export default function ActivityPage() {
               <X onClick={() => setShowAddModal(false)} style={{ cursor: 'pointer' }} />
             </div>
             <form onSubmit={handleAddLog} style={{ padding: 'var(--space-lg)' }}>
-               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+               <div className="responsive-grid-2" style={{ marginBottom: 'var(--space-md)' }}>
                   <div>
                     <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Category</label>
                     <select className="input" value={category} onChange={(e) => setCategory(e.target.value)} required>

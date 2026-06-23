@@ -180,20 +180,20 @@ export default function WarningsPage() {
 
   return (
     <div>
-      <div style={{ marginBottom: 'var(--space-2xl)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+      <div className="responsive-header">
         <div>
           <h1 style={{ fontSize: '2rem', marginBottom: 'var(--space-xs)' }}>Warning Log</h1>
           <p className="text-muted">Track and escalate rule violations across the clan family.</p>
         </div>
         
-        <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+        <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
            <select className="input" style={{ width: '180px' }} value={filterStatus} onChange={(e: any) => setFilterStatus(e.target.value)}>
              <option value="all">All Statuses</option>
              <option value="high">High Escalation</option>
              <option value="pending">Pending</option>
              <option value="acknowledged">Acknowledged</option>
            </select>
-           <button className="btn btn-primary" onClick={() => setShowLogModal(true)}>
+           <button className="btn btn-primary" onClick={() => setShowLogModal(true)} style={{ whiteSpace: 'nowrap' }}>
              <Plus size={20} /> Log New Warning
            </button>
         </div>
@@ -213,22 +213,22 @@ export default function WarningsPage() {
               <div key={w.id} className="card" style={{ 
                 borderLeft: high ? '4px solid var(--color-danger)' : w.acknowledged ? '4px solid var(--color-cta)' : '4px solid var(--color-warning)'
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <div className="warning-card-layout">
                   <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-xs)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-xs)', flexWrap: 'wrap' }}>
                       <h3 style={{ margin: 0 }}>{w.person.display_name}</h3>
                       {high && <span style={{ fontSize: '0.65rem', padding: '2px 8px', background: 'var(--color-danger)', color: '#fff', borderRadius: '10px', fontWeight: '700' }}>HIGH ESCALATION</span>}
                       {w.acknowledged && <span style={{ fontSize: '0.65rem', padding: '2px 8px', background: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-cta)', borderRadius: '10px', fontWeight: '700' }}>ACKNOWLEDGED</span>}
                     </div>
                     <p style={{ fontSize: '0.9rem', marginBottom: 'var(--space-sm)' }}><span className="text-muted">Rule: </span><span style={{ fontWeight: '600' }}>{w.rule?.name || 'General Violation'}</span></p>
                     <p style={{ fontSize: '0.85rem', color: 'var(--color-text)', marginBottom: 'var(--space-md)', lineHeight: '1.5' }}>{w.description}</p>
-                    <div style={{ display: 'flex', gap: 'var(--space-xl)', fontSize: '0.75rem' }} className="text-muted">
+                    <div className="warning-card-meta text-muted">
                        <span>Account: <strong>{w.player_account.in_game_name} ({w.player_account_tag})</strong></span>
                        <span>Logged by: <strong>{loggerNames[w.logged_by] || w.logged_by}</strong></span>
                        <span>When: <strong>{new Date(w.logged_at).toLocaleString()}</strong></span>
                     </div>
                   </div>
-                  <div style={{ marginLeft: 'var(--space-xl)', display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                  <div className="warning-card-actions" style={{ marginLeft: 'var(--space-xl)' }}>
                     <button className={`btn ${w.acknowledged ? 'btn-outline' : 'btn-primary'}`} style={{ border: w.acknowledged ? '1px solid rgba(255,255,255,0.1)' : '', color: w.acknowledged ? 'var(--color-muted)' : '', padding: '0.5rem 1rem', fontSize: '0.75rem' }} onClick={() => handleAcknowledge(w.id, w.acknowledged)}>
                       {w.acknowledged ? <CheckCircle size={16} /> : 'Acknowledge'}
                     </button>
@@ -252,7 +252,7 @@ export default function WarningsPage() {
               <X onClick={() => setShowLogModal(false)} style={{ cursor: 'pointer' }} />
             </div>
             <form onSubmit={handleLogWarning} style={{ padding: 'var(--space-lg)' }}>
-               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+               <div className="responsive-grid-2" style={{ marginBottom: 'var(--space-md)' }}>
                   <div>
                     <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Person</label>
                     <select className="input" value={selectedPerson} onChange={(e) => setSelectedPerson(e.target.value)} required>

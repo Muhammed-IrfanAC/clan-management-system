@@ -160,7 +160,7 @@ export default function SettingsPage() {
         <p className="text-muted">Global configuration and leadership management.</p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '250px 1fr', gap: 'var(--space-2xl)' }}>
+      <div className="settings-grid">
         {/* Tabs */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
            {['general', 'clans', 'rules', 'leaders'].map((tab: any) => (
@@ -187,7 +187,7 @@ export default function SettingsPage() {
                 <p className="text-muted" style={{ fontSize: '0.85rem', marginBottom: 'var(--space-xl)' }}>Configure automated behaviors and system defaults.</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xl)' }}>
                   {appSettings.map(s => (
-                    <div key={s.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 'var(--space-lg)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div key={s.key} className="setting-row">
                       <div>
                         <p style={{ fontWeight: '700', margin: 0 }}>{s.key.replace(/_/g, ' ').toUpperCase()}</p>
                         <p className="text-muted" style={{ fontSize: '0.8rem', margin: 0 }}>{s.description}</p>

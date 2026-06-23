@@ -127,20 +127,19 @@ export default function MembersPage() {
 
   return (
     <div>
-      <div style={{ marginBottom: 'var(--space-2xl)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+      <div className="responsive-header">
         <div>
           <h1 style={{ fontSize: '2rem', marginBottom: 'var(--space-xs)' }}>Member Registry</h1>
           <p className="text-muted">Manage all human persons and their linked Clash accounts.</p>
         </div>
         
         <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-           <div style={{ position: 'relative' }}>
+           <div className="search-container" style={{ width: '100%' }}>
              <Search size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-muted)' }} />
              <input 
                type="text" 
-               className="input" 
+               className="input search-input" 
                placeholder="Search registry..." 
-               style={{ paddingLeft: '2.8rem', width: '300px' }}
                value={search}
                onChange={(e) => setSearch(e.target.value)}
              />
@@ -201,7 +200,7 @@ export default function MembersPage() {
         ) : (
           filteredMembers.map(member => (
             <div key={member.id} className="card" style={{ cursor: 'default' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="member-card-content">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-lg)' }}>
                   <div style={{ width: '48px', height: '48px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <User size={24} color="var(--color-muted)" />

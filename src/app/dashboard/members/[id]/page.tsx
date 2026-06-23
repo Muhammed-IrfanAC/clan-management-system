@@ -124,7 +124,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
         <ChevronLeft size={16} /> Back to Registry
       </Link>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 'var(--space-xl)' }}>
+      <div className="profile-grid">
         {/* Left Column: Person Info & Accounts */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
           <div className="card">

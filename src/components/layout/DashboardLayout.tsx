@@ -11,7 +11,9 @@ import {
   Settings, 
   LogOut,
   ChevronDown,
-  RefreshCw
+  RefreshCw,
+  Menu,
+  X
 } from 'lucide-react';
 import { useClan } from '@/lib/ClanContext';
 import { supabase } from '@/lib/supabase';
@@ -75,6 +77,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { selectedClanId, setSelectedClanId, clans } = useClan();
   const [showClanDropdown, setShowClanDropdown] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    setIsSidebarOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     async function fetchUser() {
@@ -94,23 +101,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const selectedClan = clans.find(c => c.id === selectedClanId);
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--color-background)' }}>
+    <div className="dashboard-container">
+      {/* Sidebar Overlay Backdrop for Mobile */}
+      <div 
+        className={`sidebar-overlay ${isSidebarOpen ? 'open' : ''}`} 
+        onClick={() => setIsSidebarOpen(false)}
+      />
+
       {/* Sidebar */}
-      <aside style={{ 
-        width: '280px', 
-        borderRight: '1px solid rgba(255,255,255,0.05)', 
-        display: 'flex', 
-        flexDirection: 'column',
-        padding: 'var(--space-lg)',
-        position: 'fixed',
-        height: '100vh',
-        zIndex: 50,
-        background: 'rgba(2, 6, 23, 0.8)',
-        backdropFilter: 'blur(10px)'
-      }}>
-        <div style={{ marginBottom: 'var(--space-2xl)', paddingLeft: 'var(--space-sm)' }}>
-          <h2 className="glow-text" style={{ fontSize: '1.5rem', margin: 0 }}>ClanOps</h2>
-          <p className="text-muted" style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Leadership Dashboard</p>
+      <aside className={`dashboard-sidebar ${isSidebarOpen ? 'open' : ''}`}>
+        <div style={{ marginBottom: 'var(--space-2xl)', paddingLeft: 'var(--space-sm)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h2 className="glow-text" style={{ fontSize: '1.5rem', margin: 0 }}>ClanOps</h2>
+            <p className="text-muted" style={{ fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Leadership Dashboard</p>
+          </div>
+          <button 
+            className="sidebar-toggle" 
+            style={{ margin: 0, padding: '0.25rem' }} 
+            onClick={() => setIsSidebarOpen(false)}
+            aria-label="Close sidebar"
+          >
+            <X size={20} />
+          </button>
         </div>
 
         <nav style={{ flex: 1 }}>
@@ -137,22 +149,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Main Content */}
-      <main style={{ marginLeft: '280px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <main className="dashboard-main">
         {/* Top Header */}
-        <header style={{ 
-          height: '70px', 
-          borderBottom: '1px solid rgba(255,255,255,0.05)', 
-          padding: '0 var(--space-xl)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'sticky',
-          top: 0,
-          background: 'rgba(2, 6, 23, 0.8)',
-          backdropFilter: 'blur(10px)',
-          zIndex: 40
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xl)' }}>
+        <header className="dashboard-header">
+          <div className="header-left">
+            <button 
+              className="sidebar-toggle" 
+              onClick={() => setIsSidebarOpen(true)}
+              aria-label="Open sidebar"
+            >
+              <Menu size={24} />
+            </button>
+
             <div style={{ position: 'relative' }}>
               <div 
                 style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer' }}
@@ -198,13 +206,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', fontSize: '0.75rem' }}>
               <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--color-cta)' }}></div>
-              <span className="text-muted">Auto-sync enabled</span>
+              <span className="text-muted sync-text">Auto-sync enabled</span>
               <SyncButton />
             </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-             <div style={{ textAlign: 'right' }}>
+             <div className="user-info-text">
                <p style={{ fontSize: '0.85rem', fontWeight: '600', margin: 0 }}>{user?.in_game_name || 'Leader'}</p>
                <p style={{ fontSize: '0.65rem', color: 'var(--color-muted)', margin: 0, textTransform: 'uppercase' }}>{user?.db_role?.replace('_', ' ') || 'Super Admin'}</p>
              </div>
@@ -224,7 +232,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </header>
 
         {/* Page Body */}
-        <div style={{ padding: 'var(--space-xl)', maxWidth: '1400px', width: '100%', margin: '0 auto' }}>
+        <div className="dashboard-body">
           {children}
         </div>
       </main>
