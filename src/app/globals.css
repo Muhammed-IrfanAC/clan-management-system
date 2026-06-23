@@ -325,127 +325,13 @@ button {
   text-align: right;
 }
 
-/* Responsive Rules for Breakpoint: Desktop / Tablet (1024px) */
-@media (max-width: 1023px) {
-  .dashboard-sidebar {
-    transform: translateX(-100%);
-  }
-  
-  .dashboard-sidebar.open {
-    transform: translateX(0);
-    box-shadow: var(--shadow-xl), 0 0 30px rgba(34, 197, 94, 0.15);
-  }
-  
-  .dashboard-main {
-    margin-left: 0;
-  }
-  
-  .sidebar-toggle {
-    display: inline-flex;
-  }
-  
-  .sidebar-overlay.open {
-    display: block;
-  }
-}
-
-/* Responsive Rules for Breakpoint: Tablet / Mobile (768px) */
-@media (max-width: 767px) {
-  .dashboard-header {
-    padding: 0 var(--space-md);
-  }
-  
-  .dashboard-body {
-    padding: var(--space-md);
-  }
-  
-  .header-left {
-    gap: var(--space-md);
-  }
-  
-  .responsive-header {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-md);
-    margin-bottom: var(--space-xl);
-  }
-  
-  .search-input {
-    width: 100% !important;
-  }
-  
-  .warning-card-layout {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .warning-card-actions {
-    flex-direction: row;
-    margin-left: 0 !important;
-    margin-top: var(--space-md);
-  }
-  
-  .warning-card-actions .btn {
-    flex: 1;
-    justify-content: center;
-  }
-  
-  .settings-grid {
-    grid-template-columns: 1fr;
-    gap: var(--space-lg);
-  }
-  
-  .profile-grid {
-    grid-template-columns: 1fr;
-    gap: var(--space-lg);
-  }
-}
-
-/* Responsive Rules for Breakpoint: Extra Small Mobile (640px) */
-@media (max-width: 639px) {
-  .sync-text {
-    display: none;
-  }
-  
-  .member-card-content {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-md);
-  }
-  
-  .member-card-content .btn {
-    text-align: center;
-    justify-content: center;
-    width: 100%;
-  }
-  
-  .responsive-grid-2 {
-    grid-template-columns: 1fr !important;
-  }
-  
-  .setting-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-md);
-  }
-  
-  .setting-row .input {
-    width: 100% !important;
-  }
-  
-  .setting-row .btn {
-    width: 100%;
-  }
-}
-
-/* Responsive Rules for Breakpoint: Ultra Small Mobile (480px) */
-@media (max-width: 479px) {
-  .user-info-text {
-    display: none;
-  }
-}
-
+/*
+ * Base layout rules for responsive page sections.
+ * These MUST stay above the @media blocks below: media queries do not add
+ * specificity, so if these came later they would override the responsive
+ * overrides (same specificity → later rule wins) and the mobile layouts
+ * would silently never apply.
+ */
 .responsive-header {
   display: flex;
   justify-content: space-between;
@@ -457,6 +343,16 @@ button {
 .search-input {
   padding-left: 2.8rem;
   width: 300px;
+}
+
+.header-actions {
+  display: flex;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.filter-select {
+  width: 180px;
 }
 
 .member-card-content {
@@ -512,4 +408,142 @@ button {
   grid-template-columns: 1fr 2fr;
   gap: var(--space-xl);
 }
+
+/* Responsive Rules for Breakpoint: Desktop / Tablet (1024px) */
+@media (max-width: 1023px) {
+  .dashboard-sidebar {
+    transform: translateX(-100%);
+  }
+  
+  .dashboard-sidebar.open {
+    transform: translateX(0);
+    box-shadow: var(--shadow-xl), 0 0 30px rgba(34, 197, 94, 0.15);
+  }
+  
+  .dashboard-main {
+    margin-left: 0;
+  }
+  
+  .sidebar-toggle {
+    display: inline-flex;
+  }
+  
+  .sidebar-overlay.open {
+    display: block;
+  }
+}
+
+/* Responsive Rules for Breakpoint: Tablet / Mobile (768px) */
+@media (max-width: 767px) {
+  .dashboard-header {
+    padding: 0 var(--space-md);
+  }
+  
+  .dashboard-body {
+    padding: var(--space-md);
+  }
+  
+  .header-left {
+    gap: var(--space-md);
+  }
+  
+  .responsive-header {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-md);
+    margin-bottom: var(--space-xl);
+  }
+
+  /* Filter + action button share one full-width row: filter flexes, button hugs */
+  .header-actions {
+    flex-wrap: nowrap;
+    width: 100%;
+  }
+
+  .filter-select {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+  }
+
+  .header-actions .btn {
+    flex-shrink: 0;
+  }
+
+  .search-input {
+    width: 100% !important;
+  }
+  
+  .warning-card-layout {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .warning-card-actions {
+    flex-direction: row;
+    margin-left: 0 !important;
+    margin-top: var(--space-md);
+  }
+  
+  .warning-card-actions .btn {
+    flex: 1;
+    justify-content: center;
+  }
+  
+  .settings-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-lg);
+  }
+  
+  .profile-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-lg);
+  }
+}
+
+/* Responsive Rules for Breakpoint: Extra Small Mobile (640px) */
+@media (max-width: 639px) {
+  .sync-text {
+    display: none;
+  }
+  
+  .member-card-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-md);
+  }
+
+  .member-card-content .btn {
+    align-self: flex-start;
+    justify-content: center;
+    width: auto;
+  }
+  
+  .responsive-grid-2 {
+    grid-template-columns: 1fr !important;
+  }
+  
+  .setting-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-md);
+  }
+  
+  .setting-row .input {
+    width: 100% !important;
+  }
+  
+  .setting-row .btn {
+    width: 100%;
+  }
+}
+
+/* Responsive Rules for Breakpoint: Ultra Small Mobile (480px) */
+@media (max-width: 479px) {
+  .user-info-text {
+    display: none;
+  }
+}
+
 

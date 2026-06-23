@@ -186,8 +186,8 @@ export default function WarningsPage() {
           <p className="text-muted">Track and escalate rule violations across the clan family.</p>
         </div>
         
-        <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
-           <select className="input" style={{ width: '180px' }} value={filterStatus} onChange={(e: any) => setFilterStatus(e.target.value)}>
+        <div className="header-actions">
+           <select className="input filter-select" value={filterStatus} onChange={(e: any) => setFilterStatus(e.target.value)}>
              <option value="all">All Statuses</option>
              <option value="high">High Escalation</option>
              <option value="pending">Pending</option>
