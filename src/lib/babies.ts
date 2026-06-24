@@ -58,6 +58,44 @@ export async function expireBabies(): Promise<{ expired: number }> {
 }
 
 /**
+ * Resolve a representative clan for a person (used to attribute a leadership log
+ * to the right clan so clan-filtered graphs include it). Returns null if none.
+ */
+export async function clanIdForPerson(personId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('player_accounts')
+    .select('clan_id')
+    .eq('person_id', personId)
+    .limit(1)
+    .maybeSingle();
+  return data?.clan_id ?? null;
+}
+
+/**
+ * Record a baby lifecycle action as a leadership_log, attributed to the acting
+ * leader's player_tag. This feeds the Leadership Performance graph (which counts
+ * leadership_logs by logged_by) and the Activity feed. Non-fatal: a logging
+ * failure must never break the underlying link/promote action.
+ */
+export async function logBabyAction(params: {
+  loggedBy: string | null | undefined;
+  category: 'recruitment' | 'promotion';
+  personId: string | null;
+  clanId: string | null;
+  description: string;
+}) {
+  if (!params.loggedBy) return;
+  const { error } = await supabase.from('leadership_logs').insert([{
+    logged_by: params.loggedBy,
+    category: params.category,
+    related_person_id: params.personId,
+    clan_id: params.clanId,
+    description: params.description,
+  }]);
+  if (error) console.error('Failed to log baby action:', error);
+}
+
+/**
  * Promote a baby to a permanent member: clears the baby flag and the countdown.
  */
 export async function promoteBaby(personId: string) {

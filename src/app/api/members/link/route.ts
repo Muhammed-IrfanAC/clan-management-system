@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { jwtVerify } from 'jose';
+import { logBabyAction } from '@/lib/babies';
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
 
@@ -8,9 +9,11 @@ export async function POST(request: NextRequest) {
   try {
     const token = request.cookies.get('clanops-auth')?.value;
     if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    
+
+    let actorTag: string | undefined;
     try {
-      await jwtVerify(token, JWT_SECRET);
+      const { payload } = await jwtVerify(token, JWT_SECRET);
+      actorTag = payload.playerTag as string | undefined;
     } catch (e) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
@@ -41,13 +44,27 @@ export async function POST(request: NextRequest) {
 
     if (!finalPersonId) return NextResponse.json({ error: 'Person ID or New Person Name is required' }, { status: 400 });
 
-    // Link account to person
-    const { error: linkError } = await supabase
+    // Link account to person. Capture the account's clan so the recruitment log
+    // is attributed to the right clan for clan-filtered graphs.
+    const { data: linkedAccount, error: linkError } = await supabase
       .from('player_accounts')
       .update({ person_id: finalPersonId })
-      .eq('player_tag', playerTag);
+      .eq('player_tag', playerTag)
+      .select('clan_id')
+      .maybeSingle();
 
     if (linkError) throw linkError;
+
+    // Credit the acting leader for recruiting a new baby (probationary) member.
+    if (!personId && newPersonName && isBaby) {
+      await logBabyAction({
+        loggedBy: actorTag,
+        category: 'recruitment',
+        personId: finalPersonId,
+        clanId: linkedAccount?.clan_id ?? null,
+        description: `Recruited new baby: ${newPersonName}`,
+      });
+    }
 
     return NextResponse.json({ success: true, personId: finalPersonId });
 

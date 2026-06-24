@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS leadership_logs (
     logged_at TIMESTAMPTZ DEFAULT NOW(),
     category TEXT CHECK (category IN ('promotion', 'demotion', 'war', 'recruitment', 'capital', 'general')),
     clan_id UUID REFERENCES clans(id),
-    related_person_id UUID REFERENCES persons(id),
+    related_person_id UUID REFERENCES persons(id) ON DELETE SET NULL,
     description TEXT NOT NULL,
     pinned BOOLEAN DEFAULT FALSE
 );

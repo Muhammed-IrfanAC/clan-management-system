@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
-import { promoteBaby } from '@/lib/babies';
+import { promoteBaby, logBabyAction, clanIdForPerson } from '@/lib/babies';
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
 
@@ -13,8 +13,10 @@ export async function PATCH(
     const token = request.cookies.get('clanops-auth')?.value;
     if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    let actorTag: string | undefined;
     try {
-      await jwtVerify(token, JWT_SECRET);
+      const { payload } = await jwtVerify(token, JWT_SECRET);
+      actorTag = payload.playerTag as string | undefined;
     } catch (e) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
@@ -23,6 +25,14 @@ export async function PATCH(
 
     if (action === 'promote') {
       const data = await promoteBaby(id);
+      // Credit the acting leader for converting a baby to a permanent member.
+      await logBabyAction({
+        loggedBy: actorTag,
+        category: 'promotion',
+        personId: id,
+        clanId: await clanIdForPerson(id),
+        description: `Promoted baby to permanent: ${data?.display_name ?? 'member'}`,
+      });
       return NextResponse.json(data);
     }
 

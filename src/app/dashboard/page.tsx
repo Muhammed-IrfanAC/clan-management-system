@@ -7,7 +7,8 @@ import {
   Users,
   TrendingUp,
   Clock,
-  RefreshCw
+  RefreshCw,
+  Baby
 } from 'lucide-react';
 import { useClan } from '@/lib/ClanContext';
 import LeadershipPerformance from '@/components/dashboard/LeadershipPerformance';
@@ -18,7 +19,8 @@ export default function DashboardPage() {
     highWarnings: 0,
     pendingAcknowledge: 0,
     totalMembers: 0,
-    unlinkedAccounts: 0
+    unlinkedAccounts: 0,
+    currentBabies: 0
   });
   const [loading, setLoading] = useState(true);
 
@@ -53,6 +55,22 @@ export default function DashboardPage() {
       } else {
           const { count } = await personQuery;
           setStats(s => ({ ...s, totalMembers: count || 0 }));
+      }
+
+      // Current babies (probationary members on a trial countdown)
+      if (selectedClanId !== 'all') {
+        const { count: babyCount } = await supabase
+          .from('player_accounts')
+          .select('person_id, persons!inner(is_baby)', { count: 'exact', head: true })
+          .eq('clan_id', selectedClanId)
+          .eq('persons.is_baby', true);
+        setStats(s => ({ ...s, currentBabies: babyCount || 0 }));
+      } else {
+        const { count: babyCount } = await supabase
+          .from('persons')
+          .select('id', { count: 'exact', head: true })
+          .eq('is_baby', true);
+        setStats(s => ({ ...s, currentBabies: babyCount || 0 }));
       }
 
       // Unlinked accounts
@@ -158,6 +176,17 @@ export default function DashboardPage() {
           </div>
           <h2 style={{ fontSize: '2.5rem', margin: 0 }}>{loading ? '...' : stats.unlinkedAccounts}</h2>
           <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>Awaiting assignment</p>
+        </div>
+
+        <div className="card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
+            <div style={{ padding: 'var(--space-sm)', background: 'rgba(245, 158, 11, 0.1)', borderRadius: 'var(--radius-md)' }}>
+              <Baby color="var(--color-warning)" size={24} />
+            </div>
+            <span className="text-muted" style={{ fontWeight: '600', textTransform: 'uppercase', fontSize: '0.75rem' }}>Current Babies</span>
+          </div>
+          <h2 style={{ fontSize: '2.5rem', margin: 0 }}>{loading ? '...' : stats.currentBabies}</h2>
+          <p className="text-warning" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>In promotion trial</p>
         </div>
       </div>
 
