@@ -17,6 +17,8 @@ export interface Person {
   id: string;
   display_name: string;
   notes: string | null;
+  is_baby: boolean;
+  baby_started_at: string | null;
   created_at: string;
 }
 

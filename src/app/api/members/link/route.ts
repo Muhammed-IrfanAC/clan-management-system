@@ -15,20 +15,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
-    const { playerTag, personId, newPersonName } = await request.json();
+    const { playerTag, personId, newPersonName, isBaby } = await request.json();
 
     if (!playerTag) return NextResponse.json({ error: 'Player tag is required' }, { status: 400 });
 
     let finalPersonId = personId;
 
-    // Create new person if requested
+    // Create new person if requested. A brand-new person can be flagged as a "baby"
+    // (probationary), which starts the promotion countdown. Linking to an EXISTING person
+    // is treated as an alt link and never triggers a trial.
     if (!personId && newPersonName) {
       const { data: newPerson, error: personError } = await supabase
         .from('persons')
-        .insert([{ display_name: newPersonName }])
+        .insert([{
+          display_name: newPersonName,
+          is_baby: !!isBaby,
+          baby_started_at: isBaby ? new Date().toISOString() : null,
+        }])
         .select()
         .single();
-      
+
       if (personError) throw personError;
       finalPersonId = newPerson.id;
     }

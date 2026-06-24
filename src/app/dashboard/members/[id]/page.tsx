@@ -2,19 +2,23 @@
 
 import { useState, useEffect, use } from 'react';
 import { supabase } from '@/lib/supabase';
-import { 
-  User, 
-  Shield, 
-  AlertTriangle, 
-  History, 
+import {
+  User,
+  Shield,
+  AlertTriangle,
+  History,
   ChevronLeft,
   Calendar,
   ExternalLink,
   Trash2,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Baby,
+  Clock,
+  ArrowUpCircle
 } from 'lucide-react';
 import Link from 'next/link';
 import { Person, PlayerAccount, Warning, LeadershipLog, Clan, Rule } from '@/types/database';
+import { babyDaysLeft } from '@/lib/babies';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { useRouter } from 'next/navigation';
 
@@ -30,6 +34,8 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   const [person, setPerson] = useState<FullPerson | null>(null);
   const [loggerNames, setLoggerNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [babyTrialDays, setBabyTrialDays] = useState(4);
+  const [promoting, setPromoting] = useState(false);
   
   // Modal state
   const [confirmConfig, setConfirmConfig] = useState({
@@ -68,6 +74,10 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       if (pError) throw pError;
       setPerson(pData as FullPerson);
 
+      const { data: trialSetting } = await supabase.from('settings').select('value').eq('key', 'baby_trial_days').single();
+      const parsedTrial = parseInt(String(trialSetting?.value ?? ''), 10);
+      if (Number.isFinite(parsedTrial) && parsedTrial > 0) setBabyTrialDays(parsedTrial);
+
       // Resolve each warning's logged_by (a player_tag) to the logger's person name.
       const loggerTags = Array.from(new Set(((pData as FullPerson)?.warnings || []).map(w => w.logged_by).filter(Boolean)));
       if (loggerTags.length) {
@@ -85,6 +95,23 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       console.error('Error fetching person:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handlePromote() {
+    setPromoting(true);
+    try {
+      const res = await fetch(`/api/persons/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'promote' }),
+      });
+      if (!res.ok) throw new Error('Failed to promote');
+      fetchPerson();
+    } catch (err) {
+      alert('Error promoting member');
+    } finally {
+      setPromoting(false);
     }
   }
 
@@ -137,6 +164,20 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                 <p className="text-muted" style={{ fontSize: '0.8rem' }}>Member since {new Date(person.created_at).toLocaleDateString()}</p>
               </div>
             </div>
+
+            {person.is_baby && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-md)', padding: 'var(--space-md)', marginBottom: 'var(--space-lg)', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)', borderRadius: 'var(--radius-md)' }}>
+                <span className="baby-badge">
+                  <Baby size={12} /> BABY
+                  <span className="baby-badge-count">
+                    <Clock size={11} /> {(() => { const d = babyDaysLeft(person.baby_started_at, babyTrialDays); return d > 0 ? `${d}d left` : 'trial ended'; })()}
+                  </span>
+                </span>
+                <button onClick={handlePromote} disabled={promoting} className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}>
+                  <ArrowUpCircle size={16} /> {promoting ? 'Promoting...' : 'Promote to Member'}
+                </button>
+              </div>
+            )}
 
             <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 'var(--space-lg)' }}>
                <h3 style={{ fontSize: '0.9rem', marginBottom: 'var(--space-md)' }}>Linked Accounts</h3>

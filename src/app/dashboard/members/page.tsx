@@ -3,18 +3,22 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { 
-  Search, 
-  Filter, 
-  UserPlus, 
-  Link as LinkIcon, 
+import {
+  Search,
+  Filter,
+  UserPlus,
+  Link as LinkIcon,
   ExternalLink,
   X,
   User,
   Check,
-  ChevronRight
+  ChevronRight,
+  Baby,
+  Clock,
+  ArrowUpCircle
 } from 'lucide-react';
 import { Person, PlayerAccount, Clan } from '@/types/database';
+import { babyDaysLeft } from '@/lib/babies';
 import { useClan } from '@/lib/ClanContext';
 
 type PersonWithAccounts = Person & {
@@ -27,6 +31,8 @@ export default function MembersPage() {
   const [unlinkedAccounts, setUnlinkedAccounts] = useState<(PlayerAccount & { clan: Clan })[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [filterType, setFilterType] = useState<'all' | 'babies' | 'permanent'>('all');
+  const [babyTrialDays, setBabyTrialDays] = useState(4);
 
   // Linking Modal State
   const [linkingAccount, setLinkingAccount] = useState<(PlayerAccount & { clan: Clan }) | null>(null);
@@ -34,7 +40,9 @@ export default function MembersPage() {
   const [linkSearch, setLinkSearch] = useState('');
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const [newPersonName, setNewPersonName] = useState('');
+  const [newPersonIsBaby, setNewPersonIsBaby] = useState(false);
   const [isLinking, setIsLinking] = useState(false);
+  const [promotingId, setPromotingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -43,6 +51,15 @@ export default function MembersPage() {
   async function fetchData() {
     setLoading(true);
     try {
+      // Sweep any babies whose trial window elapsed before we read the roster,
+      // so lapsed accounts show up as Unlinked rather than as stale members.
+      try { await fetch('/api/babies/expire', { method: 'POST' }); } catch {}
+
+      // Load the configurable trial window for countdown display.
+      const { data: trialSetting } = await supabase.from('settings').select('value').eq('key', 'baby_trial_days').single();
+      const parsedTrial = parseInt(String(trialSetting?.value ?? ''), 10);
+      if (Number.isFinite(parsedTrial) && parsedTrial > 0) setBabyTrialDays(parsedTrial);
+
       // Fetch persons with their accounts
       const { data: personsData } = await supabase
         .from('persons')
@@ -85,6 +102,24 @@ export default function MembersPage() {
     setLinkSearch('');
     setSelectedPersonId(null);
     setNewPersonName(account.in_game_name);
+    setNewPersonIsBaby(false);
+  };
+
+  const handlePromote = async (personId: string) => {
+    setPromotingId(personId);
+    try {
+      const res = await fetch(`/api/persons/${personId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'promote' }),
+      });
+      if (!res.ok) throw new Error('Failed to promote');
+      fetchData();
+    } catch (err) {
+      alert('Error promoting member');
+    } finally {
+      setPromotingId(null);
+    }
   };
 
   const handleLinkSubmit = async () => {
@@ -99,8 +134,9 @@ export default function MembersPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           playerTag: linkingAccount.player_tag, 
-          personId: linkTab === 'existing' ? selectedPersonId : null, 
-          newPersonName: linkTab === 'new' ? newPersonName : null 
+          personId: linkTab === 'existing' ? selectedPersonId : null,
+          newPersonName: linkTab === 'new' ? newPersonName : null,
+          isBaby: linkTab === 'new' ? newPersonIsBaby : false
         }),
       });
 
@@ -118,8 +154,14 @@ export default function MembersPage() {
   const filteredMembers = members.filter(m => {
     const matchesSearch = m.display_name.toLowerCase().includes(search.toLowerCase()) ||
       m.player_accounts.some(pa => pa.in_game_name.toLowerCase().includes(search.toLowerCase()) || pa.player_tag.includes(search.toUpperCase()));
-    return matchesSearch;
+    const matchesType =
+      filterType === 'all' ? true :
+      filterType === 'babies' ? m.is_baby :
+      !m.is_baby;
+    return matchesSearch && matchesType;
   });
+
+  const babyCount = members.filter(m => m.is_baby).length;
 
   const linkablePersons = members.filter(m => 
     m.display_name.toLowerCase().includes(linkSearch.toLowerCase())
@@ -133,17 +175,27 @@ export default function MembersPage() {
           <p className="text-muted">Manage all human persons and their linked Clash accounts.</p>
         </div>
         
-        <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
-           <div className="search-container" style={{ width: '100%' }}>
+        <div className="header-actions">
+           <div className="search-container" style={{ flex: '1 1 auto' }}>
              <Search size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-muted)' }} />
-             <input 
-               type="text" 
-               className="input search-input" 
-               placeholder="Search registry..." 
+             <input
+               type="text"
+               className="input search-input"
+               placeholder="Search registry..."
                value={search}
                onChange={(e) => setSearch(e.target.value)}
              />
            </div>
+           <select
+             className="input filter-select"
+             value={filterType}
+             onChange={(e: any) => setFilterType(e.target.value)}
+             aria-label="Filter members by status"
+           >
+             <option value="all">All Members</option>
+             <option value="babies">Babies{babyCount ? ` (${babyCount})` : ''}</option>
+             <option value="permanent">Permanent</option>
+           </select>
         </div>
       </div>
 
@@ -198,15 +250,27 @@ export default function MembersPage() {
             <p className="text-muted">No records match your filters.</p>
           </div>
         ) : (
-          filteredMembers.map(member => (
-            <div key={member.id} className="card" style={{ cursor: 'default' }}>
+          filteredMembers.map(member => {
+            const daysLeft = member.is_baby ? babyDaysLeft(member.baby_started_at, babyTrialDays) : 0;
+            return (
+            <div key={member.id} className="card" style={{ cursor: 'default', borderLeft: member.is_baby ? '3px solid var(--color-warning)' : undefined }}>
               <div className="member-card-content">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-lg)' }}>
                   <div style={{ width: '48px', height: '48px', borderRadius: 'var(--radius-md)', background: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <User size={24} color="var(--color-muted)" />
+                    {member.is_baby ? <Baby size={24} color="var(--color-warning)" /> : <User size={24} color="var(--color-muted)" />}
                   </div>
                   <div>
-                    <h3 style={{ margin: 0, marginBottom: '4px' }}>{member.display_name}</h3>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: '4px', flexWrap: 'wrap' }}>
+                      <h3 style={{ margin: 0 }}>{member.display_name}</h3>
+                      {member.is_baby && (
+                        <span className="baby-badge">
+                          <Baby size={12} /> BABY
+                          <span className="baby-badge-count">
+                            <Clock size={11} /> {daysLeft > 0 ? `${daysLeft}d left` : 'trial ended'}
+                          </span>
+                        </span>
+                      )}
+                    </div>
                     <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
                       {member.player_accounts.map(acc => (
                         <span key={acc.player_tag} style={{ 
@@ -225,13 +289,25 @@ export default function MembersPage() {
                     </div>
                   </div>
                 </div>
-                
-                <Link href={`/dashboard/members/${member.id}`} className="btn btn-outline" style={{ padding: '0.6rem 1rem', fontSize: '0.8rem' }}>
-                  Open Dossier <ChevronRight size={16} />
-                </Link>
+
+                <div className="member-card-actions">
+                  {member.is_baby && (
+                    <button
+                      onClick={() => handlePromote(member.id)}
+                      disabled={promotingId === member.id}
+                      className="btn btn-primary"
+                      style={{ padding: '0.6rem 1rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                    >
+                      <ArrowUpCircle size={16} /> {promotingId === member.id ? 'Promoting...' : 'Promote'}
+                    </button>
+                  )}
+                  <Link href={`/dashboard/members/${member.id}`} className="btn btn-outline" style={{ padding: '0.6rem 1rem', fontSize: '0.8rem' }}>
+                    Open Dossier <ChevronRight size={16} />
+                  </Link>
+                </div>
               </div>
             </div>
-          ))
+          );})
         )}
       </div>
 
@@ -316,6 +392,25 @@ export default function MembersPage() {
                    <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: 'var(--space-md)' }}>
                      This creates a new "Human" record. You can link other alts to this name later.
                    </p>
+
+                   <label className="switch-row" style={{ marginTop: 'var(--space-lg)' }}>
+                     <span className="switch" data-on={newPersonIsBaby}>
+                       <input
+                         type="checkbox"
+                         checked={newPersonIsBaby}
+                         onChange={(e) => setNewPersonIsBaby(e.target.checked)}
+                       />
+                       <span className="switch-knob" />
+                     </span>
+                     <span>
+                       <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600', fontSize: '0.85rem' }}>
+                         <Baby size={15} className="text-warning" /> Mark as Baby
+                       </span>
+                       <span className="text-muted" style={{ fontSize: '0.72rem' }}>
+                         Starts a {babyTrialDays}-day trial. Promote before it ends or the link is auto-removed.
+                       </span>
+                     </span>
+                   </label>
                  </div>
                )}
              </div>

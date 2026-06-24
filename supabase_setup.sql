@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS persons (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     display_name TEXT NOT NULL,
     notes TEXT,
+    is_baby BOOLEAN NOT NULL DEFAULT FALSE,
+    baby_started_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -82,7 +84,8 @@ INSERT INTO settings (key, value, description) VALUES
 ('sync_interval_minutes', '5', 'Min minutes between auto-syncs'),
 ('sync_auto_enabled', 'true', 'Whether to sync on dashboard load'),
 ('warning_escalation_days', '3', 'Days until warning becomes HIGH'),
-('cross_clan_warning_visibility', 'true', 'All leaders see all warnings')
+('cross_clan_warning_visibility', 'true', 'All leaders see all warnings'),
+('baby_trial_days', '4', 'Days a new "baby" member has to be promoted before the system auto-unlinks them')
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO rules (name, description, logging_guidance) VALUES 
