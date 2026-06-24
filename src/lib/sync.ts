@@ -89,11 +89,18 @@ export async function syncClan(clanId: string) {
     }
 
     if (leftTags.length > 0) {
+      // Guard by clan_id so a clan only ever marks its OWN rows as 'left'. Without this,
+      // a no-arg sync (all clans in parallel) races on clan movers: when a player hops
+      // A -> B, syncClan(A) sees them as left and syncClan(B) upserts them active. Keyed on
+      // player_tag alone, A's left-update could land after B's upsert and wrongly flip an
+      // account that already moved to B back to 'left'. The clan_id filter means A's update
+      // no longer matches once B has rewritten clan_id, making the outcome order-independent.
       const { error: leftError } = await supabase
         .from('player_accounts')
         .update({ status: 'left' })
-        .in('player_tag', leftTags);
-        
+        .in('player_tag', leftTags)
+        .eq('clan_id', clanId);
+
       if (leftError) throw leftError;
     }
 
