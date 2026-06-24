@@ -198,6 +198,19 @@ button {
   to { transform: translateY(0); opacity: 1; }
 }
 
+.toast {
+  animation: toastIn 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes toastIn {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
+
 .tab-btn {
   flex: 1;
   padding: 0.75rem;

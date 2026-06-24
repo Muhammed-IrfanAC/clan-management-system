@@ -18,8 +18,20 @@ async function authorize(request: NextRequest) {
   }
 }
 
+// Resolve a player_tag to the person (persona) it is linked to, if any.
+async function personIdForTag(tag: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('player_accounts')
+    .select('person_id')
+    .eq('player_tag', tag)
+    .maybeSingle();
+  return data?.person_id ?? null;
+}
+
 // Load a comment and enforce the two modification rules shared by edit + delete:
-// (1) the persona must still be in its baby trial; (2) only the comment's author may change it.
+// (1) the persona must still be in its baby trial; (2) only the comment's AUTHOR PERSON may
+// change it. Authorship is resolved at the person level, not the account level, so any alt
+// belonging to the same person as the original author can edit/delete it too.
 async function guardEditable(commentId: string, actorTag: string) {
   const { data: comment } = await supabase
     .from('baby_comments')
@@ -30,8 +42,16 @@ async function guardEditable(commentId: string, actorTag: string) {
   if (!(await isPersonBaby(comment.person_id))) {
     return { error: NextResponse.json({ error: 'The baby trial has ended; comments are now read-only' }, { status: 403 }) };
   }
+
+  // Fast path: same account. Otherwise allow when both tags resolve to the same person (alts).
   if (comment.author_tag !== actorTag) {
-    return { error: NextResponse.json({ error: 'Only the comment author can modify this comment' }, { status: 403 }) };
+    const [authorPerson, actorPerson] = await Promise.all([
+      personIdForTag(comment.author_tag),
+      personIdForTag(actorTag),
+    ]);
+    if (!authorPerson || !actorPerson || authorPerson !== actorPerson) {
+      return { error: NextResponse.json({ error: 'Only the comment author can modify this comment' }, { status: 403 }) };
+    }
   }
   return { comment };
 }

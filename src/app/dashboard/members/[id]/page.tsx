@@ -24,6 +24,7 @@ import Link from 'next/link';
 import { Person, PlayerAccount, Warning, LeadershipLog, Clan, Rule, BabyComment } from '@/types/database';
 import { babyDaysLeft } from '@/lib/babies';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
+import Toast, { ToastState } from '@/components/ui/Toast';
 import { useRouter } from 'next/navigation';
 
 type FullPerson = Person & {
@@ -42,6 +43,10 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   const [babyTrialDays, setBabyTrialDays] = useState(4);
   const [promoting, setPromoting] = useState(false);
   const [currentUserTag, setCurrentUserTag] = useState<string | null>(null);
+  const [myPersonId, setMyPersonId] = useState<string | null>(null);
+  // author player_tag -> person_id, so alts of an author can be granted edit/delete controls.
+  const [authorPersons, setAuthorPersons] = useState<Record<string, string | null>>({});
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   // Baby comment thread state
   const [newComment, setNewComment] = useState('');
@@ -64,10 +69,14 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   }, [id]);
 
   useEffect(() => {
-    // Identify the acting leader so we can show edit/delete only on their own comments.
+    // Identify the acting leader (and their persona) so we can show edit/delete on comments
+    // authored by them or any of their alts (same person_id).
     fetch('/api/auth/me')
       .then(r => (r.ok ? r.json() : null))
-      .then(d => setCurrentUserTag(d?.user?.player_tag ?? null))
+      .then(d => {
+        setCurrentUserTag(d?.user?.player_tag ?? null);
+        setMyPersonId(d?.user?.person_id ?? null);
+      })
       .catch(() => {});
   }, []);
 
@@ -108,13 +117,16 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       if (loggerTags.length) {
         const { data: loggers } = await supabase
           .from('player_accounts')
-          .select('player_tag, in_game_name, person:persons (display_name)')
+          .select('player_tag, person_id, in_game_name, person:persons (display_name)')
           .in('player_tag', loggerTags);
         const map: Record<string, string> = {};
+        const persons: Record<string, string | null> = {};
         for (const l of (loggers as any[]) || []) {
           map[l.player_tag] = l.person?.display_name || l.in_game_name || l.player_tag;
+          persons[l.player_tag] = l.person_id ?? null;
         }
         setLoggerNames(map);
+        setAuthorPersons(persons);
       }
     } catch (err) {
       console.error('Error fetching person:', err);
@@ -153,8 +165,9 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to add comment');
       setNewComment('');
       fetchPerson();
+      setToast({ type: 'success', message: 'Note added.' });
     } catch (err: any) {
-      alert(err.message || 'Error adding comment');
+      setToast({ type: 'error', message: err.message || 'Error adding comment' });
     } finally {
       setPostingComment(false);
     }
@@ -174,8 +187,9 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       setEditingCommentId(null);
       setEditDraft('');
       fetchPerson();
+      setToast({ type: 'success', message: 'Note updated.' });
     } catch (err: any) {
-      alert(err.message || 'Error saving comment');
+      setToast({ type: 'error', message: err.message || 'Error saving comment' });
     } finally {
       setSavingEdit(false);
     }
@@ -186,8 +200,9 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       const res = await fetch(`/api/babies/comments/${commentId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to delete');
       fetchPerson();
+      setToast({ type: 'success', message: 'Note deleted.' });
     } catch (err: any) {
-      alert(err.message || 'Error deleting comment');
+      setToast({ type: 'error', message: err.message || 'Error deleting comment' });
     }
   }
 
@@ -323,7 +338,12 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                ) : (
                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
                    {[...person.baby_comments].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).map(c => {
-                     const mine = !!currentUserTag && c.author_tag === currentUserTag;
+                     // The acting user owns a note if it's from their account, or from an alt
+                     // that shares their persona (same person_id) — mirrors the API guard.
+                     const authorPid = authorPersons[c.author_tag] ?? null;
+                     const mine =
+                       (!!currentUserTag && c.author_tag === currentUserTag) ||
+                       (!!myPersonId && authorPid !== null && authorPid === myPersonId);
                      const edited = c.updated_at && c.updated_at !== c.created_at;
                      return (
                        <div key={c.id} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', borderLeft: '3px solid rgba(245, 158, 11, 0.5)' }}>
@@ -415,6 +435,8 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
         title={confirmConfig.title}
         message={confirmConfig.message}
       />
+
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }
