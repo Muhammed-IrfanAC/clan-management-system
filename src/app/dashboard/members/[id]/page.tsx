@@ -100,10 +100,9 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       const parsedTrial = parseInt(String(trialSetting?.value ?? ''), 10);
       if (Number.isFinite(parsedTrial) && parsedTrial > 0) setBabyTrialDays(parsedTrial);
 
-      // Resolve player_tags (warning loggers + activity loggers + baby-comment authors) to display names.
+      // Resolve player_tags (warning loggers + baby-comment authors) to display names.
       const loggerTags = Array.from(new Set([
         ...((pData as FullPerson)?.warnings || []).map(w => w.logged_by),
-        ...((pData as FullPerson)?.activity_logs || []).map(l => l.logged_by),
         ...((pData as FullPerson)?.baby_comments || []).map(c => c.author_tag),
       ].filter(Boolean)));
       if (loggerTags.length) {
@@ -401,9 +400,6 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                          <span style={{ fontSize: '0.7rem' }} className="text-muted">{new Date(log.logged_at).toLocaleDateString()}</span>
                        </div>
                        <p style={{ fontSize: '0.85rem', margin: '4px 0' }}>{log.description}</p>
-                       {log.logged_by && (
-                         <div style={{ fontSize: '0.7rem' }} className="text-muted">Logged by {loggerNames[log.logged_by] || log.logged_by}</div>
-                       )}
                     </div>
                   ))}
                 </div>

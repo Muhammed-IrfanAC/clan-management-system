@@ -27,6 +27,7 @@ type ExtendedLog = LeadershipLog & {
 export default function ActivityPage() {
   const { selectedClanId } = useClan();
   const [logs, setLogs] = useState<ExtendedLog[]>([]);
+  const [loggerNames, setLoggerNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'completed'>('all');
@@ -69,7 +70,24 @@ export default function ActivityPage() {
       if (selectedClanId !== 'all') req = req.eq('clan_id', selectedClanId);
 
       const { data } = await req;
-      setLogs(data as ExtendedLog[] || []);
+      const logRows = (data as ExtendedLog[]) || [];
+      setLogs(logRows);
+
+      // Resolve the actor player_tags (logged_by) to display names, same as warnings.
+      const loggerTags = Array.from(new Set(logRows.map(l => l.logged_by).filter(Boolean)));
+      if (loggerTags.length) {
+        const { data: loggers } = await supabase
+          .from('player_accounts')
+          .select('player_tag, in_game_name, person:persons (display_name)')
+          .in('player_tag', loggerTags);
+        const map: Record<string, string> = {};
+        for (const l of (loggers as any[]) || []) {
+          map[l.player_tag] = l.person?.display_name || l.in_game_name || l.player_tag;
+        }
+        setLoggerNames(map);
+      } else {
+        setLoggerNames({});
+      }
 
       const { data: clansData } = await supabase.from('clans').select('*');
       setClans(clansData || []);
@@ -208,7 +226,7 @@ export default function ActivityPage() {
                     <div className="warning-card-meta text-muted" style={{ marginTop: 'var(--space-sm)' }}>
                       {log.clan && <span>Clan: <strong>{log.clan.display_name}</strong></span>}
                       {log.person && <span>Related: <strong>{log.person.display_name}</strong></span>}
-                      <span>By: <strong>{log.logged_by}</strong></span>
+                      <span>By: <strong>{loggerNames[log.logged_by] || log.logged_by}</strong></span>
                     </div>
                   </div>
                 </div>
