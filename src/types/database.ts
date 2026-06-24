@@ -70,6 +70,15 @@ export interface LeadershipLog {
   pinned: boolean;
 }
 
+export interface BabyComment {
+  id: string;
+  person_id: string;
+  author_tag: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Setting {
   key: string;
   value: any;

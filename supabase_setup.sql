@@ -79,6 +79,20 @@ CREATE TABLE IF NOT EXISTS leadership_logs (
     pinned BOOLEAN DEFAULT FALSE
 );
 
+-- 8. BABY COMMENTS
+-- Threaded leader notes attached to a baby (probationary) persona. Editable only while
+-- persons.is_baby = true; frozen after promotion. Cascade-deleted if the persona is removed.
+CREATE TABLE IF NOT EXISTS baby_comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    person_id UUID NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    author_tag TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_baby_comments_person_id ON baby_comments(person_id);
+
 -- SEED INITIAL DATA
 INSERT INTO settings (key, value, description) VALUES 
 ('sync_interval_minutes', '5', 'Min minutes between auto-syncs'),

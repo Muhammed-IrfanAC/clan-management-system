@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { jwtVerify } from 'jose';
-import { logBabyAction } from '@/lib/babies';
+import { logBabyAction, addBabyComment } from '@/lib/babies';
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
 
@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
-    const { playerTag, personId, newPersonName, isBaby } = await request.json();
+    const { playerTag, personId, newPersonName, isBaby, comment } = await request.json();
 
     if (!playerTag) return NextResponse.json({ error: 'Player tag is required' }, { status: 400 });
 
@@ -64,6 +64,16 @@ export async function POST(request: NextRequest) {
         clanId: linkedAccount?.clan_id ?? null,
         description: `Recruited new baby: ${newPersonName}`,
       });
+
+      // Optional initial comment captured at link time. Non-fatal: a bad/empty note
+      // must never break the link itself.
+      if (actorTag && typeof comment === 'string' && comment.trim()) {
+        try {
+          await addBabyComment({ personId: finalPersonId, authorTag: actorTag, body: comment });
+        } catch (e) {
+          console.error('Failed to add initial baby comment:', e);
+        }
+      }
     }
 
     return NextResponse.json({ success: true, personId: finalPersonId });

@@ -14,10 +14,14 @@ import {
   Link as LinkIcon,
   Baby,
   Clock,
-  ArrowUpCircle
+  ArrowUpCircle,
+  MessageSquare,
+  Pencil,
+  Lock,
+  Send
 } from 'lucide-react';
 import Link from 'next/link';
-import { Person, PlayerAccount, Warning, LeadershipLog, Clan, Rule } from '@/types/database';
+import { Person, PlayerAccount, Warning, LeadershipLog, Clan, Rule, BabyComment } from '@/types/database';
 import { babyDaysLeft } from '@/lib/babies';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { useRouter } from 'next/navigation';
@@ -26,6 +30,7 @@ type FullPerson = Person & {
   player_accounts: (PlayerAccount & { clan: Clan })[];
   warnings: (Warning & { rule: Rule | null, player_account: PlayerAccount })[];
   activity_logs: LeadershipLog[];
+  baby_comments: BabyComment[];
 };
 
 export default function PersonProfilePage({ params }: { params: Promise<{ id: string }> }) {
@@ -36,6 +41,14 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [babyTrialDays, setBabyTrialDays] = useState(4);
   const [promoting, setPromoting] = useState(false);
+  const [currentUserTag, setCurrentUserTag] = useState<string | null>(null);
+
+  // Baby comment thread state
+  const [newComment, setNewComment] = useState('');
+  const [postingComment, setPostingComment] = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
   
   // Modal state
   const [confirmConfig, setConfirmConfig] = useState({
@@ -49,6 +62,14 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   useEffect(() => {
     fetchPerson();
   }, [id]);
+
+  useEffect(() => {
+    // Identify the acting leader so we can show edit/delete only on their own comments.
+    fetch('/api/auth/me')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => setCurrentUserTag(d?.user?.player_tag ?? null))
+      .catch(() => {});
+  }, []);
 
   async function fetchPerson() {
     setLoading(true);
@@ -66,7 +87,8 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
             rule:rules (*),
             player_account:player_accounts (*)
           ),
-          activity_logs:leadership_logs (*)
+          activity_logs:leadership_logs (*),
+          baby_comments (*)
         `)
         .eq('id', id)
         .single();
@@ -78,8 +100,11 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       const parsedTrial = parseInt(String(trialSetting?.value ?? ''), 10);
       if (Number.isFinite(parsedTrial) && parsedTrial > 0) setBabyTrialDays(parsedTrial);
 
-      // Resolve each warning's logged_by (a player_tag) to the logger's person name.
-      const loggerTags = Array.from(new Set(((pData as FullPerson)?.warnings || []).map(w => w.logged_by).filter(Boolean)));
+      // Resolve player_tags (warning loggers + baby-comment authors) to display names.
+      const loggerTags = Array.from(new Set([
+        ...((pData as FullPerson)?.warnings || []).map(w => w.logged_by),
+        ...((pData as FullPerson)?.baby_comments || []).map(c => c.author_tag),
+      ].filter(Boolean)));
       if (loggerTags.length) {
         const { data: loggers } = await supabase
           .from('player_accounts')
@@ -112,6 +137,57 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       alert('Error promoting member');
     } finally {
       setPromoting(false);
+    }
+  }
+
+  async function handleAddComment() {
+    const body = newComment.trim();
+    if (!body) return;
+    setPostingComment(true);
+    try {
+      const res = await fetch('/api/babies/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ personId: id, body }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed to add comment');
+      setNewComment('');
+      fetchPerson();
+    } catch (err: any) {
+      alert(err.message || 'Error adding comment');
+    } finally {
+      setPostingComment(false);
+    }
+  }
+
+  async function handleSaveEdit(commentId: string) {
+    const body = editDraft.trim();
+    if (!body) return;
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`/api/babies/comments/${commentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed to save');
+      setEditingCommentId(null);
+      setEditDraft('');
+      fetchPerson();
+    } catch (err: any) {
+      alert(err.message || 'Error saving comment');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function handleDeleteComment(commentId: string) {
+    try {
+      const res = await fetch(`/api/babies/comments/${commentId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed to delete');
+      fetchPerson();
+    } catch (err: any) {
+      alert(err.message || 'Error deleting comment');
     }
   }
 
@@ -209,6 +285,80 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
 
         {/* Right Column: History */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+           {/* Baby Trial Notes (comment thread) */}
+           {(person.is_baby || person.baby_comments.length > 0) && (
+             <div className="card">
+               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+                   <MessageSquare size={20} className="text-warning" />
+                   <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Trial Notes</h2>
+                 </div>
+                 {!person.is_baby && (
+                   <span className="baby-badge" style={{ background: 'rgba(148,163,184,0.12)', borderColor: 'rgba(148,163,184,0.25)', color: 'var(--color-muted)' }}>
+                     <Lock size={11} /> Read-only
+                   </span>
+                 )}
+               </div>
+
+               {person.is_baby && (
+                 <div style={{ marginBottom: person.baby_comments.length ? 'var(--space-lg)' : 0 }}>
+                   <textarea
+                     className="input"
+                     rows={2}
+                     placeholder="Add a note about this trial..."
+                     value={newComment}
+                     onChange={(e) => setNewComment(e.target.value)}
+                     style={{ resize: 'vertical' }}
+                   />
+                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'var(--space-sm)' }}>
+                     <button onClick={handleAddComment} disabled={postingComment || !newComment.trim()} className="btn btn-primary" style={{ padding: '0.45rem 1rem', fontSize: '0.8rem' }}>
+                       <Send size={14} /> {postingComment ? 'Posting...' : 'Post Note'}
+                     </button>
+                   </div>
+                 </div>
+               )}
+
+               {person.baby_comments.length === 0 ? (
+                 person.is_baby ? null : <p className="text-muted" style={{ padding: 'var(--space-md)', textAlign: 'center' }}>No notes were recorded during the trial.</p>
+               ) : (
+                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                   {[...person.baby_comments].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).map(c => {
+                     const mine = !!currentUserTag && c.author_tag === currentUserTag;
+                     const edited = c.updated_at && c.updated_at !== c.created_at;
+                     return (
+                       <div key={c.id} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', borderLeft: '3px solid rgba(245, 158, 11, 0.5)' }}>
+                         {editingCommentId === c.id ? (
+                           <div>
+                             <textarea className="input" rows={2} value={editDraft} onChange={(e) => setEditDraft(e.target.value)} style={{ resize: 'vertical' }} />
+                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
+                               <button onClick={() => { setEditingCommentId(null); setEditDraft(''); }} className="btn btn-outline" style={{ border: 'none', padding: '0.35rem 0.8rem', fontSize: '0.75rem' }}>Cancel</button>
+                               <button onClick={() => handleSaveEdit(c.id)} disabled={savingEdit || !editDraft.trim()} className="btn btn-primary" style={{ padding: '0.35rem 0.8rem', fontSize: '0.75rem' }}>{savingEdit ? 'Saving...' : 'Save'}</button>
+                             </div>
+                           </div>
+                         ) : (
+                           <>
+                             <p style={{ fontSize: '0.85rem', margin: '0 0 8px', whiteSpace: 'pre-wrap' }}>{c.body}</p>
+                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                               <span style={{ fontSize: '0.7rem' }} className="text-muted">
+                                 {loggerNames[c.author_tag] || c.author_tag} • {new Date(c.created_at).toLocaleDateString()}{edited ? ' (edited)' : ''}
+                               </span>
+                               {person.is_baby && mine && (
+                                 <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                                   <button onClick={() => { setEditingCommentId(c.id); setEditDraft(c.body); }} style={{ background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }} title="Edit"><Pencil size={13} /></button>
+                                   <button onClick={() => handleDeleteComment(c.id)} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete"><Trash2 size={13} /></button>
+                                 </div>
+                               )}
+                             </div>
+                           </>
+                         )}
+                       </div>
+                     );
+                   })}
+                 </div>
+               )}
+             </div>
+           )}
+
            {/* Warnings History */}
            <div className="card">
               <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>

@@ -111,6 +111,39 @@ export async function logBabyAction(params: {
 }
 
 /**
+ * Whether a persona is currently in its baby trial (and therefore whether its
+ * comment thread may be modified). Comments are append/edit/delete-able only while
+ * is_baby = true; after promotion the thread is frozen as a record of the trial.
+ */
+export async function isPersonBaby(personId: string): Promise<boolean> {
+  const { data } = await supabase.from('persons').select('is_baby').eq('id', personId).maybeSingle();
+  return !!data?.is_baby;
+}
+
+/**
+ * Add a comment to a baby's thread, attributed to the acting leader. Throws if the
+ * persona is not (or no longer) a baby. Returns the inserted row.
+ */
+export async function addBabyComment(params: {
+  personId: string;
+  authorTag: string;
+  body: string;
+}) {
+  const body = params.body?.trim();
+  if (!body) throw new Error('Comment body is required');
+  if (!(await isPersonBaby(params.personId))) {
+    throw new Error('Comments can only be added while the member is in their baby trial');
+  }
+  const { data, error } = await supabase
+    .from('baby_comments')
+    .insert([{ person_id: params.personId, author_tag: params.authorTag, body }])
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/**
  * Promote a baby to a permanent member: clears the baby flag and the countdown.
  */
 export async function promoteBaby(personId: string) {

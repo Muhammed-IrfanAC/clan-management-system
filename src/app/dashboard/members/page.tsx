@@ -41,6 +41,7 @@ export default function MembersPage() {
   const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const [newPersonName, setNewPersonName] = useState('');
   const [newPersonIsBaby, setNewPersonIsBaby] = useState(false);
+  const [newPersonComment, setNewPersonComment] = useState('');
   const [isLinking, setIsLinking] = useState(false);
   const [promotingId, setPromotingId] = useState<string | null>(null);
 
@@ -103,6 +104,7 @@ export default function MembersPage() {
     setSelectedPersonId(null);
     setNewPersonName(account.in_game_name);
     setNewPersonIsBaby(false);
+    setNewPersonComment('');
   };
 
   const handlePromote = async (personId: string) => {
@@ -136,7 +138,8 @@ export default function MembersPage() {
           playerTag: linkingAccount.player_tag, 
           personId: linkTab === 'existing' ? selectedPersonId : null,
           newPersonName: linkTab === 'new' ? newPersonName : null,
-          isBaby: linkTab === 'new' ? newPersonIsBaby : false
+          isBaby: linkTab === 'new' ? newPersonIsBaby : false,
+          comment: linkTab === 'new' && newPersonIsBaby ? newPersonComment : null
         }),
       });
 
@@ -411,6 +414,23 @@ export default function MembersPage() {
                        </span>
                      </span>
                    </label>
+
+                   {newPersonIsBaby && (
+                     <div style={{ marginTop: 'var(--space-md)' }}>
+                       <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: 'var(--color-muted)', marginBottom: '8px' }}>Initial Note <span style={{ textTransform: 'none', fontWeight: '400' }}>(optional)</span></label>
+                       <textarea
+                         className="input"
+                         rows={3}
+                         placeholder="Why are we trialing them? Anything to watch during the trial..."
+                         value={newPersonComment}
+                         onChange={(e) => setNewPersonComment(e.target.value)}
+                         style={{ resize: 'vertical' }}
+                       />
+                       <p className="text-muted" style={{ fontSize: '0.72rem', marginTop: '6px' }}>
+                         Starts the comment thread. You and other leaders can add more notes during the trial.
+                       </p>
+                     </div>
+                   )}
                  </div>
                )}
              </div>
