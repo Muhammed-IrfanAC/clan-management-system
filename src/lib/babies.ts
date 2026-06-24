@@ -41,7 +41,22 @@ export async function expireBabies(): Promise<{ expired: number }> {
   if (error) throw error;
   if (!expired || expired.length === 0) return { expired: 0 };
 
-  const ids = expired.map((p) => p.id);
+  let ids = expired.map((p) => p.id);
+
+  // Guardrail: never auto-unlink or auto-delete a person that holds dashboard access.
+  // Access (player_accounts.access_enabled) is deliberately static — it can only be revoked
+  // manually in Settings, and must survive clan moves, role changes, and (here) a lapsed baby
+  // trial. If a leader granted a baby account access mid-trial, leave that persona untouched.
+  const { data: protectedAccounts, error: protectedError } = await supabase
+    .from('player_accounts')
+    .select('person_id')
+    .in('person_id', ids)
+    .eq('access_enabled', true);
+  if (protectedError) throw protectedError;
+
+  const protectedIds = new Set((protectedAccounts || []).map((a) => a.person_id));
+  if (protectedIds.size > 0) ids = ids.filter((id) => !protectedIds.has(id));
+  if (ids.length === 0) return { expired: 0 };
 
   // Break the persona link → accounts fall back to Unlinked (status untouched).
   const { error: unlinkError } = await supabase
