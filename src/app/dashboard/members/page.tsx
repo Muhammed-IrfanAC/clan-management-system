@@ -49,6 +49,14 @@ export default function MembersPage() {
     fetchData();
   }, [selectedClanId]);
 
+  // Honour a ?filter=babies shortcut from the dashboard "Current Babies" stat card.
+  useEffect(() => {
+    const f = new URLSearchParams(window.location.search).get('filter');
+    if (f === 'babies' || f === 'permanent' || f === 'all') {
+      setFilterType(f);
+    }
+  }, []);
+
   async function fetchData() {
     setLoading(true);
     try {

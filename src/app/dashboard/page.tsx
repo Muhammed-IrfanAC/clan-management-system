@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import {
   AlertTriangle,
@@ -14,7 +15,19 @@ import { useClan } from '@/lib/ClanContext';
 import LeadershipPerformance from '@/components/dashboard/LeadershipPerformance';
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { selectedClanId } = useClan();
+
+  // Make a stat card a shortcut into its underlying screen, with the relevant filter preset.
+  const cardLinkProps = (href: string) => ({
+    onClick: () => router.push(href),
+    role: 'button' as const,
+    tabIndex: 0,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(href); }
+    },
+    style: { cursor: 'pointer' },
+  });
   const [stats, setStats] = useState({
     highWarnings: 0,
     pendingAcknowledge: 0,
@@ -134,7 +147,7 @@ export default function DashboardPage() {
         gap: 'var(--space-lg)',
         marginBottom: 'var(--space-2xl)'
       }}>
-        <div className="card">
+        <div className="card" {...cardLinkProps('/dashboard/warnings?filter=high')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
             <div style={{ padding: 'var(--space-sm)', background: 'rgba(239, 68, 68, 0.1)', borderRadius: 'var(--radius-md)' }}>
               <AlertTriangle color="var(--color-danger)" size={24} />
@@ -145,7 +158,7 @@ export default function DashboardPage() {
           <p className="text-danger" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>Action required today</p>
         </div>
 
-        <div className="card">
+        <div className="card" {...cardLinkProps('/dashboard/warnings?filter=pending')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
             <div style={{ padding: 'var(--space-sm)', background: 'rgba(245, 158, 11, 0.1)', borderRadius: 'var(--radius-md)' }}>
               <Clock color="var(--color-warning)" size={24} />
@@ -156,7 +169,7 @@ export default function DashboardPage() {
           <p className="text-warning" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>Needs leadership review</p>
         </div>
 
-        <div className="card">
+        <div className="card" {...cardLinkProps('/dashboard/members')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
             <div style={{ padding: 'var(--space-sm)', background: 'rgba(34, 197, 94, 0.1)', borderRadius: 'var(--radius-md)' }}>
               <Users color="var(--color-cta)" size={24} />
@@ -167,7 +180,7 @@ export default function DashboardPage() {
           <p className="text-cta" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>Registered in registry</p>
         </div>
 
-        <div className="card">
+        <div className="card" {...cardLinkProps('/dashboard/members')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
             <div style={{ padding: 'var(--space-sm)', background: 'rgba(148, 163, 184, 0.1)', borderRadius: 'var(--radius-md)' }}>
               <TrendingUp color="var(--color-muted)" size={24} />
@@ -178,7 +191,7 @@ export default function DashboardPage() {
           <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>Awaiting assignment</p>
         </div>
 
-        <div className="card">
+        <div className="card" {...cardLinkProps('/dashboard/members?filter=babies')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
             <div style={{ padding: 'var(--space-sm)', background: 'rgba(245, 158, 11, 0.1)', borderRadius: 'var(--radius-md)' }}>
               <Baby color="var(--color-warning)" size={24} />

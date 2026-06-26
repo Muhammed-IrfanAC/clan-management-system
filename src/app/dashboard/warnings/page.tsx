@@ -91,6 +91,14 @@ export default function WarningsPage() {
     fetchData();
   }, [selectedClanId]);
 
+  // Honour a ?filter= shortcut from the dashboard stat cards (e.g. High Warnings / Pending).
+  useEffect(() => {
+    const f = new URLSearchParams(window.location.search).get('filter');
+    if (f === 'high' || f === 'pending' || f === 'acknowledged' || f === 'all') {
+      setFilterStatus(f);
+    }
+  }, []);
+
   useEffect(() => {
     // Identify the acting leader (and their persona) so edit controls appear on warnings
     // and notes they authored — or that any of their alts authored (same person_id).
