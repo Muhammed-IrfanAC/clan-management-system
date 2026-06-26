@@ -137,8 +137,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <button 
             className="btn btn-outline" 
             style={{ width: '100%', justifyContent: 'flex-start', border: 'none', color: 'var(--color-danger)' }}
-            onClick={() => {
-              document.cookie = 'clanops-auth=; Max-Age=0; path=/;';
+            onClick={async () => {
+              try {
+                await fetch('/api/auth/logout', { method: 'POST' });
+              } catch {
+                // ignore — redirect regardless
+              }
               window.location.href = '/login';
             }}
           >

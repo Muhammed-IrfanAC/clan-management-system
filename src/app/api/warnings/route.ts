@@ -39,10 +39,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
-    const { personId, playerTag, ruleId, description } = await request.json();
+    const { personId, playerTag, ruleId, description, loggedAt } = await request.json();
 
     if (!personId || !playerTag || !description) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    // Optional backdating: if a loggedAt is supplied it must be a valid date in the
+    // past (you can't log a violation in the future). Blank => log as "now".
+    let loggedAtIso = new Date().toISOString();
+    if (loggedAt) {
+      const parsed = new Date(loggedAt);
+      if (isNaN(parsed.getTime())) {
+        return NextResponse.json({ error: 'Invalid date provided' }, { status: 400 });
+      }
+      if (parsed.getTime() > Date.now()) {
+        return NextResponse.json({ error: 'Warning date cannot be in the future' }, { status: 400 });
+      }
+      loggedAtIso = parsed.toISOString();
     }
 
     const { data, error } = await supabase
@@ -53,7 +67,7 @@ export async function POST(request: NextRequest) {
         rule_id: ruleId || null,
         description,
         logged_by: decoded.playerTag,
-        logged_at: new Date().toISOString(),
+        logged_at: loggedAtIso,
         acknowledged: false
       }])
       .select()

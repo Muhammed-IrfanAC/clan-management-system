@@ -48,6 +48,8 @@ export default function WarningsPage() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [selectedRule, setSelectedRule] = useState<string>('');
   const [description, setDescription] = useState('');
+  const [backdate, setBackdate] = useState(false);
+  const [loggedAt, setLoggedAt] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -135,7 +137,8 @@ export default function WarningsPage() {
           personId: selectedPerson,
           playerTag: selectedAccount,
           ruleId: selectedRule || null,
-          description
+          description,
+          loggedAt: backdate && loggedAt ? loggedAt : null
         }),
       });
 
@@ -145,7 +148,12 @@ export default function WarningsPage() {
         setSelectedAccount('');
         setSelectedRule('');
         setDescription('');
+        setBackdate(false);
+        setLoggedAt('');
         fetchData();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Error logging warning');
       }
     } catch (err) { alert('Error logging warning'); }
   }
@@ -281,9 +289,28 @@ export default function WarningsPage() {
                    <div><p style={{ fontWeight: '700', margin: 0, color: 'var(--color-cta)' }}>Logging Guidance</p><p className="text-muted" style={{ margin: 0, marginTop: '4px' }}>{selectedRuleData.logging_guidance}</p></div>
                  </div>
                )}
-               <div style={{ marginBottom: 'var(--space-lg)' }}>
+               <div style={{ marginBottom: 'var(--space-md)' }}>
                   <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Context</label>
                   <textarea className="input" rows={4} placeholder="Describe the violation..." value={description} onChange={(e) => setDescription(e.target.value)} required />
+               </div>
+               <div style={{ marginBottom: 'var(--space-lg)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer', fontSize: '0.85rem' }}>
+                    <input type="checkbox" checked={backdate} onChange={(e) => { setBackdate(e.target.checked); if (!e.target.checked) setLoggedAt(''); }} style={{ width: '16px', height: '16px', cursor: 'pointer' }} />
+                    Backdate this warning
+                  </label>
+                  {backdate && (
+                    <div style={{ marginTop: 'var(--space-sm)' }}>
+                      <input
+                        type="datetime-local"
+                        className="input"
+                        value={loggedAt}
+                        max={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                        onChange={(e) => setLoggedAt(e.target.value)}
+                        required
+                      />
+                      <p className="text-muted" style={{ fontSize: '0.7rem', margin: '4px 0 0' }}>When the violation actually occurred. Must be in the past; escalation is calculated from this date.</p>
+                    </div>
+                  )}
                </div>
                <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Finalize Log</button>
             </form>

@@ -94,16 +94,17 @@ async function createAuthResponse(player: any) {
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
-    .setExpirationTime('24h')
+    .setExpirationTime('30d')
     .sign(JWT_SECRET);
 
   const response = NextResponse.json({ success: true, user: player });
-  
+
   response.cookies.set('clanops-auth', token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
-    maxAge: 60 * 60 * 24 // 1 day
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30 // 30 days; middleware slides this forward on activity
   });
 
   return response;
