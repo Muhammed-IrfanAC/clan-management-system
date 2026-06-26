@@ -14,7 +14,8 @@ export async function GET(request: NextRequest) {
       .select(`
         *,
         clan:clans (*),
-        person:persons (*)
+        person:persons (*),
+        activity_notes (*)
       `)
       .order('pinned', { ascending: false })
       .order('logged_at', { ascending: false });

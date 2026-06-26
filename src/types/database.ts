@@ -78,6 +78,16 @@ export interface LeadershipLog {
   related_person_id: string | null;
   description: string;
   pinned: boolean;
+  edited_at: string | null;
+}
+
+export interface ActivityNote {
+  id: string;
+  log_id: string;
+  author_tag: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface BabyComment {
