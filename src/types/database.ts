@@ -57,6 +57,16 @@ export interface Warning {
   acknowledged: boolean;
   acknowledged_at: string | null;
   notes: string | null;
+  edited_at: string | null;
+}
+
+export interface WarningNote {
+  id: string;
+  warning_id: string;
+  author_tag: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface LeadershipLog {

@@ -15,7 +15,8 @@ export async function GET(request: NextRequest) {
         *,
         person:persons (*),
         rule:rules (*),
-        player_account:player_accounts (*)
+        player_account:player_accounts (*),
+        warning_notes (*)
       `)
       .order('logged_at', { ascending: false });
 
