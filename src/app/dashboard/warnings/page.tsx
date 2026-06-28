@@ -14,7 +14,11 @@ import {
   ChevronDown,
   Pencil,
   MessageSquare,
-  Send
+  Send,
+  FileText,
+  Copy,
+  Check,
+  RotateCcw
 } from 'lucide-react';
 import { Warning, Person, PlayerAccount, Rule, WarningNote } from '@/types/database';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
@@ -30,6 +34,64 @@ type ExtendedWarning = Warning & {
 // An account joined with the person it's linked to, so selecting the account
 // resolves the person automatically (no need to remember the link).
 type AccountWithPerson = PlayerAccount & { person: Pick<Person, 'id' | 'display_name'> | null };
+
+// Platform character ceilings for the generated discipline summaries.
+//  - Discord: 2,000 per message on a free account (4,000 on Nitro) — target the safe floor.
+//  - Clash in-game clan mail: 256 per message for a leader/co-leader (1-hour cooldown).
+const DISCORD_LIMIT = 2000;
+const INGAME_LIMIT = 256;
+
+// One line describing a single warning: the rule (if any) plus the context note.
+function offenceLine(w: ExtendedWarning): string {
+  const rule = w.rule?.name?.trim();
+  const desc = w.description?.trim();
+  return rule ? (desc ? `${rule} — ${desc}` : rule) : (desc || 'War rule violation');
+}
+
+// The account names listed in war (deduped, account in-game names), in selection order.
+function accountNames(items: ExtendedWarning[]): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const w of items) {
+    const name = w.player_account.in_game_name;
+    if (name && !seen.has(name)) { seen.add(name); names.push(name); }
+  }
+  return names;
+}
+
+// Discord variant: rich markdown, grouped by account with each offence as a bullet,
+// closing on the standing "three strikes" notice. Generous 2,000-char budget.
+function buildDiscordSummary(items: ExtendedWarning[]): string {
+  const byAccount = new Map<string, string[]>();
+  for (const w of items) {
+    const name = w.player_account.in_game_name || w.player_account_tag;
+    if (!byAccount.has(name)) byAccount.set(name, []);
+    byAccount.get(name)!.push(offenceLine(w));
+  }
+
+  const lines: string[] = ['## ⚔️ War Rule Violations', '', 'The following players broke war rules:', ''];
+  for (const [name, offences] of byAccount) {
+    lines.push(`**${name}**`);
+    for (const o of offences) lines.push(`> • ${o}`);
+    lines.push('');
+  }
+  lines.push(
+    'Every player gets only **three strikes** within any three-month period before being removed from the clan. ' +
+    'We need everyone holding to these standards — the moment standards slip, results follow soon after. ' +
+    'Each player named above must now commit to not repeating this. ' +
+    '__You will not be included in war again until that commitment is made.__'
+  );
+  return lines.join('\n');
+}
+
+// In-game variant: one compact plain-text paragraph (no markdown), kept lean for the
+// 256-char clan-mail cap. The leader trims the list manually if the counter goes red.
+function buildIngameSummary(items: ExtendedWarning[]): string {
+  const names = accountNames(items);
+  const list = names.length ? names.join(', ') : '—';
+  return `The following players broke war rules: ${list}. ` +
+    `You will not be included in war again until you apologise and promise not to do this again.`;
+}
 
 // Local "YYYY-MM-DD" for <input type="date">. Backdating only cares about the day;
 // the time-of-day is defaulted (noon local) when the value is sent to the API.
@@ -81,6 +143,14 @@ export default function WarningsPage() {
   const [editDescription, setEditDescription] = useState('');
   const [editLoggedAt, setEditLoggedAt] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Summary builder — select warnings, then generate a Discord / in-game discipline notice.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showSummary, setShowSummary] = useState(false);
+  const [summaryTab, setSummaryTab] = useState<'discord' | 'ingame'>('discord');
+  const [discordText, setDiscordText] = useState('');
+  const [ingameText, setIngameText] = useState('');
+  const [copied, setCopied] = useState(false);
 
   // Notes state
   const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({});
@@ -345,6 +415,52 @@ export default function WarningsPage() {
     } catch (err) { alert('Error deleting warning'); }
   }
 
+  // Dismiss the summary drawer with Escape.
+  useEffect(() => {
+    if (!showSummary) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowSummary(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showSummary]);
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  // Build both templates from the current selection (resolved against the full list so a
+  // selection survives filter changes) and open the side drawer.
+  function openSummary() {
+    const items = warnings.filter(w => selectedIds.has(w.id));
+    if (items.length === 0) return;
+    setDiscordText(buildDiscordSummary(items));
+    setIngameText(buildIngameSummary(items));
+    setSummaryTab('discord');
+    setCopied(false);
+    setShowSummary(true);
+  }
+
+  // Re-run the template for the active tab, discarding manual edits on that tab only.
+  function regenerateActive() {
+    const items = warnings.filter(w => selectedIds.has(w.id));
+    if (summaryTab === 'discord') setDiscordText(buildDiscordSummary(items));
+    else setIngameText(buildIngameSummary(items));
+  }
+
+  async function copyActive() {
+    const text = summaryTab === 'discord' ? discordText : ingameText;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      alert('Could not copy to clipboard');
+    }
+  }
+
   const isHigh = (w: ExtendedWarning) => {
     if (w.acknowledged) return false;
     const loggedDate = new Date(w.logged_at);
@@ -363,6 +479,10 @@ export default function WarningsPage() {
 
   const selectedRuleData = rules.find(r => r.id === selectedRule);
 
+  const activeText = summaryTab === 'discord' ? discordText : ingameText;
+  const activeLimit = summaryTab === 'discord' ? DISCORD_LIMIT : INGAME_LIMIT;
+  const overLimit = activeText.length > activeLimit;
+
   return (
     <div>
       <div className="responsive-header">
@@ -378,6 +498,15 @@ export default function WarningsPage() {
              <option value="pending">Pending</option>
              <option value="acknowledged">Acknowledged</option>
            </select>
+           <button
+             className="btn btn-outline"
+             onClick={openSummary}
+             disabled={selectedIds.size === 0}
+             title={selectedIds.size === 0 ? 'Select one or more warnings first' : 'Generate a Discord / in-game discipline notice'}
+             style={{ whiteSpace: 'nowrap', opacity: selectedIds.size === 0 ? 0.5 : 1, cursor: selectedIds.size === 0 ? 'not-allowed' : 'pointer' }}
+           >
+             <FileText size={18} /> Generate Summary{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+           </button>
            <button className="btn btn-primary" onClick={() => setShowLogModal(true)} style={{ whiteSpace: 'nowrap' }}>
              <Plus size={20} /> Log New Warning
            </button>
@@ -395,12 +524,38 @@ export default function WarningsPage() {
           filteredWarnings.map(w => {
             const high = isHigh(w);
             return (
-              <div key={w.id} className="card" style={{ 
-                borderLeft: high ? '4px solid var(--color-danger)' : w.acknowledged ? '4px solid var(--color-cta)' : '4px solid var(--color-warning)'
+              <div key={w.id} className="card" style={{
+                borderLeft: high ? '4px solid var(--color-danger)' : w.acknowledged ? '4px solid var(--color-cta)' : '4px solid var(--color-warning)',
+                outline: selectedIds.has(w.id) ? '2px solid var(--color-cta)' : 'none',
+                outlineOffset: '-1px',
+                background: selectedIds.has(w.id) ? 'rgba(34, 197, 94, 0.06)' : undefined
               }}>
                 <div className="warning-card-layout">
                   <div style={{ flex: 1 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-xs)', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={selectedIds.has(w.id)}
+                        aria-label={`Select warning for ${w.person.display_name}`}
+                        title="Select for summary"
+                        onClick={() => toggleSelect(w.id)}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          width: '24px',
+                          height: '24px',
+                          flexShrink: 0,
+                          borderRadius: 'var(--radius-sm)',
+                          border: selectedIds.has(w.id) ? '2px solid var(--color-cta)' : '2px solid var(--color-muted)',
+                          background: selectedIds.has(w.id) ? 'var(--color-cta)' : 'transparent',
+                          color: '#fff',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {selectedIds.has(w.id) && <Check size={15} strokeWidth={3} />}
+                      </button>
                       <h3 style={{ margin: 0 }}>{w.person.display_name}</h3>
                       {high && <span style={{ fontSize: '0.65rem', padding: '2px 8px', background: 'var(--color-danger)', color: '#fff', borderRadius: '10px', fontWeight: '700' }}>HIGH ESCALATION</span>}
                       {w.acknowledged && <span style={{ fontSize: '0.65rem', padding: '2px 8px', background: 'rgba(34, 197, 94, 0.1)', color: 'var(--color-cta)', borderRadius: '10px', fontWeight: '700' }}>ACKNOWLEDGED</span>}
@@ -601,6 +756,80 @@ export default function WarningsPage() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Summary Drawer */}
+      {showSummary && (
+        <>
+          <div className="drawer-overlay" onClick={() => setShowSummary(false)} />
+          <aside className="summary-drawer" role="dialog" aria-label="Generate discipline summary">
+            <div style={{ padding: 'var(--space-lg)', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 'var(--space-md)' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.2rem' }}>War Rule Summary</h2>
+                <p className="text-muted" style={{ margin: '4px 0 0', fontSize: '0.8rem' }}>
+                  {selectedIds.size} warning{selectedIds.size === 1 ? '' : 's'} selected
+                </p>
+              </div>
+              <X onClick={() => setShowSummary(false)} style={{ cursor: 'pointer', flexShrink: 0 }} />
+            </div>
+
+            <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <button className={`tab-btn ${summaryTab === 'discord' ? 'active' : ''}`} onClick={() => { setSummaryTab('discord'); setCopied(false); }}>
+                Discord
+              </button>
+              <button className={`tab-btn ${summaryTab === 'ingame' ? 'active' : ''}`} onClick={() => { setSummaryTab('ingame'); setCopied(false); }}>
+                In-Game Mail
+              </button>
+            </div>
+
+            <div style={{ padding: 'var(--space-lg)', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, gap: 'var(--space-sm)' }}>
+              <p className="text-muted" style={{ fontSize: '0.75rem', margin: 0 }}>
+                {summaryTab === 'discord'
+                  ? 'Markdown-formatted for Discord. Paste into your announcements channel.'
+                  : 'Plain text for Clash clan mail. Leaders/co-leaders can send once per hour.'}
+              </p>
+              <textarea
+                className="input"
+                value={summaryTab === 'discord' ? discordText : ingameText}
+                onChange={(e) => summaryTab === 'discord' ? setDiscordText(e.target.value) : setIngameText(e.target.value)}
+                style={{ flex: 1, resize: 'none', fontFamily: summaryTab === 'discord' ? 'inherit' : 'var(--font-body)', lineHeight: 1.6, minHeight: '200px' }}
+                spellCheck
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-md)' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: overLimit ? 'var(--color-danger)' : 'var(--color-muted)' }}>
+                  {activeText.length} / {activeLimit}
+                </span>
+                <button
+                  onClick={regenerateActive}
+                  className="btn btn-outline"
+                  style={{ border: 'none', color: 'var(--color-muted)', padding: '0.4rem 0.75rem', fontSize: '0.75rem' }}
+                  title="Discard edits on this tab and rebuild from the selected warnings"
+                >
+                  <RotateCcw size={14} /> Reset
+                </button>
+              </div>
+
+              {overLimit && (
+                <p className="text-danger" style={{ fontSize: '0.75rem', margin: 0, lineHeight: 1.5 }}>
+                  {summaryTab === 'ingame'
+                    ? `Over the 256-character clan-mail limit by ${activeText.length - activeLimit}. Trim the player list or shorten the wording before sending.`
+                    : `Over Discord's 2,000-character single-message limit by ${activeText.length - activeLimit}. Shorten the text or split into two messages.`}
+                </p>
+              )}
+            </div>
+
+            <div style={{ padding: 'var(--space-lg)', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              <button
+                className="btn btn-primary"
+                onClick={copyActive}
+                style={{ width: '100%' }}
+              >
+                {copied ? <><Check size={18} /> Copied</> : <><Copy size={18} /> Copy {summaryTab === 'discord' ? 'Discord' : 'In-Game'} Text</>}
+              </button>
+            </div>
+          </aside>
+        </>
       )}
 
       <ConfirmationModal
