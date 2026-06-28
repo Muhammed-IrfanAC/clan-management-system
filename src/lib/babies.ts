@@ -73,6 +73,67 @@ export async function expireBabies(): Promise<{ expired: number }> {
 }
 
 /**
+ * Immediately expire babies who have LEFT the family entirely — i.e. hold no
+ * remaining active account in any family clan — instead of letting their trial
+ * clock run out. A baby is a probationary new member; if they leave during the
+ * trial we drop the persona at once so the registry stops listing them (a 'left'
+ * account is still a linked account, so without this the baby lingers as a member).
+ *
+ * A baby who merely MOVES between family clans still holds an active account
+ * elsewhere and is deliberately left untouched.
+ *
+ * IMPORTANT: only safe to run after a FULL (all-clan) sync, when every active
+ * clan's roster has been reconciled in one pass. Mid-partial-sync, a mover whose
+ * destination clan hasn't synced yet looks identical to a leaver (both sit at
+ * status 'left'), so calling this then could wrongly delete a mover. Shares
+ * expireBabies' dashboard-access guardrail.
+ */
+export async function expireDepartedBabies(): Promise<{ expired: number }> {
+  // All current babies.
+  const { data: babies, error } = await supabase
+    .from('persons')
+    .select('id')
+    .eq('is_baby', true);
+  if (error) throw error;
+  if (!babies || babies.length === 0) return { expired: 0 };
+
+  const babyIds = babies.map((b) => b.id);
+
+  // Their accounts, so we can tell who still sits in an active family clan.
+  const { data: accounts, error: acctError } = await supabase
+    .from('player_accounts')
+    .select('person_id, status, access_enabled')
+    .in('person_id', babyIds);
+  if (acctError) throw acctError;
+
+  // Still present in the family = has at least one active account.
+  const hasActive = new Set(
+    (accounts || []).filter((a) => a.status === 'active').map((a) => a.person_id)
+  );
+  // Never auto-unlink/delete a persona that holds dashboard access — access is
+  // static and removed only by a manual revoke (mirrors expireBabies).
+  const hasAccess = new Set(
+    (accounts || []).filter((a) => a.access_enabled).map((a) => a.person_id)
+  );
+
+  const departed = babyIds.filter((id) => !hasActive.has(id) && !hasAccess.has(id));
+  if (departed.length === 0) return { expired: 0 };
+
+  // Break the persona link (accounts fall back to Unlinked, status untouched)…
+  const { error: unlinkError } = await supabase
+    .from('player_accounts')
+    .update({ person_id: null })
+    .in('person_id', departed);
+  if (unlinkError) throw unlinkError;
+
+  // …and remove the departed baby person records.
+  const { error: deleteError } = await supabase.from('persons').delete().in('id', departed);
+  if (deleteError) throw deleteError;
+
+  return { expired: departed.length };
+}
+
+/**
  * Resolve a representative clan for a person (used to attribute a leadership log
  * to the right clan so clan-filtered graphs include it). Returns null if none.
  */

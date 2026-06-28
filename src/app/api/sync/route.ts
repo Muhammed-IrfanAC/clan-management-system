@@ -1,5 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { syncClan } from '@/lib/sync';
+import { expireDepartedBabies } from '@/lib/babies';
 import { supabase } from '@/lib/supabase';
 import { jwtVerify } from 'jose';
 
@@ -35,11 +36,17 @@ export async function POST(request: NextRequest) {
     if (!clans) return NextResponse.json({ success: true, count: 0 });
 
     const results = await Promise.all(clans.map(c => syncClan(c.id)));
-    
+
+    // Every active clan is now reconciled in this single pass, so a baby with no
+    // active account anywhere has genuinely left the family (not just moved between
+    // clans). Drop those personas immediately rather than waiting out the trial.
+    const { expired: departedBabies } = await expireDepartedBabies();
+
     return NextResponse.json({
       success: true,
       clansSynced: results.length,
-      totalUpdated: results.reduce((acc, r) => acc + r.count, 0)
+      totalUpdated: results.reduce((acc, r) => acc + r.count, 0),
+      departedBabies,
     });
 
   } catch (error: any) {
