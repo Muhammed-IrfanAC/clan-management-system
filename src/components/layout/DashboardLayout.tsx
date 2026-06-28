@@ -13,7 +13,8 @@ import {
   ChevronDown,
   RefreshCw,
   Menu,
-  X
+  X,
+  User
 } from 'lucide-react';
 import { useClan } from '@/lib/ClanContext';
 import { supabase } from '@/lib/supabase';
@@ -76,12 +77,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const { selectedClanId, setSelectedClanId, clans } = useClan();
   const [showClanDropdown, setShowClanDropdown] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   useEffect(() => {
     setIsSidebarOpen(false);
+    setShowUserMenu(false);
   }, [pathname]);
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // ignore — redirect regardless
+    }
+    window.location.href = '/login';
+  };
 
   useEffect(() => {
     async function fetchUser() {
@@ -132,24 +144,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <SidebarItem href="/dashboard/activity" icon={<History size={20} />} label="Activity Log" active={pathname === '/dashboard/activity'} />
           <SidebarItem href="/dashboard/settings" icon={<Settings size={20} />} label="Settings" active={pathname === '/dashboard/settings'} />
         </nav>
-
-        <div style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 'var(--space-lg)' }}>
-          <button 
-            className="btn btn-outline" 
-            style={{ width: '100%', justifyContent: 'flex-start', border: 'none', color: 'var(--color-danger)' }}
-            onClick={async () => {
-              try {
-                await fetch('/api/auth/logout', { method: 'POST' });
-              } catch {
-                // ignore — redirect regardless
-              }
-              window.location.href = '/login';
-            }}
-          >
-            <LogOut size={20} />
-            <span style={{ fontSize: '0.9rem', textTransform: 'uppercase' }}>Sign Out</span>
-          </button>
-        </div>
       </aside>
 
       {/* Main Content */}
@@ -215,23 +209,68 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-             <div className="user-info-text">
-               <p style={{ fontSize: '0.85rem', fontWeight: '600', margin: 0 }}>{user?.in_game_name || 'Leader'}</p>
-               <p style={{ fontSize: '0.65rem', color: 'var(--color-muted)', margin: 0, textTransform: 'uppercase' }}>{user?.db_role?.replace('_', ' ') || 'Super Admin'}</p>
+          <div style={{ position: 'relative' }}>
+             <div
+               style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', cursor: 'pointer' }}
+               onClick={() => setShowUserMenu(!showUserMenu)}
+             >
+               <div className="user-info-text">
+                 <p style={{ fontSize: '0.85rem', fontWeight: '600', margin: 0 }}>{user?.in_game_name || 'Leader'}</p>
+                 <p style={{ fontSize: '0.65rem', color: 'var(--color-muted)', margin: 0, textTransform: 'uppercase' }}>{user?.db_role?.replace('_', ' ') || 'Super Admin'}</p>
+               </div>
+               <div style={{
+                 width: '36px',
+                 height: '36px',
+                 borderRadius: 'var(--radius-md)',
+                 background: 'var(--color-secondary)',
+                 display: 'flex',
+                 alignItems: 'center',
+                 justifyContent: 'center',
+                 border: '1px solid rgba(255,255,255,0.1)'
+               }}>
+                 <Users size={18} />
+               </div>
              </div>
-             <div style={{ 
-               width: '36px', 
-               height: '36px', 
-               borderRadius: 'var(--radius-md)', 
-               background: 'var(--color-secondary)',
-               display: 'flex',
-               alignItems: 'center',
-               justifyContent: 'center',
-               border: '1px solid rgba(255,255,255,0.1)'
-             }}>
-               <Users size={18} />
-             </div>
+
+             {showUserMenu && (
+               <>
+               <div
+                 onClick={() => setShowUserMenu(false)}
+                 style={{ position: 'fixed', inset: 0, zIndex: 50 }}
+               />
+               <div style={{
+                 position: 'absolute',
+                 top: '100%',
+                 right: 0,
+                 marginTop: 'var(--space-sm)',
+                 background: 'var(--color-secondary)',
+                 border: '1px solid rgba(255,255,255,0.1)',
+                 borderRadius: 'var(--radius-md)',
+                 boxShadow: 'var(--shadow-lg)',
+                 width: '200px',
+                 zIndex: 60,
+                 overflow: 'hidden'
+               }}>
+                 {user?.person_id && (
+                   <Link
+                     href={`/dashboard/members/${user.person_id}`}
+                     onClick={() => setShowUserMenu(false)}
+                     style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', padding: 'var(--space-sm) var(--space-md)', fontSize: '0.85rem', color: 'var(--color-text)' }}
+                   >
+                     <User size={16} />
+                     <span>Profile</span>
+                   </Link>
+                 )}
+                 <button
+                   onClick={() => { setShowUserMenu(false); handleLogout(); }}
+                   style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', width: '100%', padding: 'var(--space-sm) var(--space-md)', fontSize: '0.85rem', color: 'var(--color-danger)', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+                 >
+                   <LogOut size={16} />
+                   <span>Sign Out</span>
+                 </button>
+               </div>
+               </>
+             )}
           </div>
         </header>
 
