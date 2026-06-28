@@ -27,6 +27,10 @@ type ExtendedWarning = Warning & {
   warning_notes: WarningNote[];
 };
 
+// An account joined with the person it's linked to, so selecting the account
+// resolves the person automatically (no need to remember the link).
+type AccountWithPerson = PlayerAccount & { person: Pick<Person, 'id' | 'display_name'> | null };
+
 // Local "YYYY-MM-DD" for <input type="date">. Backdating only cares about the day;
 // the time-of-day is defaulted (noon local) when the value is sent to the API.
 function toLocalDate(iso: string): string {
@@ -61,10 +65,9 @@ export default function WarningsPage() {
     message: ''
   });
 
-  // Log Modal State
-  const [persons, setPersons] = useState<Person[]>([]);
+  // Log Modal State — pick the account; the person is derived from its link.
+  const [accounts, setAccounts] = useState<AccountWithPerson[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<string>('');
-  const [personAccounts, setPersonAccounts] = useState<PlayerAccount[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<string>('');
   const [rules, setRules] = useState<Rule[]>([]);
   const [selectedRule, setSelectedRule] = useState<string>('');
@@ -161,8 +164,15 @@ export default function WarningsPage() {
       const { data: rulesData } = await supabase.from('rules').select('*');
       setRules(rulesData || []);
 
-      const { data: personsData } = await supabase.from('persons').select('*').order('display_name');
-      setPersons(personsData || []);
+      // Linked, active accounts only — a warning must attach to a person, and the
+      // person is taken from the account's link rather than chosen separately.
+      const { data: accountsData } = await supabase
+        .from('player_accounts')
+        .select('*, person:persons (id, display_name)')
+        .eq('status', 'active')
+        .not('person_id', 'is', null)
+        .order('in_game_name');
+      setAccounts((accountsData as AccountWithPerson[]) || []);
 
     } catch (err) {
       console.error('Error fetching data:', err);
@@ -171,14 +181,12 @@ export default function WarningsPage() {
     }
   }
 
-  useEffect(() => {
-    if (selectedPerson) {
-      supabase.from('player_accounts').select('*').eq('person_id', selectedPerson)
-        .then(({ data }) => setPersonAccounts(data || []));
-    } else {
-      setPersonAccounts([]);
-    }
-  }, [selectedPerson]);
+  // When an account is chosen, resolve (and lock in) its linked person.
+  function handleSelectAccount(tag: string) {
+    setSelectedAccount(tag);
+    const acct = accounts.find(a => a.player_tag === tag);
+    setSelectedPerson(acct?.person?.id || '');
+  }
 
   async function handleAcknowledge(id: string, current: boolean) {
     try {
@@ -500,21 +508,17 @@ export default function WarningsPage() {
               <X onClick={() => setShowLogModal(false)} style={{ cursor: 'pointer' }} />
             </div>
             <form onSubmit={handleLogWarning} style={{ padding: 'var(--space-lg)' }}>
-               <div className="responsive-grid-2" style={{ marginBottom: 'var(--space-md)' }}>
-                  <div>
-                    <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Person</label>
-                    <select className="input" value={selectedPerson} onChange={(e) => setSelectedPerson(e.target.value)} required>
-                      <option value="">Select Person...</option>
-                      {persons.map(p => <option key={p.id} value={p.id}>{p.display_name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Account</label>
-                    <select className="input" value={selectedAccount} onChange={(e) => setSelectedAccount(e.target.value)} required disabled={!selectedPerson}>
-                      <option value="">Select Account...</option>
-                      {personAccounts.map(a => <option key={a.player_tag} value={a.player_tag}>{a.in_game_name} ({a.player_tag})</option>)}
-                    </select>
-                  </div>
+               <div style={{ marginBottom: 'var(--space-md)' }}>
+                  <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Account</label>
+                  <select className="input" value={selectedAccount} onChange={(e) => handleSelectAccount(e.target.value)} required>
+                    <option value="">Select Account...</option>
+                    {accounts.map(a => <option key={a.player_tag} value={a.player_tag}>{a.in_game_name} ({a.player_tag}) — {a.person?.display_name}</option>)}
+                  </select>
+                  {selectedAccount && (
+                    <p className="text-muted" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>
+                      Person: <strong style={{ color: 'var(--color-text)' }}>{accounts.find(a => a.player_tag === selectedAccount)?.person?.display_name || '—'}</strong>
+                    </p>
+                  )}
                </div>
                <div style={{ marginBottom: 'var(--space-md)' }}>
                   <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Rule</label>
