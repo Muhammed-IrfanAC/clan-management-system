@@ -1,14 +1,28 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Shield, Sword, ChevronRight } from 'lucide-react';
 
+const REMEMBERED_TAG_KEY = 'clanops-remembered-tag';
+
 export default function LoginPage() {
   const [playerTag, setPlayerTag] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const router = useRouter();
+
+  // Prefill the tag saved on this device so returning users don't retype it.
+  useEffect(() => {
+    const saved = localStorage.getItem(REMEMBERED_TAG_KEY);
+    if (saved) {
+      setPlayerTag(saved);
+    } else {
+      // Nothing remembered yet — leave the checkbox on but the field empty.
+      setRememberMe(true);
+    }
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,6 +40,13 @@ export default function LoginPage() {
 
       if (!res.ok) {
         throw new Error(data.error || 'Login failed');
+      }
+
+      // Persist (or clear) the tag on this device based on the checkbox.
+      if (rememberMe) {
+        localStorage.setItem(REMEMBERED_TAG_KEY, playerTag.toUpperCase().replace('#', ''));
+      } else {
+        localStorage.removeItem(REMEMBERED_TAG_KEY);
       }
 
       router.push('/dashboard');
@@ -73,6 +94,9 @@ export default function LoginPage() {
               </span>
               <input
                 type="text"
+                name="playerTag"
+                autoComplete="username"
+                autoFocus
                 className="input"
                 placeholder="P98VC2..."
                 value={playerTag.replace('#', '')}
@@ -84,7 +108,26 @@ export default function LoginPage() {
             {error && <p className="text-danger" style={{ fontSize: '0.8rem', marginTop: 'var(--space-sm)' }}>{error}</p>}
           </div>
 
-          <button 
+          <label style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-sm)',
+            marginBottom: 'var(--space-lg)',
+            cursor: 'pointer',
+            fontSize: '0.85rem',
+            color: 'var(--color-muted)',
+            userSelect: 'none',
+          }}>
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              style={{ width: '1.1rem', height: '1.1rem', accentColor: 'var(--color-cta)', cursor: 'pointer' }}
+            />
+            Remember my tag on this device
+          </label>
+
+          <button
             type="submit" 
             className="btn btn-primary" 
             style={{ width: '100%', height: '3.5rem' }}
