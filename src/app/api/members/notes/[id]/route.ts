@@ -1,7 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 import { supabase } from '@/lib/supabase';
-import { isPersonBaby } from '@/lib/babies';
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
 
@@ -28,32 +27,29 @@ async function personIdForTag(tag: string): Promise<string | null> {
   return data?.person_id ?? null;
 }
 
-// Load a comment and enforce the two modification rules shared by edit + delete:
-// (1) the persona must still be in its baby trial; (2) only the comment's AUTHOR PERSON may
-// change it. Authorship is resolved at the person level, not the account level, so any alt
-// belonging to the same person as the original author can edit/delete it too.
-async function guardEditable(commentId: string, actorTag: string) {
-  const { data: comment } = await supabase
-    .from('baby_comments')
+// Load a note and enforce the modification rule shared by edit + delete: only the note's
+// AUTHOR PERSON may change it. Authorship is resolved at the person level, not the account
+// level, so any alt belonging to the same person as the original author can edit/delete it
+// too. Notes are editable for the lifetime of the member (no baby gate).
+async function guardEditable(noteId: string, actorTag: string) {
+  const { data: note } = await supabase
+    .from('member_notes')
     .select('id, person_id, author_tag')
-    .eq('id', commentId)
+    .eq('id', noteId)
     .maybeSingle();
-  if (!comment) return { error: NextResponse.json({ error: 'Comment not found' }, { status: 404 }) };
-  if (!(await isPersonBaby(comment.person_id))) {
-    return { error: NextResponse.json({ error: 'The baby trial has ended; comments are now read-only' }, { status: 403 }) };
-  }
+  if (!note) return { error: NextResponse.json({ error: 'Note not found' }, { status: 404 }) };
 
   // Fast path: same account. Otherwise allow when both tags resolve to the same person (alts).
-  if (comment.author_tag !== actorTag) {
+  if (note.author_tag !== actorTag) {
     const [authorPerson, actorPerson] = await Promise.all([
-      personIdForTag(comment.author_tag),
+      personIdForTag(note.author_tag),
       personIdForTag(actorTag),
     ]);
     if (!authorPerson || !actorPerson || authorPerson !== actorPerson) {
-      return { error: NextResponse.json({ error: 'Only the comment author can modify this comment' }, { status: 403 }) };
+      return { error: NextResponse.json({ error: 'Only the note author can modify this note' }, { status: 403 }) };
     }
   }
-  return { comment };
+  return { note };
 }
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -67,10 +63,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const { body } = await request.json();
     const trimmed = String(body ?? '').trim();
-    if (!trimmed) return NextResponse.json({ error: 'Comment body is required' }, { status: 400 });
+    if (!trimmed) return NextResponse.json({ error: 'Note body is required' }, { status: 400 });
 
     const { data, error } = await supabase
-      .from('baby_comments')
+      .from('member_notes')
       .update({ body: trimmed, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
@@ -78,7 +74,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (error) throw error;
     return NextResponse.json(data);
   } catch (error: any) {
-    console.error('API Baby Comment Error:', error);
+    console.error('API Member Note Error:', error);
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 }
@@ -92,11 +88,11 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const guard = await guardEditable(id, auth.actorTag!);
     if (guard.error) return guard.error;
 
-    const { error } = await supabase.from('baby_comments').delete().eq('id', id);
+    const { error } = await supabase.from('member_notes').delete().eq('id', id);
     if (error) throw error;
     return NextResponse.json({ success: true });
   } catch (error: any) {
-    console.error('API Baby Comment Error:', error);
+    console.error('API Member Note Error:', error);
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 }

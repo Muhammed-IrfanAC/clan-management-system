@@ -17,11 +17,10 @@ import {
   ArrowUpCircle,
   MessageSquare,
   Pencil,
-  Lock,
   Send
 } from 'lucide-react';
 import Link from 'next/link';
-import { Person, PlayerAccount, Warning, LeadershipLog, Clan, Rule, BabyComment } from '@/types/database';
+import { Person, PlayerAccount, Warning, LeadershipLog, Clan, Rule, MemberNote } from '@/types/database';
 import { babyDaysLeft } from '@/lib/babies';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import Toast, { ToastState } from '@/components/ui/Toast';
@@ -31,7 +30,7 @@ type FullPerson = Person & {
   player_accounts: (PlayerAccount & { clan: Clan })[];
   warnings: (Warning & { rule: Rule | null, player_account: PlayerAccount })[];
   activity_logs: LeadershipLog[];
-  baby_comments: BabyComment[];
+  member_notes: MemberNote[];
 };
 
 export default function PersonProfilePage({ params }: { params: Promise<{ id: string }> }) {
@@ -97,7 +96,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
             player_account:player_accounts (*)
           ),
           activity_logs:leadership_logs (*),
-          baby_comments (*)
+          member_notes (*)
         `)
         .eq('id', id)
         .single();
@@ -112,7 +111,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       // Resolve player_tags (warning loggers + baby-comment authors) to display names.
       const loggerTags = Array.from(new Set([
         ...((pData as FullPerson)?.warnings || []).map(w => w.logged_by),
-        ...((pData as FullPerson)?.baby_comments || []).map(c => c.author_tag),
+        ...((pData as FullPerson)?.member_notes || []).map(c => c.author_tag),
       ].filter(Boolean)));
       if (loggerTags.length) {
         const { data: loggers } = await supabase
@@ -157,7 +156,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
     if (!body) return;
     setPostingComment(true);
     try {
-      const res = await fetch('/api/babies/comments', {
+      const res = await fetch('/api/members/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ personId: id, body }),
@@ -178,7 +177,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
     if (!body) return;
     setSavingEdit(true);
     try {
-      const res = await fetch(`/api/babies/comments/${commentId}`, {
+      const res = await fetch(`/api/members/notes/${commentId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ body }),
@@ -197,7 +196,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
 
   async function handleDeleteComment(commentId: string) {
     try {
-      const res = await fetch(`/api/babies/comments/${commentId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/members/notes/${commentId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to delete');
       fetchPerson();
       setToast({ type: 'success', message: 'Note deleted.' });
@@ -300,44 +299,42 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
 
         {/* Right Column: History */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
-           {/* Baby Trial Notes (comment thread) */}
-           {(person.is_baby || person.baby_comments.length > 0) && (
+           {/* Member Notes (comment thread) — available for every member; baby-phase notes carry forward */}
+           {(
              <div className="card">
                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-                   <MessageSquare size={20} className="text-warning" />
-                   <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Trial Notes</h2>
+                   <MessageSquare size={20} color="var(--color-cta)" />
+                   <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Notes</h2>
                  </div>
-                 {!person.is_baby && (
-                   <span className="baby-badge" style={{ background: 'rgba(148,163,184,0.12)', borderColor: 'rgba(148,163,184,0.25)', color: 'var(--color-muted)' }}>
-                     <Lock size={11} /> Read-only
+                 {person.is_baby && (
+                   <span className="baby-badge">
+                     <Baby size={11} /> Baby trial
                    </span>
                  )}
                </div>
 
-               {person.is_baby && (
-                 <div style={{ marginBottom: person.baby_comments.length ? 'var(--space-lg)' : 0 }}>
-                   <textarea
-                     className="input"
-                     rows={2}
-                     placeholder="Add a note about this trial..."
-                     value={newComment}
-                     onChange={(e) => setNewComment(e.target.value)}
-                     style={{ resize: 'vertical' }}
-                   />
-                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'var(--space-sm)' }}>
-                     <button onClick={handleAddComment} disabled={postingComment || !newComment.trim()} className="btn btn-primary" style={{ padding: '0.45rem 1rem', fontSize: '0.8rem' }}>
-                       <Send size={14} /> {postingComment ? 'Posting...' : 'Post Note'}
-                     </button>
-                   </div>
+               <div style={{ marginBottom: person.member_notes.length ? 'var(--space-lg)' : 0 }}>
+                 <textarea
+                   className="input"
+                   rows={2}
+                   placeholder="Add a note about this member..."
+                   value={newComment}
+                   onChange={(e) => setNewComment(e.target.value)}
+                   style={{ resize: 'vertical' }}
+                 />
+                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'var(--space-sm)' }}>
+                   <button onClick={handleAddComment} disabled={postingComment || !newComment.trim()} className="btn btn-primary" style={{ padding: '0.45rem 1rem', fontSize: '0.8rem' }}>
+                     <Send size={14} /> {postingComment ? 'Posting...' : 'Post Note'}
+                   </button>
                  </div>
-               )}
+               </div>
 
-               {person.baby_comments.length === 0 ? (
-                 person.is_baby ? null : <p className="text-muted" style={{ padding: 'var(--space-md)', textAlign: 'center' }}>No notes were recorded during the trial.</p>
+               {person.member_notes.length === 0 ? (
+                 <p className="text-muted" style={{ padding: 'var(--space-md)', textAlign: 'center' }}>No notes yet.</p>
                ) : (
                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
-                   {[...person.baby_comments].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).map(c => {
+                   {[...person.member_notes].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()).map(c => {
                      // The acting user owns a note if it's from their account, or from an alt
                      // that shares their persona (same person_id) — mirrors the API guard.
                      const authorPid = authorPersons[c.author_tag] ?? null;
@@ -346,7 +343,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                        (!!myPersonId && authorPid !== null && authorPid === myPersonId);
                      const edited = c.updated_at && c.updated_at !== c.created_at;
                      return (
-                       <div key={c.id} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', borderLeft: '3px solid rgba(245, 158, 11, 0.5)' }}>
+                       <div key={c.id} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', borderLeft: '3px solid rgba(34, 197, 94, 0.4)' }}>
                          {editingCommentId === c.id ? (
                            <div>
                              <textarea className="input" rows={2} value={editDraft} onChange={(e) => setEditDraft(e.target.value)} style={{ resize: 'vertical' }} />
@@ -362,7 +359,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                                <span style={{ fontSize: '0.7rem' }} className="text-muted">
                                  {loggerNames[c.author_tag] || c.author_tag} • {new Date(c.created_at).toLocaleDateString()}{edited ? ' (edited)' : ''}
                                </span>
-                               {person.is_baby && mine && (
+                               {mine && (
                                  <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
                                    <button onClick={() => { setEditingCommentId(c.id); setEditDraft(c.body); }} style={{ background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }} title="Edit"><Pencil size={13} /></button>
                                    <button onClick={() => handleDeleteComment(c.id)} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete"><Trash2 size={13} /></button>

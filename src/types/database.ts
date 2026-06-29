@@ -90,7 +90,7 @@ export interface ActivityNote {
   updated_at: string;
 }
 
-export interface BabyComment {
+export interface MemberNote {
   id: string;
   person_id: string;
   author_tag: string;

@@ -172,31 +172,32 @@ export async function logBabyAction(params: {
 }
 
 /**
- * Whether a persona is currently in its baby trial (and therefore whether its
- * comment thread may be modified). Comments are append/edit/delete-able only while
- * is_baby = true; after promotion the thread is frozen as a record of the trial.
+ * Whether a persona exists. Notes used to be gated on the baby trial; they are now
+ * available for every member (a note started during the baby phase simply carries
+ * forward after promotion), so this just confirms the persona is real before insert.
  */
-export async function isPersonBaby(personId: string): Promise<boolean> {
-  const { data } = await supabase.from('persons').select('is_baby').eq('id', personId).maybeSingle();
-  return !!data?.is_baby;
+export async function personExists(personId: string): Promise<boolean> {
+  const { data } = await supabase.from('persons').select('id').eq('id', personId).maybeSingle();
+  return !!data;
 }
 
 /**
- * Add a comment to a baby's thread, attributed to the acting leader. Throws if the
- * persona is not (or no longer) a baby. Returns the inserted row.
+ * Add a note to a member's thread, attributed to the acting leader. Available for
+ * every member regardless of baby status — baby-phase notes carry forward. Throws if
+ * the persona no longer exists. Returns the inserted row.
  */
-export async function addBabyComment(params: {
+export async function addMemberNote(params: {
   personId: string;
   authorTag: string;
   body: string;
 }) {
   const body = params.body?.trim();
-  if (!body) throw new Error('Comment body is required');
-  if (!(await isPersonBaby(params.personId))) {
-    throw new Error('Comments can only be added while the member is in their baby trial');
+  if (!body) throw new Error('Note body is required');
+  if (!(await personExists(params.personId))) {
+    throw new Error('Member not found');
   }
   const { data, error } = await supabase
-    .from('baby_comments')
+    .from('member_notes')
     .insert([{ person_id: params.personId, author_tag: params.authorTag, body }])
     .select()
     .single();

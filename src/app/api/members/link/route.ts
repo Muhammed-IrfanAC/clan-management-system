@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { jwtVerify } from 'jose';
-import { logBabyAction, addBabyComment } from '@/lib/babies';
+import { logBabyAction, addMemberNote } from '@/lib/babies';
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
 
@@ -65,13 +65,13 @@ export async function POST(request: NextRequest) {
         description: `Recruited new baby: ${newPersonName}`,
       });
 
-      // Optional initial comment captured at link time. Non-fatal: a bad/empty note
+      // Optional initial note captured at link time. Non-fatal: a bad/empty note
       // must never break the link itself.
       if (actorTag && typeof comment === 'string' && comment.trim()) {
         try {
-          await addBabyComment({ personId: finalPersonId, authorTag: actorTag, body: comment });
+          await addMemberNote({ personId: finalPersonId, authorTag: actorTag, body: comment });
         } catch (e) {
-          console.error('Failed to add initial baby comment:', e);
+          console.error('Failed to add initial member note:', e);
         }
       }
     }

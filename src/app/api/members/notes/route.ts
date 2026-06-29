@@ -1,11 +1,11 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
-import { addBabyComment } from '@/lib/babies';
+import { addMemberNote } from '@/lib/babies';
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
 
-// POST: add a comment to a baby's thread. Attributed to the acting leader's player_tag.
-// Rejected (by addBabyComment) if the persona is not currently in its baby trial.
+// POST: add a note to a member's thread. Attributed to the acting leader's player_tag.
+// Available for every member (baby-phase notes carry forward after promotion).
 export async function POST(request: NextRequest) {
   try {
     const token = request.cookies.get('clanops-auth')?.value;
@@ -23,10 +23,10 @@ export async function POST(request: NextRequest) {
     const { personId, body } = await request.json();
     if (!personId) return NextResponse.json({ error: 'personId is required' }, { status: 400 });
 
-    const data = await addBabyComment({ personId, authorTag: actorTag, body });
+    const data = await addMemberNote({ personId, authorTag: actorTag, body });
     return NextResponse.json(data);
   } catch (error: any) {
-    console.error('API Baby Comment Error:', error);
+    console.error('API Member Note Error:', error);
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 }
