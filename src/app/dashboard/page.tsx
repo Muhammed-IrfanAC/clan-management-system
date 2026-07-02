@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useClan } from '@/lib/ClanContext';
 import LeadershipPerformance from '@/components/dashboard/LeadershipPerformance';
+import LeadershipContribution from '@/components/dashboard/LeadershipContribution';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -205,6 +206,11 @@ export default function DashboardPage() {
 
       {/* Leadership Performance */}
       <LeadershipPerformance selectedClanId={selectedClanId} />
+
+      {/* Leadership Contributions (onboarding recognition) */}
+      <div style={{ marginTop: 'var(--space-lg)' }}>
+        <LeadershipContribution selectedClanId={selectedClanId} />
+      </div>
     </div>
   );
 }
