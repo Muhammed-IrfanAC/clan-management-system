@@ -378,15 +378,26 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
            {/* Onboarding Timeline — a single inline checklist. Each row is either done (who/when)
                or pending with its own action button. Recording is allowed regardless of baby /
                graduated status, so a leader can backfill the checklist even after sync has already
-               auto-promoted the member from an in-game Elder promotion. */}
+               auto-promoted the member from an in-game Elder promotion. Any active leader (any role)
+               may mark a step, and undo their own. The card lingers for ONBOARDING_RETENTION_DAYS
+               after graduation so a leader who missed a step before the auto-promotion still has a
+               window to backfill, then retires to keep permanent-member profiles clean. */}
            {(() => {
              const events = [...(person.onboarding_events || [])].sort(
                (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
              );
              const status = deriveOnboardingStatus(events);
-             // Only show the card for members with an onboarding lifecycle — babies, or anyone with
-             // recorded events. Legacy permanent members (no events) stay clean.
-             if (!person.is_baby && events.length === 0) return null;
+             // Show the card for members with an onboarding lifecycle — babies, or anyone with
+             // recorded events. Legacy permanent members (no events) stay clean. After graduation the
+             // baby phase has ended (is_baby=false), so we keep the card for a 30-day backfill window
+             // measured from the promoted_elder event (sync always writes it on auto-promotion), then
+             // retire it. Non-baby members with events but no promotion never auto-retire.
+             const ONBOARDING_RETENTION_DAYS = 30;
+             const promotedAt = events.find(e => e.event_type === 'promoted_elder')?.created_at;
+             const retired =
+               !!promotedAt &&
+               Date.now() - new Date(promotedAt).getTime() > ONBOARDING_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+             if (!person.is_baby && (events.length === 0 || retired)) return null;
 
              // Clan assignment only becomes relevant once additional accounts have been registered.
              const hasAdditional = events.some(e => e.event_type === 'additional_account_registered');
