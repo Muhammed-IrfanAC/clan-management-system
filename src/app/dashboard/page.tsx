@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { useClan } from '@/lib/ClanContext';
 import LeadershipPerformance from '@/components/dashboard/LeadershipPerformance';
+import LeadershipContribution from '@/components/dashboard/LeadershipContribution';
+import OnboardingQueues from '@/components/dashboard/OnboardingQueues';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -203,8 +205,18 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Onboarding action queues (who needs a leadership action now) */}
+      <div style={{ marginBottom: 'var(--space-2xl)' }}>
+        <OnboardingQueues selectedClanId={selectedClanId} />
+      </div>
+
       {/* Leadership Performance */}
       <LeadershipPerformance selectedClanId={selectedClanId} />
+
+      {/* Leadership Contributions (onboarding recognition) */}
+      <div style={{ marginTop: 'var(--space-lg)' }}>
+        <LeadershipContribution selectedClanId={selectedClanId} />
+      </div>
     </div>
   );
 }

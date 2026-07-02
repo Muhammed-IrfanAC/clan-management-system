@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { fetchFromCoC, CoCPlayer } from '@/lib/coc-api';
 import { SignJWT } from 'jose';
+import { AccessRole } from '@/types/database';
 
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
 
@@ -16,70 +16,26 @@ export async function POST(request: Request) {
     // Normalized tag (uppercase, remove # if present)
     const normalizedTag = playerTag.startsWith('#') ? playerTag.toUpperCase() : `#${playerTag.toUpperCase()}`;
 
-    // Layer 2: Check DB first
-    const { data: dbPlayer, error: dbError } = await supabase
+    // Access is a property of the PERSON, not the account or the clan they currently sit in. We look
+    // up the account only to resolve its linked person, then gate purely on that person's access_role.
+    // Consequence (by design): ANY tag linked to an access-holding person can log in — including alts
+    // parked outside the family clans — and in-game rank / clan membership is no longer a login gate.
+    const { data: account } = await supabase
       .from('player_accounts')
-      .select('*')
+      .select('*, person:persons(access_role)')
       .eq('player_tag', normalizedTag)
-      .single();
+      .maybeSingle();
 
-    if (dbPlayer) {
-      if (!dbPlayer.access_enabled) {
-        return NextResponse.json({ error: 'Access denied for this player' }, { status: 403 });
-      }
-      return createAuthResponse(dbPlayer);
+    const accessRole =
+      (account as { person?: { access_role?: AccessRole | null } | null } | null)?.person?.access_role ?? null;
+
+    if (!account || !accessRole) {
+      // Either the tag isn't registered yet (accounts arrive via clan sync) or its person has not
+      // been granted access. Access is granted deliberately in Settings or directly in the DB.
+      return NextResponse.json({ error: 'This account has no dashboard access' }, { status: 403 });
     }
 
-    // Layer 1: Check CoC API
-    let cocPlayer: CoCPlayer;
-    try {
-      cocPlayer = await fetchFromCoC<CoCPlayer>(`/players/${encodeURIComponent(normalizedTag)}`);
-      console.log(`[Auth] Player: ${cocPlayer.name}, Role: ${cocPlayer.role}, Clan: ${cocPlayer.clan?.tag}`);
-    } catch (err: any) {
-      return NextResponse.json({ error: 'Player not found in Clash of Clans' }, { status: 404 });
-    }
-
-    // Check if player is in one of the family clans and is a leader/coleader
-    const { data: clans } = await supabase.from('clans').select('clan_tag');
-    const familyClanTags = clans?.map(c => c.clan_tag) || [];
-
-    if (!cocPlayer.clan || !familyClanTags.includes(cocPlayer.clan.tag)) {
-      return NextResponse.json({ error: 'Player is not in a registered clan family' }, { status: 403 });
-    }
-
-    const isAuthorizedRole = ['leader', 'coLeader'].includes(cocPlayer.role);
-    if (!isAuthorizedRole) {
-      return NextResponse.json({ error: 'Only Leaders and Co-Leaders can access the dashboard' }, { status: 403 });
-    }
-
-    // Create entry in DB (Layer 1 onboarding)
-    // First, check if there's a person for this player or create one
-    const { data: person } = await supabase
-      .from('persons')
-      .insert([{ display_name: cocPlayer.name }])
-      .select()
-      .single();
-
-    const { data: newPlayer, error: insertError } = await supabase
-      .from('player_accounts')
-      .insert([{
-        player_tag: normalizedTag,
-        person_id: person?.id,
-        clan_id: (await supabase.from('clans').select('id').eq('clan_tag', cocPlayer.clan.tag).single()).data?.id,
-        db_role: cocPlayer.role === 'leader' ? 'leader' : 'co_leader',
-        access_enabled: true,
-        in_game_name: cocPlayer.name,
-        th_level: cocPlayer.townHallLevel,
-        status: 'active'
-      }])
-      .select()
-      .single();
-
-    if (insertError) {
-      return NextResponse.json({ error: 'Failed to create leadership entry' }, { status: 500 });
-    }
-
-    return createAuthResponse(newPlayer);
+    return createAuthResponse(account, accessRole);
 
   } catch (error: any) {
     console.error('Auth error:', error);
@@ -87,10 +43,10 @@ export async function POST(request: Request) {
   }
 }
 
-async function createAuthResponse(player: any) {
-  const token = await new SignJWT({ 
+async function createAuthResponse(player: any, role: AccessRole) {
+  const token = await new SignJWT({
     playerTag: player.player_tag,
-    role: player.db_role 
+    role,
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()

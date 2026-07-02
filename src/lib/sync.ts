@@ -1,6 +1,8 @@
 import { supabase } from './supabase';
 import { fetchFromCoC, CoCClan } from './coc-api';
 import { PlayerAccount, DatabaseRole } from '@/types/database';
+import { promoteBaby, logBabyAction, recruiterTagForPerson } from './babies';
+import { addOnboardingEvent } from './onboarding';
 
 export async function syncClan(clanId: string) {
   try {
@@ -42,20 +44,33 @@ export async function syncClan(clanId: string) {
     const upsertData = [];
     const now = new Date().toISOString();
 
+    // Babies auto-graduate when an in-game promotion is detected. We capture the (person_id, clan)
+    // for any account whose CoC role climbs from 'member' to 'elder' or higher, then reconcile
+    // against persons.is_baby AFTER the upsert (the pre-sync role is only known here, before it is
+    // overwritten). Permanent members are never included — the is_baby check happens post-upsert.
+    const promotionCandidates: { personId: string; clanId: string }[] = [];
+
     for (const member of cocMembers) {
       const existing = existingByTag.get(member.tag);
-      
+
       // Determine role - only use CoC role if not already a leader/coLeader in DB
       let role: DatabaseRole = 'member';
       if (member.role === 'leader') role = 'leader';
       else if (member.role === 'coLeader') role = 'co_leader';
       else if (member.role === 'admin') role = 'elder';
 
-      // Role Protection Rule: Sync never overwrites leadership table roles
-      const finalRole = (existing && ['leader', 'co_leader'].includes(existing.db_role)) 
-        ? existing.db_role 
-        : role;
+      // Auto-promotion signal: an account that was 'member' last sync and now reads elder+ in game.
+      if (
+        existing?.person_id &&
+        existing.db_role === 'member' &&
+        (role === 'elder' || role === 'co_leader' || role === 'leader')
+      ) {
+        promotionCandidates.push({ personId: existing.person_id, clanId });
+      }
 
+      // db_role is a PURE clan-status mirror now — write the live in-game rank unconditionally.
+      // Dashboard permission lives on persons.access_role and is untouched by sync, so there is no
+      // longer any role to "protect" here (this replaces the old Role Protection Rule).
       upsertData.push({
         player_tag: member.tag,
         clan_id: clanId,
@@ -64,12 +79,11 @@ export async function syncClan(clanId: string) {
         trophies: member.trophies,
         donations: member.donations,
         donations_received: member.donationsReceived,
-        db_role: finalRole,
+        db_role: role,
         status: 'active',
         last_synced_at: now,
         // Keep existing person_id if present
         person_id: existing?.person_id || null,
-        access_enabled: existing?.access_enabled ?? (finalRole === 'leader' || finalRole === 'co_leader'),
         added_at: existing?.added_at || now,
       });
     }
@@ -86,6 +100,44 @@ export async function syncClan(clanId: string) {
         .upsert(upsertData);
       
       if (upsertError) throw upsertError;
+    }
+
+    // 6b. Auto-promote babies whose in-game role climbed to elder+. Only persons still flagged
+    // is_baby are graduated; permanent members are untouched even if their CoC role reads member.
+    // Non-fatal: a promotion-logging failure must never break the sync itself.
+    if (promotionCandidates.length > 0) {
+      try {
+        const uniqueByPerson = new Map(promotionCandidates.map((c) => [c.personId, c]));
+        const candidateIds = Array.from(uniqueByPerson.keys());
+        const { data: babies } = await supabase
+          .from('persons')
+          .select('id')
+          .in('id', candidateIds)
+          .eq('is_baby', true);
+
+        for (const baby of babies || []) {
+          const { clanId: cId } = uniqueByPerson.get(baby.id)!;
+          await promoteBaby(baby.id);
+          // System-recorded graduation (the CoC API never reveals who promoted in-game).
+          await addOnboardingEvent({
+            personId: baby.id,
+            eventType: 'promoted_elder',
+            actorTag: null,
+            clanId: cId,
+            metadata: { source: 'sync' },
+          });
+          // Credit the ORIGINAL recruiter for the successful onboarding ("Babies Made").
+          await logBabyAction({
+            loggedBy: await recruiterTagForPerson(baby.id),
+            category: 'promotion',
+            personId: baby.id,
+            clanId: cId,
+            description: 'Auto-promoted to Elder (in-game promotion detected)',
+          });
+        }
+      } catch (promoErr) {
+        console.error('Auto-promotion during sync failed:', promoErr);
+      }
     }
 
     if (leftTags.length > 0) {
@@ -111,18 +163,33 @@ export async function syncClan(clanId: string) {
     const cleanupDate = new Date();
     cleanupDate.setDate(cleanupDate.getDate() - cleanupDays);
 
-    // Never auto-delete accounts that hold dashboard access (registered leaders/co-leaders).
-    // Their access must only be removed by an explicit manual revoke in Settings (which sets
-    // access_enabled = false), guaranteeing they cannot lose access just by hopping between
-    // family clans or sitting in 'left' state past the cleanup window.
-    const { error: cleanupError } = await supabase
+    // Never auto-delete an account whose PERSON holds dashboard access. Access is removed only by an
+    // explicit manual revoke in Settings, so an access-holder (or their alt) must survive a 'left'
+    // state past the cleanup window rather than being silently deleted. Access now lives on the
+    // person, so we filter candidates against the set of access-holding person_ids before deleting.
+    const { data: accessPersons } = await supabase
+      .from('persons')
+      .select('id')
+      .not('access_role', 'is', null);
+    const accessIds = new Set((accessPersons || []).map((p) => p.id));
+
+    const { data: staleAccounts } = await supabase
       .from('player_accounts')
-      .delete()
+      .select('player_tag, person_id')
       .eq('status', 'left')
-      .eq('access_enabled', false)
       .lt('last_synced_at', cleanupDate.toISOString());
-    
-    if (cleanupError) console.error('Cleanup error:', cleanupError);
+
+    const deletableTags = (staleAccounts || [])
+      .filter((a) => !a.person_id || !accessIds.has(a.person_id))
+      .map((a) => a.player_tag);
+
+    if (deletableTags.length > 0) {
+      const { error: cleanupError } = await supabase
+        .from('player_accounts')
+        .delete()
+        .in('player_tag', deletableTags);
+      if (cleanupError) console.error('Cleanup error:', cleanupError);
+    }
 
     return { success: true, count: upsertData.length, left: leftTags.length };
 

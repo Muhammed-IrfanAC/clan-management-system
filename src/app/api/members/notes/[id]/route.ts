@@ -1,21 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { jwtVerify } from 'jose';
 import { supabase } from '@/lib/supabase';
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
-
-async function authorize(request: NextRequest) {
-  const token = request.cookies.get('clanops-auth')?.value;
-  if (!token) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-  try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
-    const actorTag = payload.playerTag as string | undefined;
-    if (!actorTag) return { error: NextResponse.json({ error: 'Invalid token' }, { status: 401 }) };
-    return { actorTag };
-  } catch {
-    return { error: NextResponse.json({ error: 'Invalid token' }, { status: 401 }) };
-  }
-}
+import { hasCapability, authorizeActive as authorize } from '@/lib/auth-server';
 
 // Resolve a player_tag to the person (persona) it is linked to, if any.
 async function personIdForTag(tag: string): Promise<string | null> {
@@ -45,7 +30,7 @@ async function guardEditable(noteId: string, actorTag: string) {
       personIdForTag(note.author_tag),
       personIdForTag(actorTag),
     ]);
-    if (!authorPerson || !actorPerson || authorPerson !== actorPerson) {
+    if ((!authorPerson || !actorPerson || authorPerson !== actorPerson) && !(await hasCapability(actorTag, 'content.override'))) {
       return { error: NextResponse.json({ error: 'Only the note author can modify this note' }, { status: 403 }) };
     }
   }

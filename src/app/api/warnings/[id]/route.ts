@@ -1,21 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { jwtVerify } from 'jose';
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
-
-async function authorize(request: NextRequest) {
-  const token = request.cookies.get('clanops-auth')?.value;
-  if (!token) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-  try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
-    const actorTag = payload.playerTag as string | undefined;
-    if (!actorTag) return { error: NextResponse.json({ error: 'Invalid token' }, { status: 401 }) };
-    return { actorTag };
-  } catch {
-    return { error: NextResponse.json({ error: 'Invalid token' }, { status: 401 }) };
-  }
-}
+import { hasCapability, authorizeActive as authorize } from '@/lib/auth-server';
 
 // Resolve a player_tag to the persona it is linked to, if any.
 async function personIdForTag(tag: string): Promise<string | null> {
@@ -73,7 +58,8 @@ export async function PATCH(
       .maybeSingle();
     if (!existing) return NextResponse.json({ error: 'Warning not found' }, { status: 404 });
 
-    if (!(await isAuthor(existing.logged_by, auth.actorTag!))) {
+    // Author-only, unless the actor holds the override capability (leaders / super admin).
+    if (!(await isAuthor(existing.logged_by, auth.actorTag!)) && !(await hasCapability(auth.actorTag!, 'content.override'))) {
       return NextResponse.json({ error: 'Only the warning author can edit it' }, { status: 403 });
     }
 
@@ -122,6 +108,17 @@ export async function DELETE(
     const { id } = await params;
     const auth = await authorize(request);
     if (auth.error) return auth.error;
+
+    // Deleting a warning is a modification — author-only, unless the actor can override.
+    const { data: existing } = await supabase
+      .from('warnings')
+      .select('logged_by')
+      .eq('id', id)
+      .maybeSingle();
+    if (!existing) return NextResponse.json({ error: 'Warning not found' }, { status: 404 });
+    if (!(await isAuthor(existing.logged_by, auth.actorTag!)) && !(await hasCapability(auth.actorTag!, 'content.override'))) {
+      return NextResponse.json({ error: 'Only the warning author can delete it' }, { status: 403 });
+    }
 
     const { error } = await supabase.from('warnings').delete().eq('id', id);
     if (error) throw error;

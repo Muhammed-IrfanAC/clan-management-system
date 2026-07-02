@@ -1,8 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { jwtVerify } from 'jose';
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
+import { authorizeActive } from '@/lib/auth-server';
 
 // POST: add a progress note to a warning, attributed to the acting leader's player_tag.
 // Any leader may add a note; only the author person may later edit/delete it.
@@ -12,17 +10,9 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const token = request.cookies.get('clanops-auth')?.value;
-    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    let actorTag: string | undefined;
-    try {
-      const { payload } = await jwtVerify(token, JWT_SECRET);
-      actorTag = payload.playerTag as string | undefined;
-    } catch {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
-    if (!actorTag) return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    const auth = await authorizeActive(request);
+    if (auth.error) return auth.error;
+    const actorTag = auth.actorTag;
 
     const { body } = await request.json();
     const trimmed = String(body ?? '').trim();

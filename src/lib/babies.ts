@@ -44,17 +44,17 @@ export async function expireBabies(): Promise<{ expired: number }> {
   let ids = expired.map((p) => p.id);
 
   // Guardrail: never auto-unlink or auto-delete a person that holds dashboard access.
-  // Access (player_accounts.access_enabled) is deliberately static — it can only be revoked
-  // manually in Settings, and must survive clan moves, role changes, and (here) a lapsed baby
-  // trial. If a leader granted a baby account access mid-trial, leave that persona untouched.
-  const { data: protectedAccounts, error: protectedError } = await supabase
-    .from('player_accounts')
-    .select('person_id')
-    .in('person_id', ids)
-    .eq('access_enabled', true);
+  // Access (persons.access_role) is deliberately static — it can only be revoked manually in
+  // Settings, and must survive clan moves, role changes, and (here) a lapsed baby trial. If a
+  // leader granted this baby's person access mid-trial, leave that persona untouched.
+  const { data: protectedPersons, error: protectedError } = await supabase
+    .from('persons')
+    .select('id')
+    .in('id', ids)
+    .not('access_role', 'is', null);
   if (protectedError) throw protectedError;
 
-  const protectedIds = new Set((protectedAccounts || []).map((a) => a.person_id));
+  const protectedIds = new Set((protectedPersons || []).map((p) => p.id));
   if (protectedIds.size > 0) ids = ids.filter((id) => !protectedIds.has(id));
   if (ids.length === 0) return { expired: 0 };
 
@@ -102,7 +102,7 @@ export async function expireDepartedBabies(): Promise<{ expired: number }> {
   // Their accounts, so we can tell who still sits in an active family clan.
   const { data: accounts, error: acctError } = await supabase
     .from('player_accounts')
-    .select('person_id, status, access_enabled')
+    .select('person_id, status')
     .in('person_id', babyIds);
   if (acctError) throw acctError;
 
@@ -110,11 +110,15 @@ export async function expireDepartedBabies(): Promise<{ expired: number }> {
   const hasActive = new Set(
     (accounts || []).filter((a) => a.status === 'active').map((a) => a.person_id)
   );
-  // Never auto-unlink/delete a persona that holds dashboard access — access is
-  // static and removed only by a manual revoke (mirrors expireBabies).
-  const hasAccess = new Set(
-    (accounts || []).filter((a) => a.access_enabled).map((a) => a.person_id)
-  );
+  // Never auto-unlink/delete a persona that holds dashboard access — access is static and
+  // removed only by a manual revoke (mirrors expireBabies). Access now lives on the person.
+  const { data: accessPersons, error: accessError } = await supabase
+    .from('persons')
+    .select('id')
+    .in('id', babyIds)
+    .not('access_role', 'is', null);
+  if (accessError) throw accessError;
+  const hasAccess = new Set((accessPersons || []).map((p) => p.id));
 
   const departed = babyIds.filter((id) => !hasActive.has(id) && !hasAccess.has(id));
   if (departed.length === 0) return { expired: 0 };
@@ -203,6 +207,24 @@ export async function addMemberNote(params: {
     .single();
   if (error) throw error;
   return data;
+}
+
+/**
+ * Resolve the player_tag of the leader who originally RECRUITED a person — the `logged_by`
+ * of their earliest 'recruitment' leadership_log. Used to credit the recruiter for a
+ * successful onboarding ("Babies Made") when an in-game promotion is auto-detected during
+ * sync, since the CoC API never reveals who performed the promotion. Returns null if unknown.
+ */
+export async function recruiterTagForPerson(personId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('leadership_logs')
+    .select('logged_by')
+    .eq('category', 'recruitment')
+    .eq('related_person_id', personId)
+    .order('logged_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return data?.logged_by ?? null;
 }
 
 /**

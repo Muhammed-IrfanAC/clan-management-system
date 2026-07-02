@@ -19,13 +19,17 @@ export async function GET(request: NextRequest) {
 
     const { data: user, error } = await supabase
       .from('player_accounts')
-      .select('*')
+      .select('*, person:persons(access_role)')
       .eq('player_tag', decoded.playerTag)
       .single();
 
     if (error || !user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
-    return NextResponse.json({ user });
+    // The LIVE dashboard permission is the linked person's access_role (null = access revoked).
+    // Resolving it here means the UI reflects a grant/revoke without a re-login.
+    const role = (user as { person?: { access_role?: string | null } | null }).person?.access_role ?? null;
+
+    return NextResponse.json({ user, role });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
