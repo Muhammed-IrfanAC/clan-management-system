@@ -14,8 +14,7 @@ import {
   Check,
   ChevronRight,
   Baby,
-  Clock,
-  ArrowUpCircle
+  Clock
 } from 'lucide-react';
 import { Person, PlayerAccount, Clan } from '@/types/database';
 import { babyDaysLeft } from '@/lib/babies';
@@ -43,7 +42,6 @@ export default function MembersPage() {
   const [newPersonIsBaby, setNewPersonIsBaby] = useState(false);
   const [newPersonComment, setNewPersonComment] = useState('');
   const [isLinking, setIsLinking] = useState(false);
-  const [promotingId, setPromotingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -113,23 +111,6 @@ export default function MembersPage() {
     setNewPersonName(account.in_game_name);
     setNewPersonIsBaby(false);
     setNewPersonComment('');
-  };
-
-  const handlePromote = async (personId: string) => {
-    setPromotingId(personId);
-    try {
-      const res = await fetch(`/api/persons/${personId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'promote' }),
-      });
-      if (!res.ok) throw new Error('Failed to promote');
-      fetchData();
-    } catch (err) {
-      alert('Error promoting member');
-    } finally {
-      setPromotingId(null);
-    }
   };
 
   const handleLinkSubmit = async () => {
@@ -302,16 +283,6 @@ export default function MembersPage() {
                 </div>
 
                 <div className="member-card-actions">
-                  {member.is_baby && (
-                    <button
-                      onClick={() => handlePromote(member.id)}
-                      disabled={promotingId === member.id}
-                      className="btn btn-primary"
-                      style={{ padding: '0.6rem 1rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
-                    >
-                      <ArrowUpCircle size={16} /> {promotingId === member.id ? 'Promoting...' : 'Promote'}
-                    </button>
-                  )}
                   <Link href={`/dashboard/members/${member.id}`} className="btn btn-outline" style={{ padding: '0.6rem 1rem', fontSize: '0.8rem' }}>
                     Open Dossier <ChevronRight size={16} />
                   </Link>

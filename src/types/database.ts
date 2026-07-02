@@ -114,6 +114,7 @@ export type OnboardingEventType =
   | 'assigned_clan'
   | 'invited_discord'
   | 'joined_discord'
+  | 'discord_waived'      // member has no Discord — the invite/join steps are skipped, not pending
   | 'promoted_elder';
 
 export interface OnboardingEvent {

@@ -47,6 +47,7 @@ export const MANUAL_EVENT_TYPES: OnboardingEventType[] = [
   'assigned_clan',
   'invited_discord',
   'joined_discord',
+  'discord_waived',
 ];
 
 export interface OnboardingStatus {
@@ -67,6 +68,13 @@ export function deriveOnboardingStatus(events: OnboardingEvent[]): OnboardingSta
   const attemptsUsed = attempts.length;
   const replied = attempts.some((e) => e.outcome === 'replied');
   const completed = new Set(events.map((e) => e.event_type));
+
+  // "No Discord" waives both Discord steps: treat them as satisfied so the pipeline advances and
+  // the member drops out of the Discord queue instead of stalling at "Invited, not joined".
+  if (completed.has('discord_waived')) {
+    completed.add('invited_discord');
+    completed.add('joined_discord');
+  }
 
   const nextStep = PIPELINE.find((step) => {
     // A repeatable step never blocks the pipeline; treat it as "in progress" not a gate.

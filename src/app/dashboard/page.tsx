@@ -14,6 +14,7 @@ import {
 import { useClan } from '@/lib/ClanContext';
 import LeadershipPerformance from '@/components/dashboard/LeadershipPerformance';
 import LeadershipContribution from '@/components/dashboard/LeadershipContribution';
+import OnboardingQueues from '@/components/dashboard/OnboardingQueues';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -202,6 +203,11 @@ export default function DashboardPage() {
           <h2 style={{ fontSize: '2.5rem', margin: 0 }}>{loading ? '...' : stats.currentBabies}</h2>
           <p className="text-warning" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>In promotion trial</p>
         </div>
+      </div>
+
+      {/* Onboarding action queues (who needs a leadership action now) */}
+      <div style={{ marginBottom: 'var(--space-2xl)' }}>
+        <OnboardingQueues selectedClanId={selectedClanId} />
       </div>
 
       {/* Leadership Performance */}

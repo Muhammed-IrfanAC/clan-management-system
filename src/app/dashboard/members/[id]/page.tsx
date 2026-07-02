@@ -26,7 +26,8 @@ import {
   Circle,
   Route,
   X,
-  RotateCcw
+  RotateCcw,
+  MinusCircle
 } from 'lucide-react';
 import Link from 'next/link';
 import { Person, PlayerAccount, Warning, LeadershipLog, Clan, Rule, MemberNote, OnboardingEvent, OnboardingEventType } from '@/types/database';
@@ -58,6 +59,7 @@ const EVENT_LABELS: Record<OnboardingEventType, string> = {
   assigned_clan: 'Clan assigned',
   invited_discord: 'Invited to Discord',
   joined_discord: 'Joined Discord',
+  discord_waived: 'No Discord',
   promoted_elder: 'Promoted to Elder',
 };
 
@@ -388,6 +390,9 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
 
              // Clan assignment only becomes relevant once additional accounts have been registered.
              const hasAdditional = events.some(e => e.event_type === 'additional_account_registered');
+             // "No Discord" waiver: skips both Discord steps rather than leaving them pending.
+             const waiveEvent = events.find(e => e.event_type === 'discord_waived') || null;
+             const discordWaived = !!waiveEvent;
              const clanName = (cid: string | null) => familyClans.find(c => c.id === cid)?.display_name || 'clan';
              const canRemove = (ev: OnboardingEvent) =>
                !ev.id.startsWith('temp-') &&           // still saving — not yet removable
@@ -461,7 +466,18 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                      </select>
                    );
                  case 'invited':
-                   return <button onClick={() => recordOnboardingEvent('invited_discord')} className="btn btn-outline" style={btn}>Mark done</button>;
+                   return (
+                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                       <button
+                         onClick={() => recordOnboardingEvent('discord_waived')}
+                         style={{ background: 'transparent', border: 'none', color: 'var(--color-muted)', fontSize: '0.7rem', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                         title="This member has no Discord — skip both Discord steps"
+                       >
+                         No Discord
+                       </button>
+                       <button onClick={() => recordOnboardingEvent('invited_discord')} className="btn btn-outline" style={btn}>Mark done</button>
+                     </span>
+                   );
                  case 'joined':
                    return <button onClick={() => recordOnboardingEvent('joined_discord')} className="btn btn-outline" style={btn}>Mark done</button>;
                  default:
@@ -497,9 +513,35 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                      const stepEvents = events.filter(e => step.eventTypes.includes(e.event_type));
                      const isEngagement = step.key === 'engagement';
                      const isPromoted = step.key === 'promoted';
+                     // Discord steps are "skipped" (not pending, not done) when the member has no Discord.
+                     const waivedSkip = (step.key === 'invited' || step.key === 'joined') && discordWaived && stepEvents.length === 0;
                      const done = isEngagement ? status.replied : stepEvents.length > 0;
                      const Icon = STEP_ICONS[step.icon] || Circle;
                      const primary = stepEvents[stepEvents.length - 1];
+
+                     // Skipped Discord row: muted "No Discord" state, with Undo on the first row.
+                     if (waivedSkip) {
+                       return (
+                         <div key={step.key} style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'flex-start', padding: 'var(--space-sm) 0' }}>
+                           <div style={{ width: 24, height: 24, flexShrink: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                             <MinusCircle size={13} color="var(--color-muted)" />
+                           </div>
+                           <div style={{ flex: 1, minWidth: 0 }}>
+                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-sm)', minHeight: 24 }}>
+                               <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-muted)' }}>
+                                 {step.label}<span className="text-muted" style={{ fontSize: '0.72rem', fontWeight: 400 }}> · No Discord</span>
+                               </span>
+                               {step.key === 'invited' && waiveEvent && canRemove(waiveEvent) && undoBtn(waiveEvent)}
+                             </div>
+                             {step.key === 'invited' && waiveEvent && (
+                               <div style={{ fontSize: '0.68rem', marginTop: '2px' }} className="text-muted">
+                                 {actorName(waiveEvent)} · {new Date(waiveEvent.created_at).toLocaleDateString()}
+                               </div>
+                             )}
+                           </div>
+                         </div>
+                       );
+                     }
 
                      // Right-hand slot: keep it consistent — pending shows the action, done shows Undo
                      // (in the SAME place), so marking a step never makes its control disappear.
