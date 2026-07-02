@@ -206,6 +206,24 @@ export async function addMemberNote(params: {
 }
 
 /**
+ * Resolve the player_tag of the leader who originally RECRUITED a person — the `logged_by`
+ * of their earliest 'recruitment' leadership_log. Used to credit the recruiter for a
+ * successful onboarding ("Babies Made") when an in-game promotion is auto-detected during
+ * sync, since the CoC API never reveals who performed the promotion. Returns null if unknown.
+ */
+export async function recruiterTagForPerson(personId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('leadership_logs')
+    .select('logged_by')
+    .eq('category', 'recruitment')
+    .eq('related_person_id', personId)
+    .order('logged_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return data?.logged_by ?? null;
+}
+
+/**
  * Promote a baby to a permanent member: clears the baby flag and the countdown.
  */
 export async function promoteBaby(personId: string) {

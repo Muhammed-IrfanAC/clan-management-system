@@ -17,11 +17,21 @@ import {
   ArrowUpCircle,
   MessageSquare,
   Pencil,
-  Send
+  Send,
+  MessageCircle,
+  ClipboardCheck,
+  UserPlus,
+  Flag,
+  CheckCircle,
+  Circle,
+  Route,
+  X,
+  RotateCcw
 } from 'lucide-react';
 import Link from 'next/link';
-import { Person, PlayerAccount, Warning, LeadershipLog, Clan, Rule, MemberNote } from '@/types/database';
+import { Person, PlayerAccount, Warning, LeadershipLog, Clan, Rule, MemberNote, OnboardingEvent, OnboardingEventType } from '@/types/database';
 import { babyDaysLeft } from '@/lib/babies';
+import { PIPELINE, deriveOnboardingStatus, MAX_ENGAGEMENT_ATTEMPTS } from '@/lib/onboarding';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import Toast, { ToastState } from '@/components/ui/Toast';
 import { useRouter } from 'next/navigation';
@@ -31,6 +41,24 @@ type FullPerson = Person & {
   warnings: (Warning & { rule: Rule | null, player_account: PlayerAccount })[];
   activity_logs: LeadershipLog[];
   member_notes: MemberNote[];
+  onboarding_events: OnboardingEvent[];
+};
+
+// Maps the icon-name strings declared in the onboarding PIPELINE to lucide components,
+// keeping the pipeline definition (src/lib/onboarding.ts) free of React imports.
+const STEP_ICONS: Record<string, any> = {
+  MessageCircle, ClipboardCheck, LinkIcon, UserPlus, Flag, Send, CheckCircle, ArrowUpCircle,
+};
+
+const EVENT_LABELS: Record<OnboardingEventType, string> = {
+  engagement_attempt: 'Engagement attempt',
+  rules_passed: 'War rules passed',
+  linked_accounts_checked: 'Linked accounts checked',
+  additional_account_registered: 'Additional account registered',
+  assigned_clan: 'Clan assigned',
+  invited_discord: 'Invited to Discord',
+  joined_discord: 'Joined Discord',
+  promoted_elder: 'Promoted to Elder',
 };
 
 export default function PersonProfilePage({ params }: { params: Promise<{ id: string }> }) {
@@ -40,7 +68,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   const [loggerNames, setLoggerNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [babyTrialDays, setBabyTrialDays] = useState(4);
-  const [promoting, setPromoting] = useState(false);
+  const [familyClans, setFamilyClans] = useState<Clan[]>([]);
   const [currentUserTag, setCurrentUserTag] = useState<string | null>(null);
   const [myPersonId, setMyPersonId] = useState<string | null>(null);
   // author player_tag -> person_id, so alts of an author can be granted edit/delete controls.
@@ -66,6 +94,12 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   useEffect(() => {
     fetchPerson();
   }, [id]);
+
+  useEffect(() => {
+    // Family clans populate the clan-assignment dropdown (no hardcoded 9.1 / Mini).
+    supabase.from('clans').select('*').eq('active', true).order('display_order')
+      .then(({ data }) => setFamilyClans((data as Clan[]) || []));
+  }, []);
 
   useEffect(() => {
     // Identify the acting leader (and their persona) so we can show edit/delete on comments
@@ -96,7 +130,8 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
             player_account:player_accounts (*)
           ),
           activity_logs:leadership_logs (*),
-          member_notes (*)
+          member_notes (*),
+          onboarding_events (*)
         `)
         .eq('id', id)
         .single();
@@ -112,7 +147,8 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       const loggerTags = Array.from(new Set([
         ...((pData as FullPerson)?.warnings || []).map(w => w.logged_by),
         ...((pData as FullPerson)?.member_notes || []).map(c => c.author_tag),
-      ].filter(Boolean)));
+        ...((pData as FullPerson)?.onboarding_events || []).map(e => e.actor_tag),
+      ].filter(Boolean) as string[]));
       if (loggerTags.length) {
         const { data: loggers } = await supabase
           .from('player_accounts')
@@ -134,20 +170,58 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
     }
   }
 
-  async function handlePromote() {
-    setPromoting(true);
+  // Patch only the onboarding-events slice of `person`, so recording a step never rebuilds the
+  // whole profile. This lets a leader tick several steps in a row with instant feedback.
+  function updateEvents(updater: (list: OnboardingEvent[]) => OnboardingEvent[]) {
+    setPerson(p => (p ? { ...p, onboarding_events: updater(p.onboarding_events || []) } : p));
+  }
+
+  async function recordOnboardingEvent(
+    eventType: OnboardingEventType,
+    opts?: { outcome?: 'replied' | 'ignored'; clanId?: string }
+  ) {
+    // Optimistic: show the event immediately, persist in the background, reconcile on response.
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const optimistic: OnboardingEvent = {
+      id: tempId,
+      person_id: id,
+      event_type: eventType,
+      actor_tag: currentUserTag,
+      outcome: opts?.outcome ?? null,
+      clan_id: opts?.clanId ?? null,
+      account_tag: null,
+      metadata: {},
+      created_at: new Date().toISOString(),
+    };
+    updateEvents(list => [...list, optimistic]);
     try {
-      const res = await fetch(`/api/persons/${id}`, {
-        method: 'PATCH',
+      const res = await fetch(`/api/onboarding/${id}`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'promote' }),
+        body: JSON.stringify({ eventType, outcome: opts?.outcome, clanId: opts?.clanId }),
       });
-      if (!res.ok) throw new Error('Failed to promote');
-      fetchPerson();
-    } catch (err) {
-      alert('Error promoting member');
-    } finally {
-      setPromoting(false);
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed to record action');
+      const saved = await res.json();
+      updateEvents(list => list.map(e => (e.id === tempId ? saved : e)));
+    } catch (err: any) {
+      updateEvents(list => list.filter(e => e.id !== tempId));
+      setToast({ type: 'error', message: err.message || 'Error recording action' });
+    }
+  }
+
+  async function deleteOnboardingEvent(eventId: string) {
+    // Optimistic removal with revert on failure. Temp (unsaved) rows aren't deletable.
+    let removed: OnboardingEvent | undefined;
+    updateEvents(list => {
+      removed = list.find(e => e.id === eventId);
+      return list.filter(e => e.id !== eventId);
+    });
+    try {
+      const res = await fetch(`/api/onboarding/${id}?eventId=${encodeURIComponent(eventId)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed to remove action');
+    } catch (err: any) {
+      if (removed) updateEvents(list => [...list, removed!]);
+      setToast({ type: 'error', message: err.message || 'Error removing action' });
     }
   }
 
@@ -263,9 +337,9 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                     <Clock size={11} /> {(() => { const d = babyDaysLeft(person.baby_started_at, babyTrialDays); return d > 0 ? `${d}d left` : 'trial ended'; })()}
                   </span>
                 </span>
-                <button onClick={handlePromote} disabled={promoting} className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}>
-                  <ArrowUpCircle size={16} /> {promoting ? 'Promoting...' : 'Promote to Member'}
-                </button>
+                <span className="text-muted" style={{ fontSize: '0.7rem', textAlign: 'right' }}>
+                  Promotion is automatic on in-game Elder promotion
+                </span>
               </div>
             )}
 
@@ -299,13 +373,197 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
 
         {/* Right Column: History */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+           {/* Onboarding Timeline — a single inline checklist. Each row is either done (who/when)
+               or pending with its own action button. Recording is allowed regardless of baby /
+               graduated status, so a leader can backfill the checklist even after sync has already
+               auto-promoted the member from an in-game Elder promotion. */}
+           {(() => {
+             const events = [...(person.onboarding_events || [])].sort(
+               (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+             );
+             const status = deriveOnboardingStatus(events);
+             // Only show the card for members with an onboarding lifecycle — babies, or anyone with
+             // recorded events. Legacy permanent members (no events) stay clean.
+             if (!person.is_baby && events.length === 0) return null;
+
+             // Clan assignment only becomes relevant once additional accounts have been registered.
+             const hasAdditional = events.some(e => e.event_type === 'additional_account_registered');
+             const clanName = (cid: string | null) => familyClans.find(c => c.id === cid)?.display_name || 'clan';
+             const canRemove = (ev: OnboardingEvent) =>
+               !ev.id.startsWith('temp-') &&           // still saving — not yet removable
+               ev.event_type !== 'promoted_elder' &&
+               ((!!currentUserTag && ev.actor_tag === currentUserTag) ||
+                (!!myPersonId && ev.actor_tag !== null && (authorPersons[ev.actor_tag] ?? null) === myPersonId));
+             const actorName = (ev: OnboardingEvent) =>
+               ev.actor_tag ? (loggerNames[ev.actor_tag] || (ev.actor_tag === currentUserTag ? 'You' : ev.actor_tag)) : 'System (sync)';
+
+             // Engagement attempt as a filled pill. Tapping a removable pill clears it (no undo button);
+             // colour encodes the outcome. Attribution + date live in the tooltip to avoid clutter.
+             const attemptPill = (ev: OnboardingEvent) => {
+               const removable = canRemove(ev);
+               const replied = ev.outcome === 'replied';
+               return (
+                 <button
+                   key={ev.id}
+                   onClick={() => removable && deleteOnboardingEvent(ev.id)}
+                   title={`${actorName(ev)} · ${new Date(ev.created_at).toLocaleDateString()}${removable ? ' · tap to remove' : ''}`}
+                   style={{
+                     padding: '0.28rem 0.7rem', fontSize: '0.72rem', borderRadius: 999, fontWeight: 600,
+                     background: replied ? 'rgba(34,197,94,0.15)' : 'rgba(245,158,11,0.15)',
+                     border: `1px solid ${replied ? 'rgba(34,197,94,0.55)' : 'rgba(245,158,11,0.55)'}`,
+                     color: replied ? 'var(--color-cta)' : 'var(--color-warning)',
+                     cursor: removable ? 'pointer' : 'default',
+                   }}
+                 >
+                   {replied ? 'Replied' : 'Ignored'}
+                 </button>
+               );
+             };
+
+             // Outline segmented control for the NEXT attempt; selecting a side fills it into a pill.
+             const attemptPicker = (n: number) => (
+               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                 <span className="text-muted" style={{ fontSize: '0.68rem' }}>Attempt {n}:</span>
+                 <span style={{ display: 'inline-flex', borderRadius: 999, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.15)' }}>
+                   <button onClick={() => recordOnboardingEvent('engagement_attempt', { outcome: 'replied' })} style={{ padding: '0.28rem 0.7rem', fontSize: '0.72rem', background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer', borderRight: '1px solid rgba(255,255,255,0.15)' }}>Replied</button>
+                   <button onClick={() => recordOnboardingEvent('engagement_attempt', { outcome: 'ignored' })} style={{ padding: '0.28rem 0.7rem', fontSize: '0.72rem', background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }}>Ignored</button>
+                 </span>
+               </span>
+             );
+
+             const btn = { padding: '0.35rem 0.7rem', fontSize: '0.72rem' } as const;
+             const undoBtn = (ev: OnboardingEvent) => (
+               <button onClick={() => deleteOnboardingEvent(ev.id)} className="btn btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }} title="Undo this step">
+                 <RotateCcw size={12} /> Undo
+               </button>
+             );
+
+             // Right-hand control for a PENDING single-toggle step.
+             const pendingControl = (stepKey: string) => {
+               switch (stepKey) {
+                 case 'rules':
+                   return <button onClick={() => recordOnboardingEvent('rules_passed')} className="btn btn-outline" style={btn}>Mark done</button>;
+                 case 'linked':
+                   return <button onClick={() => recordOnboardingEvent('linked_accounts_checked')} className="btn btn-outline" style={btn}>Mark done</button>;
+                 case 'additional':
+                   return <button onClick={() => recordOnboardingEvent('additional_account_registered')} className="btn btn-outline" style={btn}>Mark done</button>;
+                 case 'assignment':
+                   return (
+                     <select
+                       className="input"
+                       value=""
+                       disabled={familyClans.length === 0}
+                       onChange={(e) => e.target.value && recordOnboardingEvent('assigned_clan', { clanId: e.target.value })}
+                       style={{ padding: '0.3rem 0.5rem', fontSize: '0.72rem', width: 'auto', maxWidth: 160 }}
+                     >
+                       <option value="">Assign clan…</option>
+                       {familyClans.map(c => <option key={c.id} value={c.id}>{c.display_name}</option>)}
+                     </select>
+                   );
+                 case 'invited':
+                   return <button onClick={() => recordOnboardingEvent('invited_discord')} className="btn btn-outline" style={btn}>Mark done</button>;
+                 case 'joined':
+                   return <button onClick={() => recordOnboardingEvent('joined_discord')} className="btn btn-outline" style={btn}>Mark done</button>;
+                 default:
+                   return null;
+               }
+             };
+
+             return (
+               <div className="card">
+                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
+                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
+                     <Route size={20} color="var(--color-cta)" />
+                     <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Onboarding</h2>
+                   </div>
+                   {status.promoted ? (
+                     <span className="baby-badge" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--color-cta)' }}>
+                       <CheckCircle size={11} /> Graduated
+                     </span>
+                   ) : status.concluded ? (
+                     <span className="baby-badge" style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--color-danger)' }}>
+                       <X size={11} /> Concluded
+                     </span>
+                   ) : person.is_baby ? (
+                     <span className="baby-badge"><Baby size={11} /> In progress</span>
+                   ) : null}
+                 </div>
+
+                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+                   {PIPELINE.map(step => {
+                     // Interlink: hide clan assignment until additional accounts exist.
+                     if (step.key === 'assignment' && !hasAdditional) return null;
+
+                     const stepEvents = events.filter(e => step.eventTypes.includes(e.event_type));
+                     const isEngagement = step.key === 'engagement';
+                     const isPromoted = step.key === 'promoted';
+                     const done = isEngagement ? status.replied : stepEvents.length > 0;
+                     const Icon = STEP_ICONS[step.icon] || Circle;
+                     const primary = stepEvents[stepEvents.length - 1];
+
+                     // Right-hand slot: keep it consistent — pending shows the action, done shows Undo
+                     // (in the SAME place), so marking a step never makes its control disappear.
+                     // Engagement renders its attempts as pills below the label (they wrap), so its
+                     // header slot stays empty; every other step keeps action/Undo in the slot.
+                     let slot: any = null;
+                     if (isPromoted) {
+                       slot = done ? null : <span className="text-muted" style={{ fontSize: '0.68rem' }}>auto on in-game promotion</span>;
+                     } else if (!isEngagement) {
+                       slot = done ? (primary && canRemove(primary) ? undoBtn(primary) : null) : pendingControl(step.key);
+                     }
+
+                     return (
+                       <div key={step.key} style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'flex-start', padding: 'var(--space-sm) 0' }}>
+                         <div style={{ width: 24, height: 24, flexShrink: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: done ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.04)', border: `1px solid ${done ? 'rgba(34,197,94,0.5)' : 'rgba(255,255,255,0.1)'}` }}>
+                           {done ? <CheckCircle size={13} color="var(--color-cta)" /> : <Icon size={13} color="var(--color-muted)" />}
+                         </div>
+                         <div style={{ flex: 1, minWidth: 0 }}>
+                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-sm)', minHeight: 24 }}>
+                             <span style={{ fontSize: '0.85rem', fontWeight: 600, color: done ? 'var(--color-text)' : 'var(--color-muted)' }}>
+                               {step.label}
+                               {step.key === 'assignment' && done && primary && (
+                                 <span className="text-muted" style={{ fontSize: '0.72rem', fontWeight: 400 }}> · {clanName(primary.clan_id)}</span>
+                               )}
+                               {isEngagement && status.attemptsUsed > 0 && !status.replied && (
+                                 <span className="text-muted" style={{ fontSize: '0.7rem', fontWeight: 400 }}> · {status.attemptsUsed}/{MAX_ENGAGEMENT_ATTEMPTS}</span>
+                               )}
+                             </span>
+                             {slot}
+                           </div>
+                           {isEngagement ? (
+                             /* Attempts as filled pills (tap to clear) + a segmented picker for the next
+                                attempt. Clearing a pill drops below 3, so 'concluded' is never a dead end. */
+                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px', alignItems: 'center' }}>
+                               {stepEvents.map(ev => attemptPill(ev))}
+                               {!status.replied && !status.concluded && stepEvents.length < MAX_ENGAGEMENT_ATTEMPTS && attemptPicker(stepEvents.length + 1)}
+                               {status.concluded && (
+                                 <span className="text-muted" style={{ fontSize: '0.7rem' }}>concluded — no reply after {MAX_ENGAGEMENT_ATTEMPTS} attempts</span>
+                               )}
+                             </div>
+                           ) : (
+                             /* Single attribution line for other steps (Undo lives in the slot). */
+                             primary && (
+                               <div style={{ fontSize: '0.68rem', marginTop: '2px' }} className="text-muted">
+                                 {actorName(primary)} · {new Date(primary.created_at).toLocaleDateString()}
+                               </div>
+                             )
+                           )}
+                         </div>
+                       </div>
+                     );
+                   })}
+                 </div>
+               </div>
+             );
+           })()}
+
            {/* Member Notes (comment thread) — available for every member; baby-phase notes carry forward */}
            {(
              <div className="card">
                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-sm)', marginBottom: 'var(--space-lg)' }}>
                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
                    <MessageSquare size={20} color="var(--color-cta)" />
-                   <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Notes</h2>
+                   <h2 style={{ fontSize: '1.2rem', margin: 0 }}>Notes (exceptional)</h2>
                  </div>
                  {person.is_baby && (
                    <span className="baby-badge">

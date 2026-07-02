@@ -105,3 +105,25 @@ export interface Setting {
   description: string | null;
   updated_at: string;
 }
+
+export type OnboardingEventType =
+  | 'engagement_attempt'
+  | 'rules_passed'
+  | 'linked_accounts_checked'
+  | 'additional_account_registered'
+  | 'assigned_clan'
+  | 'invited_discord'
+  | 'joined_discord'
+  | 'promoted_elder';
+
+export interface OnboardingEvent {
+  id: string;
+  person_id: string;
+  event_type: OnboardingEventType;
+  actor_tag: string | null;
+  outcome: 'replied' | 'ignored' | null;
+  clan_id: string | null;
+  account_tag: string | null;
+  metadata: Record<string, any>;
+  created_at: string;
+}

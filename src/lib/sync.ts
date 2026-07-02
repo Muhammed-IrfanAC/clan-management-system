@@ -1,6 +1,8 @@
 import { supabase } from './supabase';
 import { fetchFromCoC, CoCClan } from './coc-api';
 import { PlayerAccount, DatabaseRole } from '@/types/database';
+import { promoteBaby, logBabyAction, recruiterTagForPerson } from './babies';
+import { addOnboardingEvent } from './onboarding';
 
 export async function syncClan(clanId: string) {
   try {
@@ -42,18 +44,34 @@ export async function syncClan(clanId: string) {
     const upsertData = [];
     const now = new Date().toISOString();
 
+    // Babies auto-graduate when an in-game promotion is detected. We capture the (person_id, clan)
+    // for any account whose CoC role climbs from 'member' to 'elder' or higher, then reconcile
+    // against persons.is_baby AFTER the upsert (the pre-sync role is only known here, before it is
+    // overwritten). Permanent members are never included — the is_baby check happens post-upsert.
+    const promotionCandidates: { personId: string; clanId: string }[] = [];
+
     for (const member of cocMembers) {
       const existing = existingByTag.get(member.tag);
-      
+
       // Determine role - only use CoC role if not already a leader/coLeader in DB
       let role: DatabaseRole = 'member';
       if (member.role === 'leader') role = 'leader';
       else if (member.role === 'coLeader') role = 'co_leader';
       else if (member.role === 'admin') role = 'elder';
 
+      // Auto-promotion signal: an account that was 'member' last sync and now reads elder+ in game.
+      // Uses the raw CoC-derived `role`, not finalRole (which preserves leader/co_leader for protection).
+      if (
+        existing?.person_id &&
+        existing.db_role === 'member' &&
+        (role === 'elder' || role === 'co_leader' || role === 'leader')
+      ) {
+        promotionCandidates.push({ personId: existing.person_id, clanId });
+      }
+
       // Role Protection Rule: Sync never overwrites leadership table roles
-      const finalRole = (existing && ['leader', 'co_leader'].includes(existing.db_role)) 
-        ? existing.db_role 
+      const finalRole = (existing && ['leader', 'co_leader'].includes(existing.db_role))
+        ? existing.db_role
         : role;
 
       upsertData.push({
@@ -86,6 +104,44 @@ export async function syncClan(clanId: string) {
         .upsert(upsertData);
       
       if (upsertError) throw upsertError;
+    }
+
+    // 6b. Auto-promote babies whose in-game role climbed to elder+. Only persons still flagged
+    // is_baby are graduated; permanent members are untouched even if their CoC role reads member.
+    // Non-fatal: a promotion-logging failure must never break the sync itself.
+    if (promotionCandidates.length > 0) {
+      try {
+        const uniqueByPerson = new Map(promotionCandidates.map((c) => [c.personId, c]));
+        const candidateIds = Array.from(uniqueByPerson.keys());
+        const { data: babies } = await supabase
+          .from('persons')
+          .select('id')
+          .in('id', candidateIds)
+          .eq('is_baby', true);
+
+        for (const baby of babies || []) {
+          const { clanId: cId } = uniqueByPerson.get(baby.id)!;
+          await promoteBaby(baby.id);
+          // System-recorded graduation (the CoC API never reveals who promoted in-game).
+          await addOnboardingEvent({
+            personId: baby.id,
+            eventType: 'promoted_elder',
+            actorTag: null,
+            clanId: cId,
+            metadata: { source: 'sync' },
+          });
+          // Credit the ORIGINAL recruiter for the successful onboarding ("Babies Made").
+          await logBabyAction({
+            loggedBy: await recruiterTagForPerson(baby.id),
+            category: 'promotion',
+            personId: baby.id,
+            clanId: cId,
+            description: 'Auto-promoted to Elder (in-game promotion detected)',
+          });
+        }
+      } catch (promoErr) {
+        console.error('Auto-promotion during sync failed:', promoErr);
+      }
     }
 
     if (leftTags.length > 0) {
