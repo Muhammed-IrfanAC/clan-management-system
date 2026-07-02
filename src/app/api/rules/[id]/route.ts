@@ -1,19 +1,12 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { jwtVerify } from 'jose';
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
-
-async function auth(request: NextRequest) {
-  const token = request.cookies.get('clanops-auth')?.value;
-  if (!token) throw new Error('Unauthorized');
-  await jwtVerify(token, JWT_SECRET);
-}
+import { authorizeActive } from '@/lib/auth-server';
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    await auth(request);
+    const auth = await authorizeActive(request);
+    if (auth.error) return auth.error;
     const { error } = await supabase.from('rules').delete().eq('id', id);
     if (error) throw error;
     return NextResponse.json({ success: true });

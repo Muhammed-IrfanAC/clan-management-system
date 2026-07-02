@@ -60,7 +60,6 @@ export async function syncClan(clanId: string) {
       else if (member.role === 'admin') role = 'elder';
 
       // Auto-promotion signal: an account that was 'member' last sync and now reads elder+ in game.
-      // Uses the raw CoC-derived `role`, not finalRole (which preserves leader/co_leader for protection).
       if (
         existing?.person_id &&
         existing.db_role === 'member' &&
@@ -69,11 +68,9 @@ export async function syncClan(clanId: string) {
         promotionCandidates.push({ personId: existing.person_id, clanId });
       }
 
-      // Role Protection Rule: Sync never overwrites leadership table roles
-      const finalRole = (existing && ['leader', 'co_leader'].includes(existing.db_role))
-        ? existing.db_role
-        : role;
-
+      // db_role is a PURE clan-status mirror now — write the live in-game rank unconditionally.
+      // Dashboard permission lives on persons.access_role and is untouched by sync, so there is no
+      // longer any role to "protect" here (this replaces the old Role Protection Rule).
       upsertData.push({
         player_tag: member.tag,
         clan_id: clanId,
@@ -82,12 +79,11 @@ export async function syncClan(clanId: string) {
         trophies: member.trophies,
         donations: member.donations,
         donations_received: member.donationsReceived,
-        db_role: finalRole,
+        db_role: role,
         status: 'active',
         last_synced_at: now,
         // Keep existing person_id if present
         person_id: existing?.person_id || null,
-        access_enabled: existing?.access_enabled ?? (finalRole === 'leader' || finalRole === 'co_leader'),
         added_at: existing?.added_at || now,
       });
     }
@@ -167,18 +163,33 @@ export async function syncClan(clanId: string) {
     const cleanupDate = new Date();
     cleanupDate.setDate(cleanupDate.getDate() - cleanupDays);
 
-    // Never auto-delete accounts that hold dashboard access (registered leaders/co-leaders).
-    // Their access must only be removed by an explicit manual revoke in Settings (which sets
-    // access_enabled = false), guaranteeing they cannot lose access just by hopping between
-    // family clans or sitting in 'left' state past the cleanup window.
-    const { error: cleanupError } = await supabase
+    // Never auto-delete an account whose PERSON holds dashboard access. Access is removed only by an
+    // explicit manual revoke in Settings, so an access-holder (or their alt) must survive a 'left'
+    // state past the cleanup window rather than being silently deleted. Access now lives on the
+    // person, so we filter candidates against the set of access-holding person_ids before deleting.
+    const { data: accessPersons } = await supabase
+      .from('persons')
+      .select('id')
+      .not('access_role', 'is', null);
+    const accessIds = new Set((accessPersons || []).map((p) => p.id));
+
+    const { data: staleAccounts } = await supabase
       .from('player_accounts')
-      .delete()
+      .select('player_tag, person_id')
       .eq('status', 'left')
-      .eq('access_enabled', false)
       .lt('last_synced_at', cleanupDate.toISOString());
-    
-    if (cleanupError) console.error('Cleanup error:', cleanupError);
+
+    const deletableTags = (staleAccounts || [])
+      .filter((a) => !a.person_id || !accessIds.has(a.person_id))
+      .map((a) => a.player_tag);
+
+    if (deletableTags.length > 0) {
+      const { error: cleanupError } = await supabase
+        .from('player_accounts')
+        .delete()
+        .in('player_tag', deletableTags);
+      if (cleanupError) console.error('Cleanup error:', cleanupError);
+    }
 
     return { success: true, count: upsertData.length, left: leftTags.length };
 

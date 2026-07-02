@@ -1,23 +1,8 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { jwtVerify } from 'jose';
 import { supabase } from '@/lib/supabase';
 import { addOnboardingEvent, MANUAL_EVENT_TYPES } from '@/lib/onboarding';
+import { hasCapability, authorizeActive as authorize } from '@/lib/auth-server';
 import { OnboardingEventType } from '@/types/database';
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
-
-async function authorize(request: NextRequest) {
-  const token = request.cookies.get('clanops-auth')?.value;
-  if (!token) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
-  try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
-    const actorTag = payload.playerTag as string | undefined;
-    if (!actorTag) return { error: NextResponse.json({ error: 'Invalid token' }, { status: 401 }) };
-    return { actorTag };
-  } catch {
-    return { error: NextResponse.json({ error: 'Invalid token' }, { status: 401 }) };
-  }
-}
 
 // Resolve a player_tag to the person (persona) it is linked to, if any.
 async function personIdForTag(tag: string): Promise<string | null> {
@@ -88,7 +73,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
         event.actor_tag ? personIdForTag(event.actor_tag) : Promise.resolve(null),
         personIdForTag(auth.actorTag!),
       ]);
-      if (!authorPerson || !actorPerson || authorPerson !== actorPerson) {
+      if ((!authorPerson || !actorPerson || authorPerson !== actorPerson) && !(await hasCapability(auth.actorTag!, 'content.override'))) {
         return NextResponse.json({ error: 'Only the leader who recorded this event can remove it' }, { status: 403 });
       }
     }

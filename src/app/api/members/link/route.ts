@@ -1,22 +1,13 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { jwtVerify } from 'jose';
+import { authorizeActive } from '@/lib/auth-server';
 import { logBabyAction, addMemberNote } from '@/lib/babies';
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
 
 export async function POST(request: NextRequest) {
   try {
-    const token = request.cookies.get('clanops-auth')?.value;
-    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    let actorTag: string | undefined;
-    try {
-      const { payload } = await jwtVerify(token, JWT_SECRET);
-      actorTag = payload.playerTag as string | undefined;
-    } catch (e) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
+    const auth = await authorizeActive(request);
+    if (auth.error) return auth.error;
+    const actorTag = auth.actorTag;
 
     const { playerTag, personId, newPersonName, isBaby, comment } = await request.json();
 

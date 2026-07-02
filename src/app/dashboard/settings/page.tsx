@@ -13,18 +13,55 @@ import {
   X,
   AlertCircle
 } from 'lucide-react';
-import { Clan, Rule, Setting, PlayerAccount } from '@/types/database';
+import { Clan, Rule, Setting, AccessRole } from '@/types/database';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
+import { useCurrentUser } from '@/lib/useCurrentUser';
+import { can, assignableRoles } from '@/lib/permissions';
+
+// One access-holder row = a person (with access_role) plus a representative account for display.
+type LeaderRow = {
+  player_tag: string;
+  display_name: string;
+  person_id: string;
+  access_role: AccessRole;
+};
+
+// A registry person eligible to be granted access (no access_role yet), with a representative
+// account tag so the person-addressed leaders API can resolve them.
+type PersonOption = {
+  person_id: string;
+  display_name: string;
+  player_tag: string;
+};
+
+const ROLE_LABELS: Record<AccessRole, string> = {
+  super_admin: 'Super Admin',
+  leader: 'Leader',
+  co_leader: 'Co-Leader',
+};
 
 export default function SettingsPage() {
+  const { role } = useCurrentUser();
+  // Admin tabs (general config, clan family, leadership) require the leader-management capability;
+  // co-leaders get the Rules tab only. UI gating is cosmetic — the API routes enforce the rest.
+  const canManage = can(role, 'leader.manage');
+  const visibleTabs: Array<'general' | 'clans' | 'rules' | 'leaders'> = canManage
+    ? ['general', 'clans', 'rules', 'leaders']
+    : ['rules'];
+
   const [activeTab, setActiveTab] = useState<'general' | 'clans' | 'rules' | 'leaders'>('general');
   const [loading, setLoading] = useState(true);
+
+  // Clamp the selected tab to what the role may see — co-leaders fall through to Rules — without
+  // syncing state in an effect. Tab clicks set activeTab; this just guards the rendered value.
+  const effectiveTab = visibleTabs.includes(activeTab) ? activeTab : visibleTabs[0];
   
   // Data state
   const [appSettings, setAppSettings] = useState<Setting[]>([]);
   const [clans, setClans] = useState<Clan[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
-  const [leaders, setLeaders] = useState<PlayerAccount[]>([]);
+  const [leaders, setLeaders] = useState<LeaderRow[]>([]);
+  const [personOptions, setPersonOptions] = useState<PersonOption[]>([]);
 
   // Modal states
   const [showAddClan, setShowAddClan] = useState(false);
@@ -47,7 +84,9 @@ export default function SettingsPage() {
   // Form states
   const [newClan, setNewClan] = useState({ tag: '', name: '', type: 'main' });
   const [newRule, setNewRule] = useState({ name: '', description: '', guidance: '' });
-  const [leaderTag, setLeaderTag] = useState('');
+  const [selectedPersonId, setSelectedPersonId] = useState('');
+  const [personQuery, setPersonQuery] = useState('');
+  const [newLeaderRole, setNewLeaderRole] = useState<AccessRole>('co_leader');
 
   useEffect(() => {
     fetchData();
@@ -62,11 +101,52 @@ export default function SettingsPage() {
       setClans(c || []);
       const { data: r } = await supabase.from('rules').select('*');
       setRules(r || []);
-      const { data: l } = await supabase.from('player_accounts')
-        .select('*')
-        .in('db_role', ['super_admin', 'leader', 'co_leader'])
-        .eq('access_enabled', true);
-      setLeaders(l || []);
+      // Access-holders = persons with a non-null access_role. A person may own several accounts, so
+      // fetch their accounts, then collapse to one row per person (preferring the main account). We
+      // display the PERSON (display_name); the account tag is just a representative handle for the API.
+      const { data: accts } = await supabase.from('player_accounts')
+        .select('player_tag, is_main_account, person_id, person:persons!inner(access_role, display_name)')
+        .not('person.access_role', 'is', null);
+      type AcctRow = {
+        player_tag: string;
+        is_main_account: boolean;
+        person_id: string;
+        person: { access_role: AccessRole; display_name: string } | null;
+      };
+      const byPerson = new Map<string, LeaderRow>();
+      for (const a of (accts || []) as unknown as AcctRow[]) {
+        if (!a.person_id || !a.person) continue;
+        if (!byPerson.has(a.person_id) || a.is_main_account) {
+          byPerson.set(a.person_id, {
+            player_tag: a.player_tag,
+            display_name: a.person.display_name,
+            person_id: a.person_id,
+            access_role: a.person.access_role,
+          });
+        }
+      }
+      setLeaders([...byPerson.values()]);
+
+      // Candidate persons for the "Add Leader" picker: registry persons who do NOT yet hold access.
+      // Same account→person collapse; each option carries a representative tag (prefer the main
+      // account) so the person-addressed leaders API can resolve the grant.
+      const { data: candAccts } = await supabase.from('player_accounts')
+        .select('player_tag, is_main_account, person_id, person:persons!inner(access_role, display_name)')
+        .is('person.access_role', null);
+      const optByPerson = new Map<string, PersonOption>();
+      for (const a of (candAccts || []) as unknown as AcctRow[]) {
+        if (!a.person_id || !a.person) continue;
+        if (!optByPerson.has(a.person_id) || a.is_main_account) {
+          optByPerson.set(a.person_id, {
+            person_id: a.person_id,
+            display_name: a.person.display_name,
+            player_tag: a.player_tag,
+          });
+        }
+      }
+      setPersonOptions(
+        [...optByPerson.values()].sort((x, y) => x.display_name.localeCompare(y.display_name))
+      );
     } catch (err) {
       console.error('Error fetching settings:', err);
     } finally {
@@ -125,26 +205,28 @@ export default function SettingsPage() {
 
   const handleAddLeader = async (e: React.FormEvent) => {
     e.preventDefault();
-    const tag = leaderTag.toUpperCase().startsWith('#') ? leaderTag.toUpperCase() : `#${leaderTag.toUpperCase()}`;
+    // Access is a person-level grant; we address the person via one of their account tags.
+    const person = personOptions.find((p) => p.person_id === selectedPersonId);
+    if (!person) {
+      alert('Please select a member to grant access.');
+      return;
+    }
     try {
-      // First check if account exists
-      const { data: existing } = await supabase.from('player_accounts').select('*').eq('player_tag', tag).single();
-      
-      if (!existing) {
-        alert('Account not found in registry. User must login once or be synced first.');
-        return;
-      }
-
-      const res = await fetch(`/api/leaders/${encodeURIComponent(tag)}`, {
+      const res = await fetch(`/api/leaders/${encodeURIComponent(person.player_tag)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ access_enabled: true, db_role: 'leader' }),
+        body: JSON.stringify({ access_role: newLeaderRole }),
       });
-      
+
       if (res.ok) {
         setShowAddLeader(false);
-        setLeaderTag('');
+        setSelectedPersonId('');
+        setPersonQuery('');
+        setNewLeaderRole('co_leader');
         fetchData();
+      } else {
+        const { error } = await res.json().catch(() => ({ error: 'Error adding leader' }));
+        alert(error || 'Error adding leader');
       }
     } catch (e) { alert('Error adding leader'); }
   };
@@ -163,12 +245,12 @@ export default function SettingsPage() {
       <div className="settings-grid">
         {/* Tabs */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-           {['general', 'clans', 'rules', 'leaders'].map((tab: any) => (
+           {visibleTabs.map((tab: any) => (
              <button 
                key={tab}
                onClick={() => setActiveTab(tab)}
-               className={`btn ${activeTab === tab ? 'btn-primary' : 'btn-outline'}`}
-               style={{ justifyContent: 'flex-start', border: activeTab === tab ? '' : 'none' }}
+               className={`btn ${effectiveTab === tab ? 'btn-primary' : 'btn-outline'}`}
+               style={{ justifyContent: 'flex-start', border: effectiveTab === tab ? '' : 'none' }}
              >
                {tab === 'general' && <Settings size={18} />}
                {tab === 'clans' && <RefreshCw size={18} />}
@@ -181,7 +263,7 @@ export default function SettingsPage() {
 
         {/* Content */}
         <div className="card" style={{ minHeight: '600px' }}>
-           {activeTab === 'general' && (
+           {effectiveTab === 'general' && (
              <div>
                 <h3>System Settings</h3>
                 <p className="text-muted" style={{ fontSize: '0.85rem', marginBottom: 'var(--space-xl)' }}>Configure automated behaviors and system defaults.</p>
@@ -207,7 +289,7 @@ export default function SettingsPage() {
              </div>
            )}
 
-           {activeTab === 'clans' && (
+           {effectiveTab === 'clans' && (
              <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xl)' }}>
                   <h3>Clan Family</h3>
@@ -231,7 +313,7 @@ export default function SettingsPage() {
              </div>
            )}
 
-           {activeTab === 'rules' && (
+           {effectiveTab === 'rules' && (
              <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xl)' }}>
                   <h3>Rules Library</h3>
@@ -255,7 +337,7 @@ export default function SettingsPage() {
              </div>
            )}
 
-           {activeTab === 'leaders' && (
+           {effectiveTab === 'leaders' && (
              <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-xl)' }}>
                   <h3>Authorized Leadership</h3>
@@ -263,17 +345,17 @@ export default function SettingsPage() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
                   {leaders.map(l => (
-                    <div key={l.player_tag} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div key={l.person_id} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)' }}>
-                         <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: l.access_enabled ? 'var(--color-cta)' : 'var(--color-muted)' }}></div>
-                         <div><p style={{ fontWeight: '700', margin: 0 }}>{l.in_game_name}</p><p className="text-muted" style={{ fontSize: '0.7rem', margin: 0 }}>{l.player_tag} • {l.db_role.toUpperCase()}</p></div>
+                         <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--color-cta)' }}></div>
+                         <div><p style={{ fontWeight: '700', margin: 0 }}>{l.display_name}</p><p className="text-muted" style={{ fontSize: '0.7rem', margin: 0 }}>{ROLE_LABELS[l.access_role].toUpperCase()} • all linked accounts</p></div>
                        </div>
-                       {l.db_role !== 'super_admin' && (
-                         <button onClick={() => triggerConfirm('Revoke Access', `Instantly block ${l.in_game_name} from the dashboard? They will remain in registry as a regular member.`, async () => {
+                       {l.access_role !== 'super_admin' && (
+                         <button onClick={() => triggerConfirm('Revoke Access', `Instantly block ${l.display_name} from the dashboard? Access is revoked for every account linked to them. They remain in the registry as a regular member.`, async () => {
                             await fetch(`/api/leaders/${encodeURIComponent(l.player_tag)}`, {
                               method: 'PATCH',
                               headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ access_enabled: false }),
+                              body: JSON.stringify({ access_role: null }),
                             });
                             fetchData();
                             setConfirmConfig({ ...confirmConfig, isOpen: false });
@@ -355,13 +437,51 @@ export default function SettingsPage() {
             <form onSubmit={handleAddLeader} style={{ padding: 'var(--space-lg)' }}>
                <div style={{ display: 'flex', gap: 'var(--space-md)', padding: '12px', background: 'rgba(245, 158, 11, 0.05)', borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-lg)', border: '1px solid rgba(245, 158, 11, 0.1)' }}>
                  <AlertCircle size={18} className="text-warning" />
-                 <p style={{ fontSize: '0.75rem', margin: 0 }}>The user must already exist in the Member Registry before you can grant them dashboard access.</p>
+                 <p style={{ fontSize: '0.75rem', margin: 0 }}>Access is granted to a member — every account linked to them inherits it automatically.</p>
+               </div>
+               <div style={{ marginBottom: 'var(--space-md)' }}>
+                 <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Member</label>
+                 <input
+                   className="input"
+                   placeholder="Search members…"
+                   value={personQuery}
+                   onChange={e => { setPersonQuery(e.target.value); setSelectedPersonId(''); }}
+                   style={{ marginBottom: 'var(--space-sm)' }}
+                 />
+                 <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 'var(--radius-md)' }}>
+                   {personOptions
+                     .filter(p => p.display_name.toLowerCase().includes(personQuery.trim().toLowerCase()))
+                     .slice(0, 50)
+                     .map(p => (
+                       <div
+                         key={p.person_id}
+                         onClick={() => setSelectedPersonId(p.person_id)}
+                         style={{
+                           padding: 'var(--space-sm) var(--space-md)',
+                           cursor: 'pointer',
+                           fontSize: '0.85rem',
+                           background: selectedPersonId === p.person_id ? 'rgba(34, 197, 94, 0.12)' : 'transparent',
+                         }}
+                       >
+                         <span style={{ fontWeight: selectedPersonId === p.person_id ? 700 : 400 }}>{p.display_name}</span>
+                         <span className="text-muted" style={{ marginLeft: 'var(--space-sm)', fontSize: '0.7rem' }}>{p.player_tag}</span>
+                       </div>
+                     ))}
+                   {personOptions.filter(p => p.display_name.toLowerCase().includes(personQuery.trim().toLowerCase())).length === 0 && (
+                     <div className="text-muted" style={{ padding: 'var(--space-md)', fontSize: '0.75rem' }}>No matching members without access.</div>
+                   )}
+                 </div>
                </div>
                <div style={{ marginBottom: 'var(--space-lg)' }}>
-                 <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Player Tag</label>
-                 <input className="input" placeholder="#Y2Q..." value={leaderTag} onChange={e => setLeaderTag(e.target.value)} required />
+                 <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Role</label>
+                 <select className="input" value={newLeaderRole} onChange={e => setNewLeaderRole(e.target.value as AccessRole)}>
+                   {assignableRoles(role).map(r => (
+                     <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                   ))}
+                 </select>
+                 <p className="text-muted" style={{ fontSize: '0.65rem', marginTop: 'var(--space-xs)' }}>{role === 'super_admin' ? 'The Super Admin role itself is set directly in the database.' : 'Only the Super Admin can grant the Leader role.'}</p>
                </div>
-               <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Grant Dashboard Access</button>
+               <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={!selectedPersonId}>Grant Dashboard Access</button>
             </form>
           </div>
         </div>

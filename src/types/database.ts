@@ -1,4 +1,8 @@
+// db_role on an account is now a PURE clan-status mirror (synced from the in-game rank each pass).
 export type DatabaseRole = 'super_admin' | 'leader' | 'co_leader' | 'elder' | 'member';
+// access_role on a PERSON is the dashboard permission — the single source of truth for RBAC.
+// NULL (absent) = no dashboard access. Lives on the person so every linked alt inherits it.
+export type AccessRole = 'super_admin' | 'leader' | 'co_leader';
 export type PlayerStatus = 'active' | 'left' | 'removed';
 export type ClanType = 'main' | 'feeder';
 export type LogCategory = 'promotion' | 'demotion' | 'war' | 'recruitment' | 'capital' | 'general';
@@ -19,6 +23,7 @@ export interface Person {
   notes: string | null;
   is_baby: boolean;
   baby_started_at: string | null;
+  access_role: AccessRole | null; // dashboard permission; NULL = no access. Inherited by all linked accounts.
   created_at: string;
 }
 
@@ -27,8 +32,7 @@ export interface PlayerAccount {
   person_id: string | null;
   clan_id: string;
   is_main_account: boolean;
-  db_role: DatabaseRole;
-  access_enabled: boolean;
+  db_role: DatabaseRole; // clan status only (synced from in-game rank); NOT a permission — see persons.access_role
   status: PlayerStatus;
   added_at: string;
   in_game_name: string;

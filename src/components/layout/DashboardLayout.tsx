@@ -79,6 +79,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [showClanDropdown, setShowClanDropdown] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [role, setRole] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   useEffect(() => {
@@ -102,6 +103,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         if (res.ok) {
           const data = await res.json();
           setUser(data.user);
+          setRole(data.role ?? null);
         }
       } catch (e) {
         console.error('Error fetching user:', e);
@@ -216,7 +218,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
              >
                <div className="user-info-text">
                  <p style={{ fontSize: '0.85rem', fontWeight: '600', margin: 0 }}>{user?.in_game_name || 'Leader'}</p>
-                 <p style={{ fontSize: '0.65rem', color: 'var(--color-muted)', margin: 0, textTransform: 'uppercase' }}>{user?.db_role?.replace('_', ' ') || 'Super Admin'}</p>
+                 <p style={{ fontSize: '0.65rem', color: 'var(--color-muted)', margin: 0, textTransform: 'uppercase' }}>{role?.replace('_', ' ') || 'Leader'}</p>
                </div>
                <div style={{
                  width: '36px',

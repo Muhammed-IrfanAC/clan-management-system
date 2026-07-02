@@ -1,7 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { jwtVerify } from 'jose';
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
+import { authorizeActive } from '@/lib/auth-server';
 
 export async function PATCH(
   request: NextRequest,
@@ -9,14 +7,8 @@ export async function PATCH(
 ) {
   try {
     await params;
-    const token = request.cookies.get('clanops-auth')?.value;
-    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-    try {
-      await jwtVerify(token, JWT_SECRET);
-    } catch (e) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
+    const auth = await authorizeActive(request);
+    if (auth.error) return auth.error;
 
     // Promotion is no longer a manual action — babies auto-graduate when clan sync detects an
     // in-game promotion to Elder (see src/lib/sync.ts). No manual person actions remain.

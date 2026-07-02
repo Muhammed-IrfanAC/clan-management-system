@@ -1,8 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { jwtVerify } from 'jose';
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
+import { authorizeActive } from '@/lib/auth-server';
 
 export async function GET(request: NextRequest) {
   try {
@@ -29,16 +27,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const token = request.cookies.get('clanops-auth')?.value;
-    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    
-    let decoded: any;
-    try {
-      const { payload } = await jwtVerify(token, JWT_SECRET);
-      decoded = payload;
-    } catch (e) {
-      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
-    }
+    const auth = await authorizeActive(request);
+    if (auth.error) return auth.error;
 
     const { personId, playerTag, ruleId, description, loggedAt } = await request.json();
 
@@ -67,7 +57,7 @@ export async function POST(request: NextRequest) {
         player_account_tag: playerTag,
         rule_id: ruleId || null,
         description,
-        logged_by: decoded.playerTag,
+        logged_by: auth.actorTag,
         logged_at: loggedAtIso,
         acknowledged: false
       }])
