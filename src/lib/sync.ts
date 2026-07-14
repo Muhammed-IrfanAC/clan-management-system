@@ -77,6 +77,7 @@ export async function syncClan(clanId: string) {
         in_game_name: member.name,
         th_level: member.townHallLevel,
         trophies: member.trophies,
+        league: member.leagueTier?.name ?? null, // NEW Ranked tier (not legacy trophy league); normalized in the CWL layer
         donations: member.donations,
         donations_received: member.donationsReceived,
         db_role: role,

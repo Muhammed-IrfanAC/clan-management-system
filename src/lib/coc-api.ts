@@ -114,9 +114,16 @@ export interface CoCClanMember {
   townHallLevel: number;
   expLevel: number;
   league?: {
+    // Legacy trophy league (Bronze…Titan…Legend). Kept for reference; NOT used for CWL eligibility.
     id: number;
     name: string;
     iconUrls: { small: string; tiny: string; medium: string };
+  };
+  leagueTier?: {
+    // New Ranked-Battle tier (Oct 2025): 'Skeleton League 1' … 'Titan League 25' … 'Legend III'.
+    id: number;
+    name: string;
+    iconUrls?: { small: string; large: string };
   };
   trophies: number;
   donations: number;

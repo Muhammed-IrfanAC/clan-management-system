@@ -38,6 +38,7 @@ export interface PlayerAccount {
   in_game_name: string;
   th_level: number;
   trophies: number;
+  league: string | null; // raw CoC Ranked-league name (e.g. 'Electro Dragon League III'); null if none
   donations: number;
   donations_received: number;
   last_synced_at: string;
@@ -150,11 +151,31 @@ export type CWLAllocationStatus =
 
 export type CWLTransferStatus = 'pending' | 'done' | 'missed';
 
-// Frozen, versioned per-season rule set. minRank is a clan-status floor (member is the
-// lowest). perClan[clanId] overrides the default for that clan.
+// Clash of Clans Ranked-Battle league tiers (Oct 2025 revamp; the API `leagueTier` field, NOT the
+// legacy trophy `league`), major tiers only, lowest → highest. See src/lib/cwl/leagues.ts for
+// ordering, labels and API-name normalization.
+export type CWLLeague =
+  | 'skeleton'
+  | 'barbarian'
+  | 'archer'
+  | 'wizard'
+  | 'valkyrie'
+  | 'witch'
+  | 'golem'
+  | 'pekka'
+  | 'titan'
+  | 'dragon'
+  | 'electro'
+  | 'legend';
+
+// Frozen, versioned per-season rule set. minLeague is a Ranked-league floor (skeleton is the
+// lowest, legend the highest). maxBench caps how many players a clan may bench (null = use the
+// engine default of 5), so a 15v15 clan holds at most warSize + maxBench. perClan[clanId]
+// overrides the default for that clan.
 export interface CWLConstraintRule {
   minThLevel: number | null;
-  minRank: DatabaseRole | null;
+  minLeague: CWLLeague | null;
+  maxBench: number | null;
 }
 export interface CWLConstraints {
   default: CWLConstraintRule;

@@ -13,14 +13,17 @@
 -- One monthly CWL cycle. `constraints` is a FROZEN, versioned snapshot of the rule set
 -- used to generate this season's allocation, so a completed roster stays explainable even
 -- if global defaults change later. Simplified Phase-1 shape:
---   { "default": { "minThLevel": null, "minRank": null }, "perClan": { "<clan_id>": {...} } }
--- where minRank ∈ member|elder|co_leader|leader and perClan[id] overrides default per clan.
+--   { "default": { "minThLevel": null, "minLeague": null, "maxBench": null },
+--     "perClan": { "<clan_id>": {...} } }
+-- where minLeague is a CoC Ranked league (skeleton..legend, see src/lib/cwl/leagues.ts),
+-- maxBench caps a clan's bench (null = engine default of 5), and perClan[id] overrides default
+-- per clan.
 CREATE TABLE IF NOT EXISTS cwl_seasons (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   label          TEXT NOT NULL,           -- e.g. '2026-07'
   status         TEXT NOT NULL DEFAULT 'planning',
                                           -- planning | transfers_pending | signed_up | in_progress | completed
-  constraints    JSONB NOT NULL DEFAULT '{"default":{"minThLevel":null,"minRank":null},"perClan":{}}'::jsonb,
+  constraints    JSONB NOT NULL DEFAULT '{"default":{"minThLevel":null,"minLeague":null,"maxBench":null},"perClan":{}}'::jsonb,
   last_polled_at TIMESTAMPTZ,             -- when CWL live state was last ingested (manual sync, for now)
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
