@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Swords, Plus, Activity } from 'lucide-react';
+import Link from 'next/link';
+import { Swords, Plus, Activity, History } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useClan } from '@/lib/ClanContext';
 import type { CWLSeason } from '@/types/database';
@@ -50,6 +51,11 @@ export default function CWLPage() {
             <select className="input" style={{ width: 'auto', padding: '8px 12px' }} value={selectedId ?? ''} onChange={(e) => setSelectedId(e.target.value)}>
               {seasons.map((s) => <option key={s.id} value={s.id}>CWL {s.label}</option>)}
             </select>
+          )}
+          {mode === 'view' && (
+            <Link href="/dashboard/cwl/history" className="btn btn-outline" style={{ textDecoration: 'none' }}>
+              <History size={16} /> History &amp; Trends
+            </Link>
           )}
           {mode === 'view' && (
             <button className="btn btn-primary" onClick={() => setMode('create')}>
