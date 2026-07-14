@@ -132,3 +132,69 @@ export interface OnboardingEvent {
   metadata: Record<string, any>;
   created_at: string;
 }
+
+// ---- Clan War League (CWL) ----
+
+export type CWLSeasonStatus =
+  | 'planning'
+  | 'transfers_pending'
+  | 'signed_up'
+  | 'in_progress'
+  | 'completed';
+
+export type CWLAllocationStatus =
+  | 'matches'            // player's actual clan already matches the recommendation
+  | 'transfer_required' // must move in-game before sign-up
+  | 'transferred'       // move confirmed done
+  | 'removed';          // pulled from the season pool
+
+export type CWLTransferStatus = 'pending' | 'done' | 'missed';
+
+// Frozen, versioned per-season rule set. minRank is a clan-status floor (member is the
+// lowest). perClan[clanId] overrides the default for that clan.
+export interface CWLConstraintRule {
+  minThLevel: number | null;
+  minRank: DatabaseRole | null;
+}
+export interface CWLConstraints {
+  default: CWLConstraintRule;
+  perClan: Record<string, CWLConstraintRule>;
+}
+
+export interface CWLSeason {
+  id: string;
+  label: string;
+  status: CWLSeasonStatus;
+  constraints: CWLConstraints;
+  last_polled_at: string | null;
+  created_at: string;
+}
+
+export interface CWLSeasonClan {
+  id: string;
+  season_id: string;
+  clan_id: string;
+  war_size: number; // 15 | 30
+}
+
+export interface CWLAllocation {
+  id: string;
+  season_id: string;
+  person_id: string;
+  recommended_clan_id: string | null;
+  actual_clan_id: string | null;
+  status: CWLAllocationStatus;
+  is_bench: boolean;
+  rank: number | null;
+  note: string | null;
+}
+
+export interface CWLTransfer {
+  id: string;
+  allocation_id: string;
+  from_clan_id: string | null;
+  to_clan_id: string | null;
+  deadline: string | null;
+  status: CWLTransferStatus;
+  created_at: string;
+}
