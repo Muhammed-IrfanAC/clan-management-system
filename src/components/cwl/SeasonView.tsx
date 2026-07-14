@@ -9,6 +9,7 @@ import { leagueLabel, normalizeLeague } from '@/lib/cwl/leagues';
 import RosterBoard from './RosterBoard';
 import TransfersPanel from './TransfersPanel';
 import LiveRoundsPanel from './LiveRoundsPanel';
+import RotationPanel from './RotationPanel';
 import PerformancePanel from './PerformancePanel';
 import type { RosterPlayer, TransferItem, MoveAction } from './types';
 
@@ -250,6 +251,11 @@ export default function SeasonView({
           <div>
             <h3 style={{ fontSize: '1rem', margin: '0 0 var(--space-sm)' }}>Roster Allocation</h3>
             <RosterBoard players={players} seasonClans={seasonClans} clans={clans} onAction={handleAction} busy={busy} />
+          </div>
+          <div>
+            <h3 style={{ fontSize: '1rem', margin: '0 0 var(--space-sm)' }}>Bench Rotation</h3>
+            <p className="text-muted" style={{ fontSize: '0.75rem', margin: '0 0 var(--space-sm)' }}>Suggested benches per round, spread evenly so everyone gets a similar number of war days.</p>
+            <RotationPanel players={players} seasonClans={seasonClans} clans={clans} rounds={rounds} members={warMembers} />
           </div>
           <div>
             <h3 style={{ fontSize: '1rem', margin: '0 0 var(--space-sm)' }}>Live Rounds</h3>
