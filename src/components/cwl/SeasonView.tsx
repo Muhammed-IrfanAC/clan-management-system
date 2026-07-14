@@ -254,7 +254,7 @@ export default function SeasonView({
           </div>
           <div>
             <h3 style={{ fontSize: '1rem', margin: '0 0 var(--space-sm)' }}>Bench Rotation</h3>
-            <p className="text-muted" style={{ fontSize: '0.75rem', margin: '0 0 var(--space-sm)' }}>Suggested benches per round, spread evenly so everyone gets a similar number of war days.</p>
+            <p className="text-muted" style={{ fontSize: '0.75rem', margin: '0 0 var(--space-sm)' }}>Who to bench in the upcoming round, chosen to spread war days evenly. Refreshes as rounds sync.</p>
             <RotationPanel players={players} seasonClans={seasonClans} clans={clans} rounds={rounds} members={warMembers} />
           </div>
           <div>

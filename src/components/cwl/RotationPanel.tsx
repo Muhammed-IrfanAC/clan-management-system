@@ -80,24 +80,23 @@ export default function RotationPanel({
             </p>
           ) : (
             <>
-              {/* Per-round bench suggestion — the actionable "who sits" list. */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 'var(--space-md)' }}>
-                {rot.rounds.map((r) => (
-                  <div key={r.roundNumber} style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'baseline', gap: 'var(--space-sm)', padding: '4px 0' }}>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Round {r.roundNumber}</span>
-                    <span style={{ fontSize: '0.8rem' }}>
-                      <span className="text-muted" style={{ fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.04em', marginRight: 6 }}>Bench</span>
-                      {r.bench.length === 0
-                        ? <span className="text-muted">— nobody</span>
-                        : r.bench.map((s, i) => (
-                            <span key={s.personId}>
-                              {i > 0 && <span className="text-muted">, </span>}
-                              {s.name}<span className="text-muted" style={{ fontSize: '0.68rem' }}> TH{s.thLevel}</span>
-                            </span>
-                          ))}
-                    </span>
-                  </div>
-                ))}
+              {/* Upcoming round only — the single actionable "who sits next" call. */}
+              <div style={{ padding: '8px 10px', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.03)', marginBottom: 'var(--space-md)' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-cta)', fontWeight: 700 }}>
+                    Bench next · Round {rot.rounds[0].roundNumber}
+                  </span>
+                  <span style={{ fontSize: '0.85rem' }}>
+                    {rot.rounds[0].bench.length === 0
+                      ? <span className="text-muted">nobody — everyone plays</span>
+                      : rot.rounds[0].bench.map((s, i) => (
+                          <span key={s.personId}>
+                            {i > 0 && <span className="text-muted">, </span>}
+                            {s.name}<span className="text-muted" style={{ fontSize: '0.68rem' }}> TH{s.thLevel}</span>
+                          </span>
+                        ))}
+                  </span>
+                </div>
               </div>
 
               {/* Fairness summary — projected war days per player so leaders can see the balance. */}
