@@ -3,6 +3,20 @@ import { syncClan } from '@/lib/sync';
 import { expireDepartedBabies } from '@/lib/babies';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
+import { syncCwlLiveState } from '@/lib/cwl/live';
+
+/**
+ * Refresh live CWL round/lineup data as part of a sync, but never let it fail the roster sync —
+ * a CoC hiccup or off-season clan must not block the primary result. Returns null on any error.
+ */
+async function safeCwlSync() {
+  try {
+    return await syncCwlLiveState();
+  } catch (err) {
+    console.error('CWL live sync error (non-fatal):', err);
+    return null;
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,7 +34,8 @@ export async function POST(request: NextRequest) {
 
     if (clanId) {
       const result = await syncClan(clanId);
-      return NextResponse.json(result);
+      const cwl = await safeCwlSync();
+      return NextResponse.json({ ...result, cwl });
     }
 
     // If no clanId, sync all active clans
@@ -33,12 +48,14 @@ export async function POST(request: NextRequest) {
     // active account anywhere has genuinely left the family (not just moved between
     // clans). Drop those personas immediately rather than waiting out the trial.
     const { expired: departedBabies } = await expireDepartedBabies();
+    const cwl = await safeCwlSync();
 
     return NextResponse.json({
       success: true,
       clansSynced: results.length,
       totalUpdated: results.reduce((acc, r) => acc + r.count, 0),
       departedBabies,
+      cwl,
     });
 
   } catch (error: any) {

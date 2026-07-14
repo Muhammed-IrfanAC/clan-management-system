@@ -6,14 +6,18 @@ import {
   CoCLeagueWar,
 } from '../coc-api';
 
+/** A resolved league war tagged with the war tag it was fetched by (the API war body omits it). */
+export type TaggedLeagueWar = CoCLeagueWar & { warTag: string };
+
 /**
  * Normalized snapshot of a clan's live CWL state.
  *  - group: the season container (participating clans, per-round war tags)
- *  - wars:  the fully-resolved wars whose tags have been revealed so far
+ *  - wars:  the fully-resolved wars whose tags have been revealed so far, each carrying its warTag
+ *           so callers can map a group round's tag back to its war.
  */
 export interface LeagueStateSnapshot {
   group: CoCLeagueGroup;
-  wars: CoCLeagueWar[];
+  wars: TaggedLeagueWar[];
 }
 
 /**
@@ -34,7 +38,9 @@ export async function pollLeagueState(clanTag: string): Promise<LeagueStateSnaps
     .flatMap((round) => round.warTags)
     .filter((tag) => tag && tag !== UNREVEALED_WAR_TAG);
 
-  const wars = await Promise.all(warTags.map((tag) => fetchLeagueWar(tag)));
+  const wars = await Promise.all(
+    warTags.map(async (tag) => ({ ...(await fetchLeagueWar(tag)), warTag: tag })),
+  );
 
   return { group, wars };
 }

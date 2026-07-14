@@ -219,3 +219,39 @@ export interface CWLTransfer {
   status: CWLTransferStatus;
   created_at: string;
 }
+
+// A single live CWL round for one family clan (our side of that round's war). Populated by
+// src/lib/cwl/live.ts from the READ-ONLY CoC league group + war endpoints. See migration 012.
+export interface CWLRound {
+  id: string;
+  season_id: string;
+  clan_id: string;          // our family clan
+  round_number: number;     // 1-based
+  war_tag: string | null;
+  state: string;            // 'preparation' | 'inWar' | 'warEnded'
+  team_size: number | null;
+  opponent_name: string | null;
+  opponent_tag: string | null;
+  our_stars: number;
+  our_destruction: number;
+  our_attacks_used: number;
+  start_time: string | null;
+  end_time: string | null;
+  polled_at: string;
+}
+
+// One of our members' lineup slot + attack result within a round. attacks_used is 0 or 1 (CWL
+// gives one attack); 0 on a 'warEnded' round is a missed attack. person_id is null for unlinked
+// or guest tags.
+export interface CWLWarMember {
+  id: string;
+  round_id: string;
+  person_id: string | null;
+  player_tag: string;
+  name: string | null;
+  th_level: number | null;
+  map_position: number | null;
+  attacks_used: number;
+  stars: number;
+  destruction: number;
+}

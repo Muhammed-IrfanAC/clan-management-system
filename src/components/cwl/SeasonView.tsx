@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Trash2, Activity } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import type { Clan, CWLSeason, CWLSeasonStatus, CWLLeague } from '@/types/database';
+import type { Clan, CWLSeason, CWLSeasonStatus, CWLLeague, CWLRound, CWLWarMember } from '@/types/database';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { leagueLabel, normalizeLeague } from '@/lib/cwl/leagues';
 import RosterBoard from './RosterBoard';
 import TransfersPanel from './TransfersPanel';
+import LiveRoundsPanel from './LiveRoundsPanel';
+import PerformancePanel from './PerformancePanel';
 import type { RosterPlayer, TransferItem, MoveAction } from './types';
 
 const STATUS_FLOW: CWLSeasonStatus[] = ['planning', 'transfers_pending', 'signed_up', 'in_progress', 'completed'];
@@ -42,6 +44,8 @@ export default function SeasonView({
   const [seasonClans, setSeasonClans] = useState<{ clanId: string; warSize: number }[]>([]);
   const [players, setPlayers] = useState<RosterPlayer[]>([]);
   const [transfers, setTransfers] = useState<TransferItem[]>([]);
+  const [rounds, setRounds] = useState<CWLRound[]>([]);
+  const [warMembers, setWarMembers] = useState<CWLWarMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -51,10 +55,11 @@ export default function SeasonView({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: scRows }, { data: allocRows }, { data: transferRows }] = await Promise.all([
+      const [{ data: scRows }, { data: allocRows }, { data: transferRows }, { data: roundRows }] = await Promise.all([
         supabase.from('cwl_season_clans').select('clan_id, war_size').eq('season_id', season.id),
         supabase.from('cwl_allocations').select('id, person_id, recommended_clan_id, actual_clan_id, status, is_bench, person:persons(display_name)').eq('season_id', season.id),
         supabase.from('cwl_transfers').select('id, status, from_clan_id, to_clan_id, allocation:cwl_allocations!inner(season_id, person:persons(display_name))').eq('allocation.season_id', season.id),
+        supabase.from('cwl_rounds').select('*').eq('season_id', season.id),
       ]);
 
       const allocations = (allocRows as unknown as AllocationRow[]) || [];
@@ -75,6 +80,27 @@ export default function SeasonView({
           if (!prev || score > prevScore) statByPerson.set(row.person_id, { thLevel: row.th_level ?? 0, league: normalizeLeague(row.league) });
         }
       }
+
+      // Live CWL rounds + their war-member lineups (populated by sync). Prefer the family person's
+      // display name over the raw in-game name for linked accounts.
+      const liveRounds = (roundRows as CWLRound[]) || [];
+      let liveMembers: CWLWarMember[] = [];
+      if (liveRounds.length) {
+        const { data: memberRows } = await supabase
+          .from('cwl_war_members')
+          .select('*')
+          .in('round_id', liveRounds.map((r) => r.id));
+        liveMembers = (memberRows as CWLWarMember[]) || [];
+
+        const personIds = Array.from(new Set(liveMembers.map((m) => m.person_id).filter((x): x is string => !!x)));
+        if (personIds.length) {
+          const { data: personRows } = await supabase.from('persons').select('id, display_name').in('id', personIds);
+          const nameById = new Map((personRows as { id: string; display_name: string }[] | null || []).map((p) => [p.id, p.display_name]));
+          liveMembers = liveMembers.map((m) => ({ ...m, name: (m.person_id && nameById.get(m.person_id)) || m.name }));
+        }
+      }
+      setRounds(liveRounds);
+      setWarMembers(liveMembers);
 
       setSeasonClans(((scRows as { clan_id: string; war_size: number }[]) || []).map((r) => ({ clanId: r.clan_id, warSize: r.war_size })));
       setPlayers(allocations.map((a) => {
@@ -225,6 +251,11 @@ export default function SeasonView({
             <h3 style={{ fontSize: '1rem', margin: '0 0 var(--space-sm)' }}>Roster Allocation</h3>
             <RosterBoard players={players} seasonClans={seasonClans} clans={clans} onAction={handleAction} busy={busy} />
           </div>
+          <div>
+            <h3 style={{ fontSize: '1rem', margin: '0 0 var(--space-sm)' }}>Live Rounds</h3>
+            <LiveRoundsPanel rounds={rounds} members={warMembers} clanName={clanName} />
+          </div>
+          <PerformancePanel rounds={rounds} members={warMembers} />
         </>
       )}
 
