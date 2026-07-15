@@ -1,0 +1,50 @@
+name: Apply DB migrations
+
+# Auto-applies any new supabase/migrations/*.sql to the PRODUCTION Supabase project
+# whenever they land on main. This closes the "code merged but schema not applied" gap
+# that used to require running SQL by hand in the Supabase dashboard.
+#
+# `supabase db push` only runs migrations NOT already recorded in the remote
+# migration-history table, so it is safe on every merge — already-applied files are
+# skipped. This requires a ONE-TIME baseline of the pre-existing 001–012 migrations
+# (see supabase/README.md), otherwise the first push would try to replay them.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_ACCESS_TOKEN  — a Supabase personal access token (account → Access Tokens)
+#   SUPABASE_DB_PASSWORD   — the production database password (project → Settings → Database)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+  # Manual fallback: run from the Actions tab if a migration ever needs re-applying.
+  workflow_dispatch: {}
+
+# Never let two migration runs race against the same database.
+concurrency:
+  group: db-migrate-prod
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_ID: mhgitoarcdakjdnzapsx
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to production project
+        run: supabase link --project-ref "$PROJECT_ID"
+
+      - name: Show pending migrations
+        run: supabase migration list
+
+      - name: Apply migrations
+        run: supabase db push
