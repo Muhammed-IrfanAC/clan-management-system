@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# supabase CLI local state (config.toml IS committed; these are per-machine temp)
+supabase/.branches
+supabase/.temp

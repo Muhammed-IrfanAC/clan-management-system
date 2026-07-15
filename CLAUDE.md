@@ -47,7 +47,7 @@ Business logic lives in `lib/`, kept free of React/JSX so sync jobs, API routes,
 Routes live under `src/app/api/**/route.ts`. `POST /api/sync` (optional `clanId`, else all active clans) is the workhorse: it reconciles rosters, expires departed babies, and best-effort refreshes CWL live state (CWL failures are swallowed so they never fail the roster sync). Sync is triggered by authenticated dashboard requests, not a built-in cron.
 
 ### Database migrations
-Base schema is `supabase_setup.sql`. Incremental changes are numbered SQL files in `migrations/` (e.g. `010_cwl_schema.sql`), applied **manually** in the Supabase SQL editor — there is no automated migration runner. After adding a table on the testing project, run `npm run db:grant` if the anon key hits "permission denied".
+Base schema is `supabase_setup.sql`. Incremental changes are numbered SQL files in `supabase/migrations/` (e.g. `010_cwl_schema.sql`). On merge to `main`, `.github/workflows/db-migrate.yml` runs `supabase db push` to apply any not-yet-recorded migrations to the **production** project — do **not** hand-run prod SQL anymore (that drift is what this replaces). Add one with `supabase migration new <name>`; see `supabase/README.md` for the flow and the one-time baseline of `001`–`012`. For the **testing** project, run `npm run db:grant` if the anon key hits "permission denied" after adding a table.
 
 ### Environment
 `.env.local` (dev/prod) and `.env.testing` hold: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `JWT_SECRET`, `COC_API_TOKEN`, and optional `COC_API_PROXY_URL` (recommended — the CoC API requires IP allowlisting, so a fixed-IP proxy is used).
