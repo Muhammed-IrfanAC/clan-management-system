@@ -4,6 +4,8 @@ import { PlayerAccount, DatabaseRole } from '@/types/database';
 import { promoteBaby, logBabyAction, recruiterTagForPerson, expireDepartedBabies } from './babies';
 import { addOnboardingEvent } from './onboarding';
 import { syncCwlLiveState } from './cwl/live';
+import { syncWarState } from './war';
+import { scanRuleViolations } from './rules/scan';
 
 export async function syncClan(clanId: string) {
   try {
@@ -215,6 +217,33 @@ async function safeCwlSync() {
 }
 
 /**
+ * Refresh live REGULAR (non-CWL) war state. Fail-safe like the CWL step — a CoC hiccup, a clan not
+ * in war, or a private war log must never block the roster sync. Returns null on any error.
+ */
+async function safeWarSync() {
+  try {
+    return await syncWarState();
+  } catch (err) {
+    console.error('Regular war sync error (non-fatal):', err);
+    return null;
+  }
+}
+
+/**
+ * Scan enabled automated rules for violations and auto-log any new ones. Runs AFTER the war syncs so
+ * it sees fresh round/attack state. Fail-safe like the CWL step — a detector or notification error
+ * must never fail the roster sync. Returns null on any error.
+ */
+async function safeScanViolations() {
+  try {
+    return await scanRuleViolations();
+  } catch (err) {
+    console.error('Rule-violation scan error (non-fatal):', err);
+    return null;
+  }
+}
+
+/**
  * The full sync flow, shared by the cookie-auth route (`/api/sync`) and the machine-auth cron
  * route (`/api/cron/sync`) so both run identical logic. Pass a `clanId` to sync one clan, or omit
  * it to reconcile every active clan, expire departed babies, and refresh CWL. Auth is the caller's
@@ -224,7 +253,9 @@ export async function runFullSync(clanId?: string) {
   if (clanId) {
     const result = await syncClan(clanId);
     const cwl = await safeCwlSync();
-    return { ...result, cwl };
+    const war = await safeWarSync();
+    const violations = await safeScanViolations();
+    return { ...result, cwl, war, violations };
   }
 
   const { data: clans } = await supabase.from('clans').select('id').eq('active', true);
@@ -237,6 +268,8 @@ export async function runFullSync(clanId?: string) {
   // immediately rather than waiting out the trial.
   const { expired: departedBabies } = await expireDepartedBabies();
   const cwl = await safeCwlSync();
+  const war = await safeWarSync();
+  const violations = await safeScanViolations();
 
   return {
     success: true,
@@ -244,5 +277,7 @@ export async function runFullSync(clanId?: string) {
     totalUpdated: results.reduce((acc, r) => acc + r.count, 0),
     departedBabies,
     cwl,
+    war,
+    violations,
   };
 }

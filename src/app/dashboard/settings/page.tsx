@@ -17,6 +17,7 @@ import { Clan, Rule, Setting, AccessRole } from '@/types/database';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { useCurrentUser } from '@/lib/useCurrentUser';
 import { can, assignableRoles } from '@/lib/permissions';
+import { DETECTOR_REGISTRY, detectorMeta, defaultConfigFor } from '@/lib/rules/registry';
 
 // One access-holder row = a person (with access_role) plus a representative account for display.
 type LeaderRow = {
@@ -160,6 +161,23 @@ export default function SettingsPage() {
       if (error) throw error;
       fetchData();
     } catch (err) { alert('Error updating setting'); }
+  }
+
+  // Persist a rule's automation wiring (detector, enable flag, or config) via the rules API, which
+  // validates the detector key. Mirrors updateSetting's save-then-refetch pattern.
+  async function updateRuleAutomation(id: string, patch: Record<string, any>) {
+    try {
+      const res = await fetch(`/api/rules/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({ error: 'Error updating automation' }));
+        throw new Error(error);
+      }
+      fetchData();
+    } catch (err: any) { alert(err?.message || 'Error updating automation'); }
   }
 
   const handleAddClan = async (e: React.FormEvent) => {
@@ -331,6 +349,71 @@ export default function SettingsPage() {
                          })} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }}><Trash2 size={16} /></button>
                        </div>
                        <p className="text-muted" style={{ fontSize: '0.85rem' }}>{r.description}</p>
+
+                       {/* Automation: attach a built-in detector, toggle it, and tune its params. */}
+                       <div style={{ marginTop: 'var(--space-md)', paddingTop: 'var(--space-md)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
+                           <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase' }}>Automation</label>
+                           <select
+                             className="input"
+                             style={{ maxWidth: '240px' }}
+                             value={r.automation_key ?? ''}
+                             onChange={(e) => {
+                               const key = e.target.value || null;
+                               updateRuleAutomation(r.id, {
+                                 automation_key: key,
+                                 automation_enabled: false,
+                                 automation_config: key ? defaultConfigFor(key) : {},
+                               });
+                             }}
+                           >
+                             <option value="">Manual (no automation)</option>
+                             {DETECTOR_REGISTRY.map((d) => (
+                               <option key={d.key} value={d.key}>{d.label}</option>
+                             ))}
+                           </select>
+                           {r.automation_key && (
+                             <button
+                               onClick={() => updateRuleAutomation(r.id, { automation_enabled: !r.automation_enabled })}
+                               className={`btn ${r.automation_enabled ? 'btn-primary' : 'btn-outline'}`}
+                               style={{ fontSize: '0.7rem', padding: 'var(--space-xs) var(--space-md)' }}
+                             >
+                               {r.automation_enabled ? 'ENABLED' : 'DISABLED'}
+                             </button>
+                           )}
+                         </div>
+                         {r.automation_key && (() => {
+                           const meta = detectorMeta(r.automation_key);
+                           if (!meta) return <p className="text-warning" style={{ fontSize: '0.7rem', marginTop: 'var(--space-sm)' }}>Unknown detector &quot;{r.automation_key}&quot;.</p>;
+                           return (
+                             <>
+                               <p className="text-muted" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>
+                                 {meta.description}{meta.mode === 'review' ? ' Queues for leader review.' : ''}
+                               </p>
+                               {meta.configFields.length > 0 && (
+                                 <div style={{ display: 'flex', gap: 'var(--space-lg)', flexWrap: 'wrap', marginTop: 'var(--space-sm)' }}>
+                                   {meta.configFields.map((f) => (
+                                     <div key={f.key}>
+                                       <label className="text-muted" style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', display: 'block' }}>{f.label}</label>
+                                       <input
+                                         className="input"
+                                         type={f.type}
+                                         style={{ width: '130px' }}
+                                         defaultValue={(r.automation_config?.[f.key] ?? f.default) as any}
+                                         onBlur={(e) => {
+                                           const val = f.type === 'number' ? Number(e.target.value) : e.target.value;
+                                           updateRuleAutomation(r.id, { automation_config: { ...(r.automation_config || {}), [f.key]: val } });
+                                         }}
+                                       />
+                                       {f.help && <p className="text-muted" style={{ fontSize: '0.6rem', margin: '2px 0 0' }}>{f.help}</p>}
+                                     </div>
+                                   ))}
+                                 </div>
+                               )}
+                             </>
+                           );
+                         })()}
+                       </div>
                     </div>
                   ))}
                 </div>

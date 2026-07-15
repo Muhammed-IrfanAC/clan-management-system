@@ -51,6 +51,9 @@ export interface Rule {
   name: string;
   description: string;
   logging_guidance: string | null;
+  automation_key: string | null; // built-in detector key (src/lib/rules/registry.ts); null = manual rule
+  automation_enabled: boolean; // whether the periodic scan runs this rule's detector
+  automation_config: Record<string, any>; // that detector's tunable params (thresholds, lookback, …)
 }
 
 export interface Warning {
@@ -65,6 +68,8 @@ export interface Warning {
   acknowledged_at: string | null;
   notes: string | null;
   edited_at: string | null;
+  source: 'manual' | 'auto'; // 'auto' = logged by a rule detector; 'manual' = logged by a leader
+  dedup_key: string | null; // stable identity of an auto-detected violation; null for manual warnings
 }
 
 export interface WarningNote {
@@ -134,6 +139,42 @@ export interface OnboardingEvent {
   account_tag: string | null;
   metadata: Record<string, any>;
   created_at: string;
+}
+
+// ---- Regular (non-CWL) clan wars ----
+
+// One regular clan war for a family clan (our side). Populated by src/lib/war.ts from the READ-ONLY
+// /clans/{tag}/currentwar endpoint. Identified per clan by prep_start_time (see migration 015).
+export interface WarRound {
+  id: string;
+  clan_id: string;
+  prep_start_time: string | null;
+  state: string;              // 'preparation' | 'inWar' | 'warEnded'
+  team_size: number | null;
+  attacks_per_member: number | null; // regular war = 2
+  opponent_name: string | null;
+  opponent_tag: string | null;
+  our_stars: number;
+  our_destruction: number;
+  our_attacks_used: number;
+  start_time: string | null;
+  end_time: string | null;
+  polled_at: string;
+}
+
+// One of our members' lineup slot + attack result within a regular war. attacks_used is 0..2.
+// person_id is null for unlinked or guest tags.
+export interface WarMember {
+  id: string;
+  round_id: string;
+  person_id: string | null;
+  player_tag: string;
+  name: string | null;
+  th_level: number | null;
+  map_position: number | null;
+  attacks_used: number;
+  stars: number;
+  destruction: number;
 }
 
 // ---- Clan War League (CWL) ----

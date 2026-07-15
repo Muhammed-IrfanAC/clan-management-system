@@ -90,6 +90,17 @@ export async function fetchLeagueWar(warTag: string): Promise<CoCLeagueWar> {
   );
 }
 
+/**
+ * Fetch a clan's current REGULAR (non-CWL) war. Optional because a clan not currently in a war
+ * returns state 'notInWar' (200) and a private war log 404s — both are normal empty states, not
+ * failures. The queried clan is always returned as `war.clan` (the opponent as `war.opponent`).
+ */
+export async function fetchCurrentWar(clanTag: string): Promise<CoCCurrentWar | null> {
+  return fetchFromCoCOptional<CoCCurrentWar>(
+    `/clans/${encodeURIComponent(clanTag)}/currentwar`
+  );
+}
+
 export interface CoCPlayer {
   tag: string;
   name: string;
@@ -214,4 +225,50 @@ export interface CoCLeagueWar {
   clan: CoCLeagueWarClan;
   opponent: CoCLeagueWarClan;
   warStartTime?: string;
+}
+
+// ---- Regular Clan Wars ----
+// Shape of /clans/{tag}/currentwar. Members carry up to `attacksPerMember` (usually 2) attacks;
+// clan/opponent/members are absent when state is 'notInWar'.
+
+export interface CoCWarAttack {
+  attackerTag: string;
+  defenderTag: string;
+  stars: number;
+  destructionPercentage: number;
+  order: number;
+  duration?: number;
+}
+
+export interface CoCWarMember {
+  tag: string;
+  name: string;
+  townhallLevel: number;
+  mapPosition: number;
+  attacks?: CoCWarAttack[];
+  opponentAttacks: number;
+  bestOpponentAttack?: CoCWarAttack;
+}
+
+export interface CoCWarClan {
+  tag: string;
+  name: string;
+  clanLevel: number;
+  badgeUrls: { small: string; large: string; medium: string };
+  attacks: number;
+  stars: number;
+  destructionPercentage: number;
+  expEarned?: number;
+  members: CoCWarMember[];
+}
+
+export interface CoCCurrentWar {
+  state: string; // 'notInWar' | 'preparation' | 'inWar' | 'warEnded'
+  teamSize?: number;
+  attacksPerMember?: number;
+  preparationStartTime?: string;
+  startTime?: string;
+  endTime?: string;
+  clan?: CoCWarClan;
+  opponent?: CoCWarClan;
 }
