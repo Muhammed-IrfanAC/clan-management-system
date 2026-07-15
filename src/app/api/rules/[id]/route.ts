@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
+import { can } from '@/lib/permissions';
 import { DETECTOR_REGISTRY } from '@/lib/rules/registry';
 
 /**
@@ -47,6 +48,15 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const { id } = await params;
     const auth = await authorizeActive(request);
     if (auth.error) return auth.error;
+    if (!can(auth.role, 'rules.delete')) {
+      return NextResponse.json({ error: 'Only leaders and super admins can delete rules' }, { status: 403 });
+    }
+
+    // Detach the rule from any warnings first, so the delete can't fail on a foreign-key reference.
+    // The FK is ON DELETE SET NULL (migration 017) which does this too — this also covers a DB where
+    // that migration hasn't been applied yet. Warnings themselves are kept, just un-linked.
+    await supabase.from('warnings').update({ rule_id: null }).eq('rule_id', id);
+
     const { error } = await supabase.from('rules').delete().eq('id', id);
     if (error) throw error;
     return NextResponse.json({ success: true });

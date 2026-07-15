@@ -18,6 +18,7 @@ export type Capability =
   | 'clan.create'           // register a new family clan
   | 'account.delete'        // permanently delete a player account
   | 'leader.manage'         // add leaders, grant/revoke dashboard access
+  | 'rules.delete'          // permanently delete a rule from the library
   | 'role.assign_any'       // assign any access_role (incl. leader / super_admin)
   | 'role.assign_coleader'; // assign the co_leader role only
 
@@ -26,6 +27,7 @@ const SUPER_ADMIN: Capability[] = [
   'clan.create',
   'account.delete',
   'leader.manage',
+  'rules.delete',
   'role.assign_any',
   'role.assign_coleader',
 ];
@@ -37,13 +39,16 @@ const LEADER: Capability[] = [
   'clan.create',
   'account.delete',
   'leader.manage',
+  'rules.delete',
   'role.assign_coleader',
 ];
 
 export const ROLE_CAPS: Record<AccessRole, Set<Capability>> = {
   super_admin: new Set(SUPER_ADMIN),
   leader: new Set(LEADER),
-  co_leader: new Set(),   // create/log freely + full Rules CRUD; those need no gated capability
+  // Co-leaders may create/edit rules and log freely, but DELETING a rule is a leader/super-admin
+  // action (rules.delete) — the only gated Rules capability.
+  co_leader: new Set(),
 };
 
 /** Does this role hold the given capability? */
