@@ -154,12 +154,61 @@ export interface WarRound {
   attacks_per_member: number | null; // regular war = 2
   opponent_name: string | null;
   opponent_tag: string | null;
+  opponent_lineup: LineupBase[]; // every enemy base + TH, incl. ones nobody attacked (see migration 016)
   our_stars: number;
   our_destruction: number;
   our_attacks_used: number;
   start_time: string | null;
   end_time: string | null;
   polled_at: string;
+}
+
+// A single enemy base in a round's opponent_lineup snapshot. Used to know which equal/lower-TH bases
+// sat OPEN (not 3-starred) at the time of each of our attacks — the crux of the judgement rules.
+export interface LineupBase {
+  tag: string;
+  th: number;
+  pos?: number;
+}
+
+// One of our attacks within a war (regular or CWL — identical shape, mirrored tables). attack_order
+// is the war-global order; first_seen_at/state drive the "final N hours" timing inference. person_id
+// is null for unlinked/guest attackers.
+export interface WarAttack {
+  id: string;
+  round_id: string;
+  attack_order: number;
+  attacker_tag: string;
+  attacker_name: string | null;
+  attacker_person_id: string | null;
+  attacker_th: number | null;
+  attacker_rank: DatabaseRole | null;
+  defender_tag: string;
+  defender_th: number | null;
+  stars: number;
+  destruction: number;
+  first_seen_at: string;
+  first_seen_state: string | null;
+}
+
+// A judgement-rule detection awaiting leader review. Confirm -> a real warning (warning_id set);
+// dismiss -> kept as 'dismissed' so its dedup_key is never re-suggested. See migration 016.
+export interface WarningSuggestion {
+  id: string;
+  rule_id: string | null;
+  person_id: string;
+  player_account_tag: string;
+  clan_id: string | null;
+  member_name: string | null;
+  description: string;
+  dedup_key: string;
+  evidence: Record<string, any>;
+  occurred_at: string | null;
+  detected_at: string;
+  status: 'pending' | 'confirmed' | 'dismissed';
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  warning_id: string | null;
 }
 
 // One of our members' lineup slot + attack result within a regular war. attacks_used is 0..2.
@@ -275,6 +324,7 @@ export interface CWLRound {
   team_size: number | null;
   opponent_name: string | null;
   opponent_tag: string | null;
+  opponent_lineup: LineupBase[]; // every enemy base + TH, incl. ones nobody attacked (see migration 016)
   our_stars: number;
   our_destruction: number;
   our_attacks_used: number;

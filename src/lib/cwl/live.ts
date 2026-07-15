@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { pollLeagueState, type TaggedLeagueWar } from './api';
 import { UNREVEALED_WAR_TAG, type CoCLeagueWarClan } from '@/lib/coc-api';
+import { buildLineup, persistWarAttacks } from '@/lib/warAttacks';
 
 /**
  * Phase 2 live-state ingestion. Polls every participating family clan's current CWL league group
@@ -69,6 +70,7 @@ async function ingestClan(seasonId: string, clanId: string, clanTag: string): Pr
           team_size: war.teamSize,
           opponent_name: side.them.name,
           opponent_tag: side.them.tag,
+          opponent_lineup: buildLineup(side.them.members),
           our_stars: side.us.stars,
           our_destruction: side.us.destructionPercentage,
           our_attacks_used: side.us.attacks,
@@ -83,16 +85,18 @@ async function ingestClan(seasonId: string, clanId: string, clanTag: string): Pr
     if (roundErr || !roundRow) { console.error('CWL round upsert failed:', roundErr); continue; }
     upserted++;
 
-    // Resolve our members' tags -> persons for attribution.
+    // Resolve our members' tags -> persons (attribution) and -> db_role (rank, for late-snipe).
     const tagsInWar = side.us.members.map((m) => m.tag);
     const personByTag = new Map<string, string>();
+    const rankByTag = new Map<string, string>();
     if (tagsInWar.length) {
       const { data: accts } = await supabase
         .from('player_accounts')
-        .select('player_tag, person_id')
+        .select('player_tag, person_id, db_role')
         .in('player_tag', tagsInWar);
-      for (const a of (accts as { player_tag: string; person_id: string | null }[] | null) || []) {
+      for (const a of (accts as { player_tag: string; person_id: string | null; db_role: string | null }[] | null) || []) {
         if (a.person_id) personByTag.set(a.player_tag, a.person_id);
+        if (a.db_role) rankByTag.set(a.player_tag, a.db_role);
       }
     }
 
@@ -114,6 +118,16 @@ async function ingestClan(seasonId: string, clanId: string, clanTag: string): Pr
         .upsert(memberRows, { onConflict: 'round_id,player_tag' });
       if (memErr) console.error('CWL war members upsert failed:', memErr);
     }
+
+    await persistWarAttacks({
+      table: 'cwl_war_attacks',
+      roundId: roundRow.id,
+      state: war.state,
+      ourMembers: side.us.members,
+      opponentMembers: side.them.members,
+      personByTag,
+      rankByTag,
+    });
   }
 
   return upserted;

@@ -17,6 +17,9 @@ export type DetectedViolation = {
   description: string;         // becomes warnings.description
   dedupKey: string;            // stable per real-world violation; drives idempotent insert
   occurredAt: string;         // ISO — becomes warnings.logged_at (reflects when it happened)
+  // Optional structured context for review-mode detectors — surfaced to the leader in the review
+  // queue so they can judge without opening the game (TH levels, remaining time, open bases, …).
+  evidence?: Record<string, unknown>;
 };
 
 // A detector implementation: given its tunable config, return every violation it currently sees.

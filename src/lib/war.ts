@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { fetchCurrentWar, type CoCWarClan } from './coc-api';
+import { buildLineup, persistWarAttacks } from './warAttacks';
 
 /**
  * Regular (non-CWL) clan war ingestion. Polls every active family clan's current war (READ-ONLY)
@@ -42,6 +43,7 @@ async function ingestClan(clanId: string, clanTag: string): Promise<number> {
         attacks_per_member: war.attacksPerMember ?? 2,
         opponent_name: them.name,
         opponent_tag: them.tag,
+        opponent_lineup: buildLineup(them.members),
         our_stars: us.stars,
         our_destruction: us.destructionPercentage,
         our_attacks_used: us.attacks,
@@ -58,16 +60,19 @@ async function ingestClan(clanId: string, clanTag: string): Promise<number> {
     return 0;
   }
 
-  // Resolve our members' tags -> persons for attribution (same global-by-tag lookup as CWL).
+  // Resolve our members' tags -> persons (attribution) and -> db_role (rank, for the late-snipe
+  // detector) in one lookup — same global-by-tag resolution as CWL.
   const tagsInWar = us.members.map((m) => m.tag);
   const personByTag = new Map<string, string>();
+  const rankByTag = new Map<string, string>();
   if (tagsInWar.length) {
     const { data: accts } = await supabase
       .from('player_accounts')
-      .select('player_tag, person_id')
+      .select('player_tag, person_id, db_role')
       .in('player_tag', tagsInWar);
-    for (const a of (accts as { player_tag: string; person_id: string | null }[] | null) || []) {
+    for (const a of (accts as { player_tag: string; person_id: string | null; db_role: string | null }[] | null) || []) {
       if (a.person_id) personByTag.set(a.player_tag, a.person_id);
+      if (a.db_role) rankByTag.set(a.player_tag, a.db_role);
     }
   }
 
@@ -89,6 +94,16 @@ async function ingestClan(clanId: string, clanTag: string): Promise<number> {
       .upsert(memberRows, { onConflict: 'round_id,player_tag' });
     if (memErr) console.error('War members upsert failed:', memErr);
   }
+
+  await persistWarAttacks({
+    table: 'war_attacks',
+    roundId: roundRow.id,
+    state: war.state,
+    ourMembers: us.members,
+    opponentMembers: them.members,
+    personByTag,
+    rankByTag,
+  });
 
   return 1;
 }

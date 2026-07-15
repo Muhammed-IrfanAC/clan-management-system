@@ -45,6 +45,36 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
       },
     ],
   },
+  {
+    key: 'war_unjustified_hitup',
+    label: 'Unjustified hit-up',
+    description:
+      'Flags a member who attacked a HIGHER town hall while an equal-or-lower base was still open ' +
+      '(not 3-starred), in regular clan wars and CWL. A judgement call, so it is queued for a ' +
+      'leader to confirm or dismiss rather than auto-logged.',
+    mode: 'review',
+    configFields: [
+      { key: 'lookback_hours', label: 'Lookback (hours)', type: 'number', default: 72,
+        help: 'Only scan wars that ended within this many hours.' },
+      { key: 'min_th_gap', label: 'Min TH gap', type: 'number', default: 1,
+        help: 'How many town-hall levels above the attacker the hit base must be to count.' },
+    ],
+  },
+  {
+    key: 'war_late_snipe',
+    label: 'Low-rank late snipe',
+    description:
+      'Flags an elder-or-lower member who attacked in the war’s final hours while an ' +
+      'equal-or-lower base sat open — i.e. sniped instead of cleaning up. Attack timing is inferred ' +
+      'from the sync polls. A judgement call, so it is queued for a leader.',
+    mode: 'review',
+    configFields: [
+      { key: 'lookback_hours', label: 'Lookback (hours)', type: 'number', default: 72,
+        help: 'Only scan wars that ended within this many hours.' },
+      { key: 'window_hours', label: 'Final window (hours)', type: 'number', default: 6,
+        help: 'An attack this many hours or less before war end counts as "late".' },
+    ],
+  },
 ];
 
 export function detectorMeta(key: string | null | undefined): DetectorMeta | undefined {
