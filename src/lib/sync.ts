@@ -1,8 +1,9 @@
 import { supabase } from './supabase';
 import { fetchFromCoC, CoCClan } from './coc-api';
 import { PlayerAccount, DatabaseRole } from '@/types/database';
-import { promoteBaby, logBabyAction, recruiterTagForPerson } from './babies';
+import { promoteBaby, logBabyAction, recruiterTagForPerson, expireDepartedBabies } from './babies';
 import { addOnboardingEvent } from './onboarding';
+import { syncCwlLiveState } from './cwl/live';
 
 export async function syncClan(clanId: string) {
   try {
@@ -77,6 +78,7 @@ export async function syncClan(clanId: string) {
         in_game_name: member.name,
         th_level: member.townHallLevel,
         trophies: member.trophies,
+        league: member.leagueTier?.name ?? null, // NEW Ranked tier (not legacy trophy league); normalized in the CWL layer
         donations: member.donations,
         donations_received: member.donationsReceived,
         db_role: role,
@@ -197,4 +199,50 @@ export async function syncClan(clanId: string) {
     console.error(`Sync error for clan ${clanId}:`, error);
     throw error;
   }
+}
+
+/**
+ * Refresh live CWL round/lineup data as part of a sync, but never let it fail the roster sync —
+ * a CoC hiccup or off-season clan must not block the primary result. Returns null on any error.
+ */
+async function safeCwlSync() {
+  try {
+    return await syncCwlLiveState();
+  } catch (err) {
+    console.error('CWL live sync error (non-fatal):', err);
+    return null;
+  }
+}
+
+/**
+ * The full sync flow, shared by the cookie-auth route (`/api/sync`) and the machine-auth cron
+ * route (`/api/cron/sync`) so both run identical logic. Pass a `clanId` to sync one clan, or omit
+ * it to reconcile every active clan, expire departed babies, and refresh CWL. Auth is the caller's
+ * responsibility — this function performs no authorization.
+ */
+export async function runFullSync(clanId?: string) {
+  if (clanId) {
+    const result = await syncClan(clanId);
+    const cwl = await safeCwlSync();
+    return { ...result, cwl };
+  }
+
+  const { data: clans } = await supabase.from('clans').select('id').eq('active', true);
+  if (!clans) return { success: true, count: 0 };
+
+  const results = await Promise.all(clans.map(c => syncClan(c.id)));
+
+  // Every active clan is now reconciled in this single pass, so a baby with no active account
+  // anywhere has genuinely left the family (not just moved between clans). Drop those personas
+  // immediately rather than waiting out the trial.
+  const { expired: departedBabies } = await expireDepartedBabies();
+  const cwl = await safeCwlSync();
+
+  return {
+    success: true,
+    clansSynced: results.length,
+    totalUpdated: results.reduce((acc, r) => acc + r.count, 0),
+    departedBabies,
+    cwl,
+  };
 }

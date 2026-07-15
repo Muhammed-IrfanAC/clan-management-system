@@ -38,6 +38,7 @@ export interface PlayerAccount {
   in_game_name: string;
   th_level: number;
   trophies: number;
+  league: string | null; // raw CoC Ranked-league name (e.g. 'Electro Dragon League III'); null if none
   donations: number;
   donations_received: number;
   last_synced_at: string;
@@ -131,4 +132,126 @@ export interface OnboardingEvent {
   account_tag: string | null;
   metadata: Record<string, any>;
   created_at: string;
+}
+
+// ---- Clan War League (CWL) ----
+
+export type CWLSeasonStatus =
+  | 'planning'
+  | 'transfers_pending'
+  | 'signed_up'
+  | 'in_progress'
+  | 'completed';
+
+export type CWLAllocationStatus =
+  | 'matches'            // player's actual clan already matches the recommendation
+  | 'transfer_required' // must move in-game before sign-up
+  | 'transferred'       // move confirmed done
+  | 'removed';          // pulled from the season pool
+
+export type CWLTransferStatus = 'pending' | 'done' | 'missed';
+
+// Clash of Clans Ranked-Battle league tiers (Oct 2025 revamp; the API `leagueTier` field, NOT the
+// legacy trophy `league`), major tiers only, lowest → highest. See src/lib/cwl/leagues.ts for
+// ordering, labels and API-name normalization.
+export type CWLLeague =
+  | 'skeleton'
+  | 'barbarian'
+  | 'archer'
+  | 'wizard'
+  | 'valkyrie'
+  | 'witch'
+  | 'golem'
+  | 'pekka'
+  | 'titan'
+  | 'dragon'
+  | 'electro'
+  | 'legend';
+
+// Frozen, versioned per-season rule set. minLeague is a Ranked-league floor (skeleton is the
+// lowest, legend the highest). maxBench caps how many players a clan may bench (null = use the
+// engine default of 5), so a 15v15 clan holds at most warSize + maxBench. perClan[clanId]
+// overrides the default for that clan.
+export interface CWLConstraintRule {
+  minThLevel: number | null;
+  minLeague: CWLLeague | null;
+  maxBench: number | null;
+}
+export interface CWLConstraints {
+  default: CWLConstraintRule;
+  perClan: Record<string, CWLConstraintRule>;
+}
+
+export interface CWLSeason {
+  id: string;
+  label: string;
+  status: CWLSeasonStatus;
+  constraints: CWLConstraints;
+  last_polled_at: string | null;
+  created_at: string;
+}
+
+export interface CWLSeasonClan {
+  id: string;
+  season_id: string;
+  clan_id: string;
+  war_size: number; // 15 | 30
+}
+
+export interface CWLAllocation {
+  id: string;
+  season_id: string;
+  person_id: string;
+  recommended_clan_id: string | null;
+  actual_clan_id: string | null;
+  status: CWLAllocationStatus;
+  is_bench: boolean;
+  rank: number | null;
+  note: string | null;
+}
+
+export interface CWLTransfer {
+  id: string;
+  allocation_id: string;
+  from_clan_id: string | null;
+  to_clan_id: string | null;
+  deadline: string | null;
+  status: CWLTransferStatus;
+  created_at: string;
+}
+
+// A single live CWL round for one family clan (our side of that round's war). Populated by
+// src/lib/cwl/live.ts from the READ-ONLY CoC league group + war endpoints. See migration 012.
+export interface CWLRound {
+  id: string;
+  season_id: string;
+  clan_id: string;          // our family clan
+  round_number: number;     // 1-based
+  war_tag: string | null;
+  state: string;            // 'preparation' | 'inWar' | 'warEnded'
+  team_size: number | null;
+  opponent_name: string | null;
+  opponent_tag: string | null;
+  our_stars: number;
+  our_destruction: number;
+  our_attacks_used: number;
+  start_time: string | null;
+  end_time: string | null;
+  polled_at: string;
+}
+
+// One of our members' lineup slot + attack result within a round. attacks_used is 0 or 1 (CWL
+// gives one attack); 0 on a 'warEnded' round is a missed attack. person_id is null for unlinked
+// or guest tags.
+export interface CWLWarMember {
+  id: string;
+  round_id: string;
+  person_id: string | null;
+  player_tag: string;
+  name: string | null;
+  th_level: number | null;
+  map_position: number | null;
+  attacks_used: number;
+  stars: number;
+  destruction: number;
 }
