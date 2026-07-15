@@ -342,11 +342,17 @@ export default function SettingsPage() {
                     <div key={r.id} className="card" style={{ background: 'rgba(255,255,255,0.02)', cursor: 'default' }}>
                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-sm)' }}>
                          <h4 style={{ margin: 0 }}>{r.name}</h4>
-                         <button onClick={() => triggerConfirm('Delete Rule', `Delete rule "${r.name}"? Warnings using this rule will remain but the rule reference will be lost.`, async () => {
-                            await fetch(`/api/rules/${r.id}`, { method: 'DELETE' });
-                            fetchData();
-                            setConfirmConfig({ ...confirmConfig, isOpen: false });
-                         })} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }}><Trash2 size={16} /></button>
+                         {can(role, 'rules.delete') && (
+                           <button onClick={() => triggerConfirm('Delete Rule', `Delete rule "${r.name}"? Warnings using this rule will remain but the rule reference will be lost.`, async () => {
+                              const res = await fetch(`/api/rules/${r.id}`, { method: 'DELETE' });
+                              if (!res.ok) {
+                                const data = await res.json().catch(() => ({}));
+                                alert(data.error || 'Failed to delete rule');
+                              }
+                              fetchData();
+                              setConfirmConfig({ ...confirmConfig, isOpen: false });
+                           })} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }}><Trash2 size={16} /></button>
+                         )}
                        </div>
                        <p className="text-muted" style={{ fontSize: '0.85rem' }}>{r.description}</p>
 
