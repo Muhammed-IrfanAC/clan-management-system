@@ -35,15 +35,9 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
       'Flags any linked member who left war attacks unused in a completed war — regular clan wars ' +
       '(2 attacks) and CWL (1 attack). Clear-cut, so it auto-logs.',
     mode: 'auto',
-    configFields: [
-      {
-        key: 'lookback_hours',
-        label: 'Lookback (hours)',
-        type: 'number',
-        default: 72,
-        help: 'Only scan rounds that ended within this many hours.',
-      },
-    ],
+    // No tunables — a missed attack is a missed attack. (The scan window is internal; see
+    // DEFAULT_LOOKBACK_HOURS in the detectors.)
+    configFields: [],
   },
   {
     key: 'war_unjustified_hitup',
@@ -54,8 +48,6 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
       'leader to confirm or dismiss rather than auto-logged.',
     mode: 'review',
     configFields: [
-      { key: 'lookback_hours', label: 'Lookback (hours)', type: 'number', default: 72,
-        help: 'Only scan wars that ended within this many hours.' },
       { key: 'min_th_gap', label: 'Min TH gap', type: 'number', default: 1,
         help: 'How many town-hall levels above the attacker the hit base must be to count.' },
     ],
@@ -69,8 +61,6 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
       'from the sync polls. A judgement call, so it is queued for a leader.',
     mode: 'review',
     configFields: [
-      { key: 'lookback_hours', label: 'Lookback (hours)', type: 'number', default: 72,
-        help: 'Only scan wars that ended within this many hours.' },
       { key: 'window_hours', label: 'Final window (hours)', type: 'number', default: 6,
         help: 'An attack this many hours or less before war end counts as "late".' },
     ],

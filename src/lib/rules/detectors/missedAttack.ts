@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { DetectedViolation } from '../types';
+import { DEFAULT_LOOKBACK_HOURS } from './warContextLoad';
 
 /**
  * Missed-attack detector (`war_missed_attack`), covering BOTH war types:
@@ -9,13 +10,14 @@ import type { DetectedViolation } from '../types';
  *
  * Only ENDED rounds count (`state = 'warEnded'`), so a member who simply hasn't attacked yet in a
  * live war is never flagged; and only rows with a linked person (attribution + a real warning
- * target). `lookback_hours` bounds the scan to recently-ended rounds so the cron doesn't re-sweep
- * all history — correctness is guaranteed regardless by the caller's dedup key.
+ * target). The scan window (DEFAULT_LOOKBACK_HOURS) bounds it to recently-ended rounds so the cron
+ * doesn't re-sweep all history — an internal bound, not a rule setting; correctness is guaranteed
+ * regardless by the caller's dedup key.
  */
 export async function detectMissedAttacks(
   config: Record<string, unknown>,
 ): Promise<DetectedViolation[]> {
-  const lookbackHours = Number(config.lookback_hours ?? 72);
+  const lookbackHours = Number(config.lookback_hours ?? DEFAULT_LOOKBACK_HOURS);
   const since = new Date(Date.now() - lookbackHours * 3600 * 1000).toISOString();
 
   const [regular, cwl] = await Promise.all([
