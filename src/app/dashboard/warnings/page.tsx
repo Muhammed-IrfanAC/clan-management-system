@@ -18,9 +18,11 @@ import {
   FileText,
   Copy,
   Check,
-  RotateCcw
+  RotateCcw,
+  ClipboardCheck,
+  ChevronRight
 } from 'lucide-react';
-import { Warning, Person, PlayerAccount, Rule, WarningNote } from '@/types/database';
+import { Warning, Person, PlayerAccount, Rule, WarningNote, WarningSuggestion } from '@/types/database';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { useClan } from '@/lib/ClanContext';
 
@@ -34,6 +36,12 @@ type ExtendedWarning = Warning & {
 // An account joined with the person it's linked to, so selecting the account
 // resolves the person automatically (no need to remember the link).
 type AccountWithPerson = PlayerAccount & { person: Pick<Person, 'id' | 'display_name'> | null };
+
+// A queued judgement-rule detection awaiting a leader's confirm/dismiss.
+type ReviewItem = WarningSuggestion & {
+  person: Pick<Person, 'id' | 'display_name'> | null;
+  rule: Pick<Rule, 'id' | 'name'> | null;
+};
 
 // Platform character ceilings for the generated discipline summaries.
 //  - Discord: 2,000 per message on a free account (4,000 on Nitro) — target the safe floor.
@@ -116,6 +124,11 @@ export default function WarningsPage() {
   const [myPersonId, setMyPersonId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [escalationDays, setEscalationDays] = useState(3);
+
+  // Review queue — auto-detected judgement violations awaiting confirm/dismiss.
+  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
+  const [reviewOpen, setReviewOpen] = useState(true);
+  const [actingReviewId, setActingReviewId] = useState<string | null>(null);
   const [showLogModal, setShowLogModal] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'all' | 'high' | 'pending' | 'acknowledged'>('all');
   
@@ -234,6 +247,19 @@ export default function WarningsPage() {
       const { data: rulesData } = await supabase.from('rules').select('*');
       setRules(rulesData || []);
 
+      // Pending review queue (judgement-rule detections). Best-effort — a failure here must not
+      // blank the warnings page.
+      try {
+        const res = await fetch('/api/rules/review');
+        const items = res.ok ? await res.json() : [];
+        const list: ReviewItem[] = Array.isArray(items) ? items : [];
+        setReviewItems(
+          selectedClanId === 'all' ? list : list.filter((i) => !i.clan_id || i.clan_id === selectedClanId),
+        );
+      } catch {
+        setReviewItems([]);
+      }
+
       // Linked, active accounts only — a warning must attach to a person, and the
       // person is taken from the account's link rather than chosen separately.
       const { data: accountsData } = await supabase
@@ -256,6 +282,29 @@ export default function WarningsPage() {
     setSelectedAccount(tag);
     const acct = accounts.find(a => a.player_tag === tag);
     setSelectedPerson(acct?.person?.id || '');
+  }
+
+  async function actOnReview(id: string, action: 'confirm' | 'dismiss') {
+    setActingReviewId(id);
+    try {
+      const res = await fetch(`/api/rules/review/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (res.ok) {
+        // Drop it from the queue; if confirmed it now appears as a warning after refetch.
+        setReviewItems((prev) => prev.filter((i) => i.id !== id));
+        if (action === 'confirm') fetchData();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Error updating review item');
+      }
+    } catch {
+      alert('Error updating review item');
+    } finally {
+      setActingReviewId(null);
+    }
   }
 
   async function handleAcknowledge(id: string, current: boolean) {
@@ -512,6 +561,61 @@ export default function WarningsPage() {
            </button>
         </div>
       </div>
+
+      {/* Review queue — auto-detected judgement violations awaiting a leader's decision. */}
+      {reviewItems.length > 0 && (
+        <div className="card" style={{ marginBottom: 'var(--space-md)', borderLeft: '4px solid var(--color-warning)' }}>
+          <button
+            onClick={() => setReviewOpen((o) => !o)}
+            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontWeight: 700, width: '100%' }}
+          >
+            <ClipboardCheck size={18} className="text-warning" />
+            Needs Review
+            <span style={{ fontSize: '0.7rem', padding: '2px 8px', background: 'var(--color-warning)', color: '#111', borderRadius: '10px', fontWeight: 700 }}>{reviewItems.length}</span>
+            <ChevronRight size={16} style={{ marginLeft: 'auto', transform: reviewOpen ? 'rotate(90deg)' : 'none', transition: 'transform 200ms ease' }} />
+          </button>
+          <p className="text-muted" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>
+            Auto-detected by war rules but flagged as judgement calls. Confirm to log a warning, or dismiss.
+          </p>
+
+          {reviewOpen && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', marginTop: 'var(--space-md)' }}>
+              {reviewItems.map((r) => (
+                <div key={r.id} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', display: 'flex', gap: 'var(--space-md)', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: '240px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap', marginBottom: '2px' }}>
+                      <strong>{r.person?.display_name || r.member_name || r.player_account_tag}</strong>
+                      {r.rule?.name && <span style={{ fontSize: '0.65rem', padding: '2px 8px', background: 'rgba(245,158,11,0.15)', color: 'var(--color-warning)', borderRadius: '10px', fontWeight: 700 }}>{r.rule.name}</span>}
+                    </div>
+                    <p style={{ fontSize: '0.85rem', margin: 0, lineHeight: 1.5 }}>{r.description}</p>
+                    <span className="text-muted" style={{ fontSize: '0.7rem' }}>
+                      {r.member_name} ({r.player_account_tag}){r.occurred_at ? ` • ${new Date(r.occurred_at).toLocaleDateString()}` : ''}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                    <button
+                      className="btn btn-primary"
+                      style={{ padding: '0.4rem 0.9rem', fontSize: '0.75rem' }}
+                      disabled={actingReviewId === r.id}
+                      onClick={() => actOnReview(r.id, 'confirm')}
+                    >
+                      <Check size={15} /> Confirm
+                    </button>
+                    <button
+                      className="btn btn-outline"
+                      style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-muted)', padding: '0.4rem 0.9rem', fontSize: '0.75rem' }}
+                      disabled={actingReviewId === r.id}
+                      onClick={() => actOnReview(r.id, 'dismiss')}
+                    >
+                      <X size={15} /> Dismiss
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
         {loading ? (

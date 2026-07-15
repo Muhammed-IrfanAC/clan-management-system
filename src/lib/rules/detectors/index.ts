@@ -1,5 +1,7 @@
 import type { Detector } from '../types';
 import { detectMissedAttacks } from './missedAttack';
+import { detectUnjustifiedHitUps } from './hitUp';
+import { detectLateSnipes } from './lateSnipe';
 
 /**
  * Maps a rule's `automation_key` to its detector implementation. Keys MUST match the metadata in
@@ -8,4 +10,6 @@ import { detectMissedAttacks } from './missedAttack';
  */
 export const DETECTORS: Record<string, Detector> = {
   war_missed_attack: detectMissedAttacks,
+  war_unjustified_hitup: detectUnjustifiedHitUps,
+  war_late_snipe: detectLateSnipes,
 };
