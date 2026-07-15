@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
+import { notifyWarningLogged, webhookUrlForClan } from '@/lib/discord';
 
 export async function GET(request: NextRequest) {
   try {
@@ -65,6 +66,46 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) throw error;
+
+    // Best-effort Discord notification. Enrich for a readable message and route to the warned
+    // member's clan channel; every lookup and the send itself are fail-safe so they can never
+    // break the log request.
+    try {
+      const [{ data: account }, ruleResult, actorResult] = await Promise.all([
+        // Member's account → in-game name + clan (which channel to post to).
+        supabase
+          .from('player_accounts')
+          .select('in_game_name, clan_id')
+          .eq('player_tag', playerTag)
+          .maybeSingle(),
+        ruleId
+          ? supabase.from('rules').select('name').eq('id', ruleId).maybeSingle()
+          : Promise.resolve({ data: null }),
+        // Actor's account → person display name, so "Logged by" reads a name, not a raw tag.
+        supabase
+          .from('player_accounts')
+          .select('person:persons(display_name)')
+          .eq('player_tag', auth.actorTag)
+          .maybeSingle(),
+      ]);
+
+      const loggedByName =
+        (actorResult.data?.person as { display_name?: string } | null)?.display_name || auth.actorTag;
+
+      await notifyWarningLogged({
+        memberName: account?.in_game_name,
+        playerTag,
+        ruleName: ruleResult.data?.name,
+        description,
+        loggedBy: loggedByName,
+        webhookUrl: await webhookUrlForClan(account?.clan_id),
+        // TODO: enable member @-mentions later — fetch the warned person's discord_user_id
+        // (persons.discord_user_id, by personId) and pass it as `mentionDiscordId`. Dormant for now.
+      });
+    } catch (notifyErr) {
+      console.error('Warning Discord notification failed (non-fatal):', notifyErr);
+    }
+
     return NextResponse.json(data);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
