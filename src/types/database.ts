@@ -14,6 +14,7 @@ export interface Clan {
   clan_type: ClanType;
   display_order: number;
   active: boolean;
+  discord_webhook_url: string | null; // per-clan notification channel; falls back to DISCORD_WEBHOOK_URL
   created_at: string;
 }
 
@@ -24,6 +25,7 @@ export interface Person {
   is_baby: boolean;
   baby_started_at: string | null;
   access_role: AccessRole | null; // dashboard permission; NULL = no access. Inherited by all linked accounts.
+  discord_user_id: string | null; // for @-mentioning this member in Discord notifications; NULL = no mention
   created_at: string;
 }
 
