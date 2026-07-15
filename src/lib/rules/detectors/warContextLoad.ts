@@ -96,8 +96,14 @@ export async function loadWarContexts(since: string): Promise<WarContext[]> {
   return contexts;
 }
 
-/** Common lookback -> `since` ISO for the judgement detectors (defaults to 72h). */
+// INTERNAL scan window — NOT a user-facing rule setting. It only bounds the DB query so the 5-minute
+// cron doesn't re-sweep all history; correctness comes from dedup_key, not from this. 48h comfortably
+// covers one war cycle plus a cron hiccup, so every ended war is scanned at least once. Overridable
+// via automation_config.lookback_hours if ever needed, but deliberately absent from the Settings UI.
+export const DEFAULT_LOOKBACK_HOURS = 48;
+
+/** Common lookback -> `since` ISO for the judgement detectors. */
 export function lookbackSince(config: Record<string, unknown>): string {
-  const hours = Number(config.lookback_hours ?? 72);
+  const hours = Number(config.lookback_hours ?? DEFAULT_LOOKBACK_HOURS);
   return new Date(Date.now() - hours * 3600 * 1000).toISOString();
 }
