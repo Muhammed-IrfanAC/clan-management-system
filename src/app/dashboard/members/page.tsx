@@ -30,7 +30,7 @@ export default function MembersPage() {
   const [unlinkedAccounts, setUnlinkedAccounts] = useState<(PlayerAccount & { clan: Clan })[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filterType, setFilterType] = useState<'all' | 'babies' | 'permanent'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'babies' | 'permanent' | 'discord_unlinked'>('all');
   const [babyTrialDays, setBabyTrialDays] = useState(4);
 
   // Linking Modal State
@@ -50,7 +50,7 @@ export default function MembersPage() {
   // Honour a ?filter=babies shortcut from the dashboard "Current Babies" stat card.
   useEffect(() => {
     const f = new URLSearchParams(window.location.search).get('filter');
-    if (f === 'babies' || f === 'permanent' || f === 'all') {
+    if (f === 'babies' || f === 'permanent' || f === 'all' || f === 'discord_unlinked') {
       setFilterType(f);
     }
   }, []);
@@ -149,11 +149,13 @@ export default function MembersPage() {
     const matchesType =
       filterType === 'all' ? true :
       filterType === 'babies' ? m.is_baby :
+      filterType === 'discord_unlinked' ? !m.discord_user_id :
       !m.is_baby;
     return matchesSearch && matchesType;
   });
 
   const babyCount = members.filter(m => m.is_baby).length;
+  const discordUnlinkedCount = members.filter(m => !m.discord_user_id).length;
 
   const linkablePersons = members.filter(m => 
     m.display_name.toLowerCase().includes(linkSearch.toLowerCase())
@@ -187,6 +189,7 @@ export default function MembersPage() {
              <option value="all">All Members</option>
              <option value="babies">Babies{babyCount ? ` (${babyCount})` : ''}</option>
              <option value="permanent">Permanent</option>
+             <option value="discord_unlinked">Discord Unlinked{discordUnlinkedCount ? ` (${discordUnlinkedCount})` : ''}</option>
            </select>
         </div>
       </div>
