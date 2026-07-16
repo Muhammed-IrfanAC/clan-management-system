@@ -45,6 +45,22 @@ export async function webhookUrlForClan(clanId?: string | null): Promise<string 
 }
 
 /**
+ * Resolve a person's Discord user id for @-mentioning them in a notification. Returns null when the
+ * person has no linked Discord (persons.discord_user_id is NULL) or the id is unknown — callers pass
+ * the result straight to `mentionDiscordId`, where null simply means "no ping". Fail-safe: any DB
+ * error resolves to null so a notification can still be sent without a mention.
+ */
+export async function discordUserIdForPerson(personId?: string | null): Promise<string | null> {
+  if (!personId) return null;
+  const { data } = await supabase
+    .from('persons')
+    .select('discord_user_id')
+    .eq('id', personId)
+    .maybeSingle();
+  return data?.discord_user_id?.trim() || null;
+}
+
+/**
  * POST a message to a Discord webhook. Pass the target `webhookUrl` (from `webhookUrlForClan`); if
  * omitted, falls back to the global DISCORD_WEBHOOK_URL. Returns true if Discord accepted it, false
  * on any failure (including no webhook configured). Never throws.
@@ -87,9 +103,9 @@ export async function sendDiscordMessage(
  * Notify a Discord channel that a warning was logged against a member. Best-effort — see module
  * docs. Pass `webhookUrl` from `webhookUrlForClan(clanId)` to target the member's clan channel.
  *
- * `mentionDiscordId` (the member's `persons.discord_user_id`) is plumbed through but OFF until we
- * choose to enable member @-mentions; when provided it both pings the user and prepends their
- * mention to the message.
+ * `mentionDiscordId` (the member's `persons.discord_user_id`, resolved via `discordUserIdForPerson`)
+ * @-mentions the warned member when set: it both pings the user and prepends their mention to the
+ * message. Pass null (member has no linked Discord) to send the same notification without a ping.
  */
 export async function notifyWarningLogged(params: {
   memberName?: string | null;

@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
-import { notifyWarningLogged, webhookUrlForClan } from '@/lib/discord';
+import { notifyWarningLogged, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
 
 /**
  * Act on a queued review suggestion: `confirm` promotes it to a real warning (and notifies the
@@ -78,6 +78,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         description: sug.description,
         loggedBy: 'ClanOps (leader-confirmed)',
         webhookUrl: await webhookUrlForClan(sug.clan_id),
+        mentionDiscordId: await discordUserIdForPerson(sug.person_id),
       });
     } catch (err) {
       console.error('Confirm notify failed (non-fatal):', err);

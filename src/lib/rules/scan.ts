@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { DETECTORS } from './detectors';
 import { detectorMeta } from './registry';
-import { notifyWarningLogged, webhookUrlForClan } from '@/lib/discord';
+import { notifyWarningLogged, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
 import type { DetectedViolation } from './types';
 
 /**
@@ -103,6 +103,7 @@ async function commitAuto(rule: AutomatedRule, violations: DetectedViolation[]):
         description: v.description,
         loggedBy: 'ClanOps (automated)',
         webhookUrl: await webhookUrlForClan(v.clanId),
+        mentionDiscordId: await discordUserIdForPerson(v.personId),
       });
     } catch (err) {
       console.error('Auto-warning Discord notify failed (non-fatal):', err);
