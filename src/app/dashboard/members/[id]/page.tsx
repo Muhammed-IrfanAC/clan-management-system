@@ -27,7 +27,8 @@ import {
   Route,
   X,
   RotateCcw,
-  MinusCircle
+  MinusCircle,
+  AtSign
 } from 'lucide-react';
 import Link from 'next/link';
 import { Person, PlayerAccount, Warning, LeadershipLog, Clan, Rule, MemberNote, OnboardingEvent, OnboardingEventType } from '@/types/database';
@@ -89,6 +90,11 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   const [recordingEvent, setRecordingEvent] = useState(false);
   const [deletingEvent, setDeletingEvent] = useState(false);
   const [removing, setRemoving] = useState(false);
+
+  // Discord-link editor state (persons.discord_user_id — for @-mentions in warning webhooks).
+  const [editingDiscord, setEditingDiscord] = useState(false);
+  const [discordDraft, setDiscordDraft] = useState('');
+  const [savingDiscord, setSavingDiscord] = useState(false);
 
   // Modal state
   const [confirmConfig, setConfirmConfig] = useState({
@@ -241,6 +247,28 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
     }
   }
 
+  // Set, change, or clear this persona's Discord link (persons.discord_user_id). Pass '' to unlink.
+  async function saveDiscordId(value: string) {
+    if (savingDiscord) return;
+    setSavingDiscord(true);
+    try {
+      const res = await fetch(`/api/persons/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ discord_user_id: value.trim() }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Failed to save Discord ID');
+      const saved = await res.json();
+      setPerson(p => (p ? { ...p, discord_user_id: saved.discord_user_id } : p));
+      setEditingDiscord(false);
+      setToast({ type: 'success', message: saved.discord_user_id ? 'Discord linked.' : 'Discord unlinked.' });
+    } catch (err: any) {
+      setToast({ type: 'error', message: err.message || 'Error saving Discord ID' });
+    } finally {
+      setSavingDiscord(false);
+    }
+  }
+
   async function handleAddComment() {
     const body = newComment.trim();
     if (!body) return;
@@ -365,6 +393,49 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                 </span>
               </div>
             )}
+
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 'var(--space-lg)', marginBottom: 'var(--space-lg)' }}>
+               <h3 style={{ fontSize: '0.9rem', marginBottom: 'var(--space-md)', display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                 <AtSign size={15} /> Discord
+               </h3>
+               {editingDiscord ? (
+                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                   <input
+                     autoFocus
+                     value={discordDraft}
+                     onChange={e => setDiscordDraft(e.target.value)}
+                     onKeyDown={e => { if (e.key === 'Enter') saveDiscordId(discordDraft); if (e.key === 'Escape') setEditingDiscord(false); }}
+                     placeholder="Discord user ID (17–20 digits)"
+                     inputMode="numeric"
+                     className="input"
+                     style={{ fontSize: '0.8rem' }}
+                   />
+                   <p className="text-muted" style={{ fontSize: '0.68rem', margin: 0 }}>
+                     Discord → User Settings → Advanced → Developer Mode, then right-click the member → Copy User ID.
+                   </p>
+                   <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                     <button onClick={() => saveDiscordId(discordDraft)} disabled={savingDiscord} className="btn btn-primary" style={{ padding: '0.35rem 0.8rem', fontSize: '0.75rem' }}>{savingDiscord ? 'Saving...' : 'Save'}</button>
+                     <button onClick={() => setEditingDiscord(false)} disabled={savingDiscord} className="btn btn-outline" style={{ padding: '0.35rem 0.8rem', fontSize: '0.75rem' }}>Cancel</button>
+                   </div>
+                 </div>
+               ) : (
+                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-sm)' }}>
+                   {person.discord_user_id ? (
+                     <span style={{ fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: 'var(--space-sm)', color: 'var(--color-success)' }}>
+                       <CheckCircle size={13} /> Linked <span className="text-muted" style={{ fontFamily: 'monospace', fontSize: '0.72rem' }}>({person.discord_user_id})</span>
+                     </span>
+                   ) : (
+                     <span className="text-muted" style={{ fontSize: '0.8rem' }}>Not linked — warnings won&apos;t @-mention this member.</span>
+                   )}
+                   <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                     <button onClick={() => { setDiscordDraft(person.discord_user_id || ''); setEditingDiscord(true); }} className="btn btn-outline" style={{ padding: '0.3rem 0.7rem', fontSize: '0.72rem' }}>{person.discord_user_id ? 'Change' : 'Link'}</button>
+                     {person.discord_user_id && (
+                       <button onClick={() => saveDiscordId('')} disabled={savingDiscord} className="btn btn-outline" style={{ padding: '0.3rem 0.7rem', fontSize: '0.72rem', color: 'var(--color-danger)' }}>Unlink</button>
+                     )}
+                   </div>
+                 </div>
+               )}
+            </div>
 
             <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 'var(--space-lg)' }}>
                <h3 style={{ fontSize: '0.9rem', marginBottom: 'var(--space-md)' }}>Linked Accounts</h3>
