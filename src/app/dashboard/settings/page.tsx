@@ -13,7 +13,7 @@ import {
   X,
   AlertCircle
 } from 'lucide-react';
-import { Clan, Rule, Setting, AccessRole } from '@/types/database';
+import { Clan, Rule, Setting, AccessRole, RuleAutomationMode } from '@/types/database';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { useCurrentUser } from '@/lib/useCurrentUser';
 import { can, assignableRoles } from '@/lib/permissions';
@@ -187,6 +187,26 @@ export default function SettingsPage() {
     } catch (err: any) { alert(err?.message || 'Error updating automation'); }
   }
 
+  // Set a clan's rule-automation scope (always / cwl_only / never). Optimistic; reverts on failure.
+  async function updateClanAutomation(id: string, mode: RuleAutomationMode) {
+    const prev = clans;
+    setClans(cs => cs.map(c => (c.id === id ? { ...c, rule_automation_mode: mode } : c)));
+    try {
+      const res = await fetch(`/api/clans/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rule_automation_mode: mode }),
+      });
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({ error: 'Error updating clan automation' }));
+        throw new Error(error);
+      }
+    } catch (err: any) {
+      setClans(prev);
+      alert(err?.message || 'Error updating clan automation');
+    }
+  }
+
   // Guarded wrapper for the enable/disable toggle so it can't be fired repeatedly mid-request.
   async function toggleRuleAutomation(id: string, enabled: boolean) {
     if (togglingRuleId) return;
@@ -344,8 +364,22 @@ export default function SettingsPage() {
                   {clans.map(c => (
                     <div key={c.id} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                        <div><span style={{ fontWeight: '700' }}>{c.display_name}</span><span className="text-muted" style={{ marginLeft: 'var(--space-md)' }}>{c.clan_tag}</span></div>
-                       <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
+                       <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'center' }}>
                           <span style={{ fontSize: '0.7rem', color: 'var(--color-muted)', textTransform: 'uppercase' }}>{c.clan_type}</span>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', fontSize: '0.7rem', color: 'var(--color-muted)' }} title="When the rule detectors act on this clan's wars">
+                            <span style={{ textTransform: 'uppercase' }}>Automation</span>
+                            <select
+                              className="input"
+                              value={c.rule_automation_mode ?? 'always'}
+                              onChange={(e) => updateClanAutomation(c.id, e.target.value as RuleAutomationMode)}
+                              style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem' }}
+                              aria-label={`Rule automation for ${c.display_name}`}
+                            >
+                              <option value="always">Always</option>
+                              <option value="cwl_only">CWL only</option>
+                              <option value="never">Never</option>
+                            </select>
+                          </label>
                           <button onClick={() => triggerConfirm('Remove Clan', `Permanently remove ${c.display_name}? Accounts will remain but lose clan affiliation.`, async () => {
                             if (confirming) return;
                             setConfirming(true);

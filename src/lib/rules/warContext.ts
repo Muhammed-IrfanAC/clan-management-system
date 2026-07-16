@@ -86,6 +86,7 @@ export function findHitUps(ctx: WarContext, config: HitUpConfig = {}): DetectedV
       personId: a.attackerPersonId,
       playerTag: a.attackerTag,
       clanId: ctx.clanId,
+      source: ctx.source,
       memberName: a.attackerName,
       description:
         `Possible unjustified hit-up — TH${a.attackerTh} hit a TH${a.defenderTh} base while ` +
@@ -141,6 +142,7 @@ export function findLateSnipes(ctx: WarContext, config: LateSnipeConfig = {}): D
       personId: a.attackerPersonId,
       playerTag: a.attackerTag,
       clanId: ctx.clanId,
+      source: ctx.source,
       memberName: a.attackerName,
       description:
         `Possible late snipe — ${a.attackerName || a.attackerTag} (${a.attackerRank}) attacked a ` +

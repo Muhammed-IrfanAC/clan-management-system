@@ -13,6 +13,7 @@ export type DetectedViolation = {
   personId: string;
   playerTag: string;
   clanId: string | null;      // for routing the Discord notification to the member's clan channel
+  source: 'regular' | 'cwl';  // which war type it came from — drives the per-clan automation scope
   memberName: string | null;  // in-game / war name, for a readable message
   description: string;         // becomes warnings.description
   dedupKey: string;            // stable per real-world violation; drives idempotent insert

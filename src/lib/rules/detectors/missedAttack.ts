@@ -70,6 +70,7 @@ async function detectRegular(since: string): Promise<DetectedViolation[]> {
       personId: r.person_id,
       playerTag: r.player_tag,
       clanId: round.clan_id,
+      source: 'regular',
       memberName: r.name,
       description: `${missedPhrase(r.attacks_used, allowed)} — clan war${
         round.opponent_name ? ` vs ${round.opponent_name}` : ''
@@ -121,6 +122,7 @@ async function detectCwl(since: string): Promise<DetectedViolation[]> {
       personId: r.person_id,
       playerTag: r.player_tag,
       clanId: round.clan_id,
+      source: 'cwl',
       memberName: r.name,
       description: `Missed war attack — CWL Round ${round.round_number}${
         round.opponent_name ? ` vs ${round.opponent_name}` : ''

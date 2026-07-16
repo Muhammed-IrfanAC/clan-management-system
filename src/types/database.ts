@@ -5,6 +5,8 @@ export type DatabaseRole = 'super_admin' | 'leader' | 'co_leader' | 'elder' | 'm
 export type AccessRole = 'super_admin' | 'leader' | 'co_leader';
 export type PlayerStatus = 'active' | 'left' | 'removed';
 export type ClanType = 'main' | 'feeder';
+// Scope of automated rule detection for a clan: both war types, CWL only, or off entirely.
+export type RuleAutomationMode = 'always' | 'cwl_only' | 'never';
 export type LogCategory = 'promotion' | 'demotion' | 'war' | 'recruitment' | 'capital' | 'general';
 
 export interface Clan {
@@ -15,6 +17,7 @@ export interface Clan {
   display_order: number;
   active: boolean;
   discord_webhook_url: string | null; // per-clan notification channel; falls back to DISCORD_WEBHOOK_URL
+  rule_automation_mode: RuleAutomationMode; // scope of automated rule detection for this clan
   created_at: string;
 }
 

@@ -2,6 +2,8 @@ import { supabase } from '@/lib/supabase';
 import { DETECTORS } from './detectors';
 import { detectorMeta } from './registry';
 import { notifyWarningLogged, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
+import { filterViolationsByClanMode, normalizeMode } from './automationScope';
+import type { RuleAutomationMode } from '@/types/database';
 import type { DetectedViolation } from './types';
 
 /**
@@ -36,6 +38,16 @@ export async function scanRuleViolations(): Promise<{ detected: number; logged: 
     .eq('automation_enabled', true)
     .not('automation_key', 'is', null);
 
+  // Per-clan automation scope: a clan may opt its wars out of automation, or limit it to CWL. Load
+  // once and apply to every detector's output so the choice is enforced uniformly across all rules.
+  const { data: clanRows } = await supabase.from('clans').select('id, rule_automation_mode');
+  const modeByClan = new Map<string, RuleAutomationMode>(
+    (clanRows as { id: string; rule_automation_mode: string | null }[] | null)?.map((c) => [
+      c.id,
+      normalizeMode(c.rule_automation_mode),
+    ]) || [],
+  );
+
   let detected = 0;
   let logged = 0;
   let queued = 0;
@@ -52,6 +64,8 @@ export async function scanRuleViolations(): Promise<{ detected: number; logged: 
       console.error(`Detector ${rule.automation_key} failed:`, err);
       continue;
     }
+    // Drop violations from clans that have opted this war type out of automation.
+    violations = filterViolationsByClanMode(violations, modeByClan);
     detected += violations.length;
     if (!violations.length) continue;
 
