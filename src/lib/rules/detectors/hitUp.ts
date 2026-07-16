@@ -10,6 +10,9 @@ export async function detectUnjustifiedHitUps(
   config: Record<string, unknown>,
 ): Promise<DetectedViolation[]> {
   const contexts = await loadWarContexts(lookbackSince(config));
-  const cfg = { min_th_gap: Number(config.min_th_gap ?? 1) };
+  const cfg = {
+    min_th_gap: Number(config.min_th_gap ?? 1),
+    ranks: Array.isArray(config.ranks) ? (config.ranks as string[]) : undefined,
+  };
   return contexts.flatMap((c) => findHitUps(c, cfg));
 }

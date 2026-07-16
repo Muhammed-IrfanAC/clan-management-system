@@ -43,9 +43,11 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
     key: 'war_unjustified_hitup',
     label: 'Unjustified hit-up',
     description:
-      'Flags a member who attacked a HIGHER town hall while an equal-or-lower base was still open ' +
-      '(not 3-starred), in regular clan wars and CWL. A judgement call, so it is queued for a ' +
-      'leader to confirm or dismiss rather than auto-logged.',
+      'Flags an elder-or-lower member who attacked a HIGHER town hall while an equal-or-lower base ' +
+      'was still open (not 3-starred), in regular clan wars and CWL. Leaders and co-leaders are ' +
+      'exempt — they often hit up deliberately to open the map. A member is flagged at most once per ' +
+      'war, even if both of their attacks hit up. A judgement call, so it is queued for a leader to ' +
+      'confirm or dismiss rather than auto-logged.',
     mode: 'review',
     configFields: [
       { key: 'min_th_gap', label: 'Min TH gap', type: 'number', default: 1,
@@ -56,9 +58,10 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
     key: 'war_late_snipe',
     label: 'Low-rank late snipe',
     description:
-      'Flags any elder-or-lower member who attacked in the war’s final hours — catching members ' +
-      'who wait until the end to snipe loot off already-cleared bases. Attack timing is inferred ' +
-      'from the sync polls. A judgement call, so it is queued for a leader.',
+      'Flags an elder-or-lower member who attacked in the war’s final hours — catching members who ' +
+      'wait until the end to snipe loot off already-cleared bases, in regular clan wars and CWL. ' +
+      'Leaders and co-leaders are exempt. Attack timing is inferred from the sync polls. A judgement ' +
+      'call, so it is queued for a leader to confirm or dismiss rather than auto-logged.',
     mode: 'review',
     configFields: [
       { key: 'window_hours', label: 'Final window (hours)', type: 'number', default: 6,

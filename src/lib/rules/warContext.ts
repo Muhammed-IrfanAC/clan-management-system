@@ -53,21 +53,33 @@ export function openBasesBefore(ctx: WarContext, order: number, maxTh: number): 
 export type HitUpConfig = {
   // How much higher (in TH levels) the hit base must be than the attacker to count as "hitting up".
   min_th_gap?: number;
+  ranks?: string[]; // db_roles that the rule applies to (default elder & below), mirroring late snipe
 };
 
 /**
- * Unjustified hit-up: an attacker hit a base at least `min_th_gap` TH levels ABOVE their own while an
- * equal-or-lower TH base sat open. Rank-agnostic — the rule is about target choice, not who made it.
+ * Unjustified hit-up: a low-rank member (of `ranks`, default elder-or-lower) hit a base at least
+ * `min_th_gap` TH levels ABOVE their own while an equal-or-lower TH base sat open. Like the late-snipe
+ * rule, higher ranks are exempt — leaders/co-leaders often hit up deliberately to open the map.
+ *
+ * At most one violation per member per war: a member who hits up on BOTH of their attacks is flagged
+ * once (the earliest by attack order), so the dedup_key — and therefore the leader's queue — carries a
+ * single entry per person, not one per attack.
  */
 export function findHitUps(ctx: WarContext, config: HitUpConfig = {}): DetectedViolation[] {
   const minGap = Math.max(1, Number(config.min_th_gap ?? 1));
+  const ranks = new Set(config.ranks && config.ranks.length ? config.ranks : DEFAULT_LOW_RANKS);
   const out: DetectedViolation[] = [];
+  const seen = new Set<string>(); // personIds already flagged this war
 
-  for (const a of ctx.attacks) {
+  // Earliest-order-first so the representative attack (and its evidence) is deterministic.
+  for (const a of [...ctx.attacks].sort((x, y) => x.order - y.order)) {
     if (!a.attackerPersonId) continue;
+    if (!a.attackerRank || !ranks.has(a.attackerRank)) continue; // higher rank — exempt
     if (a.defenderTh - a.attackerTh < minGap) continue; // didn't hit up
     const open = openBasesBefore(ctx, a.order, a.attackerTh); // equal/lower bases still available
     if (!open.length) continue;
+    if (seen.has(a.attackerPersonId)) continue; // already flagged for an earlier attack this war
+    seen.add(a.attackerPersonId);
 
     const vs = ctx.opponentName ? ` vs ${ctx.opponentName}` : '';
     out.push({
@@ -79,11 +91,13 @@ export function findHitUps(ctx: WarContext, config: HitUpConfig = {}): DetectedV
         `Possible unjustified hit-up — TH${a.attackerTh} hit a TH${a.defenderTh} base while ` +
         `${open.length} equal-or-lower base${open.length === 1 ? '' : 's'} (TH${lowestTh(open)}` +
         `${open.length === 1 ? '' : ' etc'}) sat open${vs}.`,
-      dedupKey: `war_unjustified_hitup:${ctx.source}:${ctx.roundId}:${a.order}`,
+      // Per-person (not per-attack) so both hits by the same member collapse into one warning.
+      dedupKey: `war_unjustified_hitup:${ctx.source}:${ctx.roundId}:${a.attackerPersonId}`,
       occurredAt: ctx.endTime || a.firstSeenAt || new Date(0).toISOString(),
       evidence: {
         attacker_th: a.attackerTh,
         defender_th: a.defenderTh,
+        rank: a.attackerRank,
         open_bases: open.map((b) => b.th),
         opponent: ctx.opponentName,
         source: ctx.source,

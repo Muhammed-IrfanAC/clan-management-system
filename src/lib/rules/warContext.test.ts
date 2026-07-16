@@ -82,8 +82,31 @@ describe('findHitUps', () => {
     });
     const v = findHitUps(c);
     expect(v).toHaveLength(1);
-    expect(v[0].dedupKey).toBe('war_unjustified_hitup:regular:r1:1');
+    expect(v[0].dedupKey).toBe('war_unjustified_hitup:regular:r1:person-1');
     expect(v[0].evidence?.open_bases).toEqual([13]);
+  });
+
+  it('exempts higher ranks (co-leader hitting up is not flagged)', () => {
+    const c = ctx({
+      lineup: [{ tag: '#easy', th: 13 }, { tag: '#hard', th: 15 }],
+      attacks: [attack({ order: 1, attackerRank: 'co_leader', attackerTh: 13, defenderTag: '#hard', defenderTh: 15, stars: 2 })],
+    });
+    expect(findHitUps(c)).toHaveLength(0);
+    // ...but honours a custom ranks list that includes them.
+    expect(findHitUps(c, { ranks: ['co_leader'] })).toHaveLength(1);
+  });
+
+  it('flags a member once even when BOTH of their attacks hit up', () => {
+    const c = ctx({
+      lineup: [{ tag: '#easy', th: 13 }, { tag: '#h1', th: 15 }, { tag: '#h2', th: 15 }],
+      attacks: [
+        attack({ order: 1, attackerTag: '#same', attackerPersonId: 'p', attackerTh: 13, defenderTag: '#h1', defenderTh: 15, stars: 2 }),
+        attack({ order: 2, attackerTag: '#same', attackerPersonId: 'p', attackerTh: 13, defenderTag: '#h2', defenderTh: 15, stars: 2 }),
+      ],
+    });
+    const v = findHitUps(c);
+    expect(v).toHaveLength(1); // one warning per member per war, not one per attack
+    expect(v[0].dedupKey).toBe('war_unjustified_hitup:regular:r1:p');
   });
 
   it('does not flag when no equal/lower base is open', () => {
