@@ -56,8 +56,8 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
     key: 'war_late_snipe',
     label: 'Low-rank late snipe',
     description:
-      'Flags an elder-or-lower member who attacked in the war’s final hours while an ' +
-      'equal-or-lower base sat open — i.e. sniped instead of cleaning up. Attack timing is inferred ' +
+      'Flags any elder-or-lower member who attacked in the war’s final hours — catching members ' +
+      'who wait until the end to snipe loot off already-cleared bases. Attack timing is inferred ' +
       'from the sync polls. A judgement call, so it is queued for a leader.',
     mode: 'review',
     configFields: [

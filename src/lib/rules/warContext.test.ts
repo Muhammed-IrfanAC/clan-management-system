@@ -126,7 +126,7 @@ describe('findLateSnipes', () => {
     { tag: '#hit', th: 14 },
   ];
 
-  it('flags a low-rank attack in the final window with an open equal/lower base', () => {
+  it('flags a low-rank attack in the final window', () => {
     const c = ctx({
       lineup,
       attacks: [
@@ -137,6 +137,14 @@ describe('findLateSnipes', () => {
     expect(v).toHaveLength(1);
     expect(v[0].dedupKey).toBe('war_late_snipe:regular:r1:1');
     expect(v[0].evidence?.rank).toBe('elder');
+  });
+
+  it('flags a late attack even when no equal/lower base is open (loot snipe on a cleared higher base)', () => {
+    const c = ctx({
+      lineup: [{ tag: '#hard', th: 15 }], // only a higher base exists
+      attacks: [attack({ order: 1, attackerRank: 'member', attackerTh: 14, defenderTag: '#hard', defenderTh: 15, stars: 1, firstSeenAt: beforeEnd(2) })],
+    });
+    expect(findLateSnipes(c, { window_hours: 6 })).toHaveLength(1);
   });
 
   it('does not flag a co-leader (not a low rank)', () => {
@@ -163,12 +171,12 @@ describe('findLateSnipes', () => {
     expect(findLateSnipes(c)).toHaveLength(0);
   });
 
-  it('does not flag when the late attack itself 3-starred the only open equal/lower base', () => {
+  it('flags any low-rank late attack regardless of what it hit', () => {
     const c = ctx({
       lineup: [{ tag: '#openLow', th: 13 }],
       attacks: [attack({ order: 1, attackerRank: 'member', attackerTh: 14, defenderTag: '#openLow', defenderTh: 13, stars: 3, firstSeenAt: beforeEnd(2) })],
     });
-    expect(findLateSnipes(c)).toHaveLength(0); // legitimate cleanup
+    expect(findLateSnipes(c)).toHaveLength(1);
   });
 
   it('honours a custom ranks list', () => {

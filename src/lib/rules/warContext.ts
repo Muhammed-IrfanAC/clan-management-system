@@ -102,10 +102,10 @@ const DEFAULT_LOW_RANKS = ['member', 'elder'];
 
 /**
  * Low-rank late snipe: a member of `ranks` (default elder-or-lower) attacked within the war's final
- * `window_hours` while an equal-or-lower TH base sat open — i.e. sniped instead of leaving/cleaning
- * up cleanup bases. Timing is only trusted when the attack was first observed while state was
- * 'inWar' (an attack first seen only at 'warEnded' has no reliable timestamp and is skipped).
- * An attacker who used their late hit to 3-star the last open equal/lower base is NOT flagged.
+ * `window_hours`. Any such late attack is flagged — this catches members who deliberately wait until
+ * the end to snipe loot off already-cleared higher bases, not just those who left an equal-or-lower
+ * base open. Timing is only trusted when the attack was first observed while state was 'inWar' (an
+ * attack first seen only at 'warEnded' has no reliable timestamp and is skipped).
  */
 export function findLateSnipes(ctx: WarContext, config: LateSnipeConfig = {}): DetectedViolation[] {
   const windowMs = Math.max(0, Number(config.window_hours ?? 6)) * 3600 * 1000;
@@ -121,13 +121,6 @@ export function findLateSnipes(ctx: WarContext, config: LateSnipeConfig = {}): D
     const remainingMs = endMs - new Date(a.firstSeenAt).getTime();
     if (remainingMs > windowMs) continue; // not in the final window
 
-    // Equal/lower bases open just before this attack, minus one this attack itself 3-starred
-    // (that would be legitimate cleanup, not a snipe).
-    const open = openBasesBefore(ctx, a.order, a.attackerTh).filter(
-      (b) => !(b.tag === a.defenderTag && a.stars >= 3),
-    );
-    if (!open.length) continue;
-
     const hoursLeft = Math.max(0, remainingMs) / 3600000;
     const vs = ctx.opponentName ? ` vs ${ctx.opponentName}` : '';
     out.push({
@@ -136,15 +129,15 @@ export function findLateSnipes(ctx: WarContext, config: LateSnipeConfig = {}): D
       clanId: ctx.clanId,
       memberName: a.attackerName,
       description:
-        `Possible late snipe — ${a.attackerName || a.attackerTag} (${a.attackerRank}) attacked with ` +
-        `~${fmtHours(hoursLeft)} left while an equal-or-lower base (TH${lowestTh(open)}) sat open${vs}.`,
+        `Possible late snipe — ${a.attackerName || a.attackerTag} (${a.attackerRank}) attacked a ` +
+        `TH${a.defenderTh} base with ~${fmtHours(hoursLeft)} left${vs}.`,
       dedupKey: `war_late_snipe:${ctx.source}:${ctx.roundId}:${a.order}`,
       occurredAt: ctx.endTime,
       evidence: {
         attacker_th: a.attackerTh,
+        defender_th: a.defenderTh,
         rank: a.attackerRank,
         hours_left: Number(hoursLeft.toFixed(1)),
-        open_bases: open.map((b) => b.th),
         opponent: ctx.opponentName,
         source: ctx.source,
       },
