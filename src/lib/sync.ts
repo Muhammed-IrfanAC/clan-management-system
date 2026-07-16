@@ -47,10 +47,13 @@ export async function syncClan(clanId: string) {
     const upsertData = [];
     const now = new Date().toISOString();
 
-    // Babies auto-graduate when an in-game promotion is detected. We capture the (person_id, clan)
-    // for any account whose CoC role climbs from 'member' to 'elder' or higher, then reconcile
-    // against persons.is_baby AFTER the upsert (the pre-sync role is only known here, before it is
-    // overwritten). Permanent members are never included — the is_baby check happens post-upsert.
+    // Babies auto-graduate once their in-game rank is elder or higher. We capture the (person_id,
+    // clan) for every LINKED account currently reading elder+ in game, then keep only those whose
+    // person is still flagged is_baby (checked AFTER the upsert). This is STATE-based, not
+    // transition-based: an earlier version only fired on the single sync where db_role flipped
+    // member->elder, so a baby who was already elder when linked (or whose flip sync was missed)
+    // stayed a baby forever. Permanent members are naturally excluded by the post-upsert is_baby
+    // filter (and re-promotion is a no-op since promoteBaby clears is_baby).
     const promotionCandidates: { personId: string; clanId: string }[] = [];
 
     for (const member of cocMembers) {
@@ -62,10 +65,11 @@ export async function syncClan(clanId: string) {
       else if (member.role === 'coLeader') role = 'co_leader';
       else if (member.role === 'admin') role = 'elder';
 
-      // Auto-promotion signal: an account that was 'member' last sync and now reads elder+ in game.
+      // Auto-promotion signal: any linked account currently at elder+ in game. The is_baby filter
+      // after the upsert decides who actually graduates (permanent elders are ignored there), so we
+      // don't gate on the prior db_role — that missed babies who were already elder before linking.
       if (
         existing?.person_id &&
-        existing.db_role === 'member' &&
         (role === 'elder' || role === 'co_leader' || role === 'leader')
       ) {
         promotionCandidates.push({ personId: existing.person_id, clanId });
