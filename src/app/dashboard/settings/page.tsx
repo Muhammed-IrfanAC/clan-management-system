@@ -89,6 +89,13 @@ export default function SettingsPage() {
   const [personQuery, setPersonQuery] = useState('');
   const [newLeaderRole, setNewLeaderRole] = useState<AccessRole>('co_leader');
 
+  // In-flight guards to prevent double-submits / repeated mutations while a request is pending.
+  const [addingClan, setAddingClan] = useState(false);
+  const [addingRule, setAddingRule] = useState(false);
+  const [addingLeader, setAddingLeader] = useState(false);
+  const [togglingRuleId, setTogglingRuleId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -180,8 +187,21 @@ export default function SettingsPage() {
     } catch (err: any) { alert(err?.message || 'Error updating automation'); }
   }
 
+  // Guarded wrapper for the enable/disable toggle so it can't be fired repeatedly mid-request.
+  async function toggleRuleAutomation(id: string, enabled: boolean) {
+    if (togglingRuleId) return;
+    setTogglingRuleId(id);
+    try {
+      await updateRuleAutomation(id, { automation_enabled: enabled });
+    } finally {
+      setTogglingRuleId(null);
+    }
+  }
+
   const handleAddClan = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (addingClan) return;
+    setAddingClan(true);
     try {
       const res = await fetch('/api/clans', {
         method: 'POST',
@@ -199,10 +219,13 @@ export default function SettingsPage() {
         fetchData();
       }
     } catch (e) { alert('Error adding clan'); }
+    finally { setAddingClan(false); }
   };
 
   const handleAddRule = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (addingRule) return;
+    setAddingRule(true);
     try {
       const res = await fetch('/api/rules', {
         method: 'POST',
@@ -219,16 +242,19 @@ export default function SettingsPage() {
         fetchData();
       }
     } catch (e) { alert('Error adding rule'); }
+    finally { setAddingRule(false); }
   };
 
   const handleAddLeader = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (addingLeader) return;
     // Access is a person-level grant; we address the person via one of their account tags.
     const person = personOptions.find((p) => p.person_id === selectedPersonId);
     if (!person) {
       alert('Please select a member to grant access.');
       return;
     }
+    setAddingLeader(true);
     try {
       const res = await fetch(`/api/leaders/${encodeURIComponent(person.player_tag)}`, {
         method: 'PATCH',
@@ -247,6 +273,7 @@ export default function SettingsPage() {
         alert(error || 'Error adding leader');
       }
     } catch (e) { alert('Error adding leader'); }
+    finally { setAddingLeader(false); }
   };
 
   const triggerConfirm = (title: string, message: string, onConfirm: () => void, variant: 'danger' | 'warning' | 'info' = 'danger') => {
@@ -320,9 +347,13 @@ export default function SettingsPage() {
                        <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
                           <span style={{ fontSize: '0.7rem', color: 'var(--color-muted)', textTransform: 'uppercase' }}>{c.clan_type}</span>
                           <button onClick={() => triggerConfirm('Remove Clan', `Permanently remove ${c.display_name}? Accounts will remain but lose clan affiliation.`, async () => {
-                            await fetch(`/api/clans/${c.id}`, { method: 'DELETE' });
-                            fetchData();
-                            setConfirmConfig({ ...confirmConfig, isOpen: false });
+                            if (confirming) return;
+                            setConfirming(true);
+                            try {
+                              await fetch(`/api/clans/${c.id}`, { method: 'DELETE' });
+                              fetchData();
+                              setConfirmConfig({ ...confirmConfig, isOpen: false });
+                            } finally { setConfirming(false); }
                           })} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }}><Trash2 size={16} /></button>
                        </div>
                     </div>
@@ -344,13 +375,17 @@ export default function SettingsPage() {
                          <h4 style={{ margin: 0 }}>{r.name}</h4>
                          {can(role, 'rules.delete') && (
                            <button onClick={() => triggerConfirm('Delete Rule', `Delete rule "${r.name}"? Warnings using this rule will remain but the rule reference will be lost.`, async () => {
-                              const res = await fetch(`/api/rules/${r.id}`, { method: 'DELETE' });
-                              if (!res.ok) {
-                                const data = await res.json().catch(() => ({}));
-                                alert(data.error || 'Failed to delete rule');
-                              }
-                              fetchData();
-                              setConfirmConfig({ ...confirmConfig, isOpen: false });
+                              if (confirming) return;
+                              setConfirming(true);
+                              try {
+                                const res = await fetch(`/api/rules/${r.id}`, { method: 'DELETE' });
+                                if (!res.ok) {
+                                  const data = await res.json().catch(() => ({}));
+                                  alert(data.error || 'Failed to delete rule');
+                                }
+                                fetchData();
+                                setConfirmConfig({ ...confirmConfig, isOpen: false });
+                              } finally { setConfirming(false); }
                            })} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }}><Trash2 size={16} /></button>
                          )}
                        </div>
@@ -380,7 +415,8 @@ export default function SettingsPage() {
                            </select>
                            {r.automation_key && (
                              <button
-                               onClick={() => updateRuleAutomation(r.id, { automation_enabled: !r.automation_enabled })}
+                               onClick={() => toggleRuleAutomation(r.id, !r.automation_enabled)}
+                               disabled={togglingRuleId === r.id}
                                className={`btn ${r.automation_enabled ? 'btn-primary' : 'btn-outline'}`}
                                style={{ fontSize: '0.7rem', padding: 'var(--space-xs) var(--space-md)' }}
                              >
@@ -407,6 +443,7 @@ export default function SettingsPage() {
                                          style={{ width: '130px' }}
                                          defaultValue={(r.automation_config?.[f.key] ?? f.default) as any}
                                          onBlur={(e) => {
+                                           if (togglingRuleId === r.id) return;
                                            const val = f.type === 'number' ? Number(e.target.value) : e.target.value;
                                            updateRuleAutomation(r.id, { automation_config: { ...(r.automation_config || {}), [f.key]: val } });
                                          }}
@@ -441,13 +478,17 @@ export default function SettingsPage() {
                        </div>
                        {l.access_role !== 'super_admin' && (
                          <button onClick={() => triggerConfirm('Revoke Access', `Instantly block ${l.display_name} from the dashboard? Access is revoked for every account linked to them. They remain in the registry as a regular member.`, async () => {
-                            await fetch(`/api/leaders/${encodeURIComponent(l.player_tag)}`, {
-                              method: 'PATCH',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ access_role: null }),
-                            });
-                            fetchData();
-                            setConfirmConfig({ ...confirmConfig, isOpen: false });
+                            if (confirming) return;
+                            setConfirming(true);
+                            try {
+                              await fetch(`/api/leaders/${encodeURIComponent(l.player_tag)}`, {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ access_role: null }),
+                              });
+                              fetchData();
+                              setConfirmConfig({ ...confirmConfig, isOpen: false });
+                            } finally { setConfirming(false); }
                          }, 'warning')} className="btn btn-outline" style={{ border: 'none', color: 'var(--color-danger)', fontSize: '0.7rem' }}>REVOKE ACCESS</button>
                        )}
                     </div>
@@ -482,7 +523,7 @@ export default function SettingsPage() {
                    <option value="feeder">Feeder Clan</option>
                  </select>
                </div>
-               <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Initialize Clan</button>
+               <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={addingClan}>{addingClan ? 'Initializing...' : 'Initialize Clan'}</button>
             </form>
           </div>
         </div>
@@ -509,7 +550,7 @@ export default function SettingsPage() {
                  <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Logging Guidance (Tips for leaders)</label>
                  <input className="input" value={newRule.guidance} onChange={e => setNewRule({...newRule, guidance: e.target.value})} />
                </div>
-               <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Save Rule</button>
+               <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={addingRule}>{addingRule ? 'Saving...' : 'Save Rule'}</button>
             </form>
           </div>
         </div>
@@ -570,19 +611,20 @@ export default function SettingsPage() {
                  </select>
                  <p className="text-muted" style={{ fontSize: '0.65rem', marginTop: 'var(--space-xs)' }}>{role === 'super_admin' ? 'The Super Admin role itself is set directly in the database.' : 'Only the Super Admin can grant the Leader role.'}</p>
                </div>
-               <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={!selectedPersonId}>Grant Dashboard Access</button>
+               <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={!selectedPersonId || addingLeader}>{addingLeader ? 'Granting...' : 'Grant Dashboard Access'}</button>
             </form>
           </div>
         </div>
       )}
 
-      <ConfirmationModal 
+      <ConfirmationModal
         isOpen={confirmConfig.isOpen}
         onClose={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}
         onConfirm={confirmConfig.onConfirm}
         title={confirmConfig.title}
         message={confirmConfig.message}
         variant={confirmConfig.variant}
+        isLoading={confirming}
       />
     </div>
   );

@@ -48,6 +48,12 @@ export default function ActivityPage() {
     message: ''
   });
 
+  // In-flight guards
+  const [addingLog, setAddingLog] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   // Form state
   const [category, setCategory] = useState('general');
   const [clanId, setClanId] = useState('');
@@ -149,6 +155,8 @@ export default function ActivityPage() {
 
   async function handleAddLog(e: React.FormEvent) {
     e.preventDefault();
+    if (addingLog) return;
+    setAddingLog(true);
     try {
       const res = await fetch('/api/activity', {
         method: 'POST',
@@ -165,10 +173,12 @@ export default function ActivityPage() {
         setPinned(false);
         fetchData();
       }
-    } catch (err) { alert('Error adding log'); }
+    } catch (err) { alert('Error adding log'); } finally { setAddingLog(false); }
   }
 
   async function handleToggleComplete(id: string, current: boolean) {
+    if (togglingId === id) return;
+    setTogglingId(id);
     try {
       const res = await fetch(`/api/activity/${id}`, {
         method: 'PATCH',
@@ -176,7 +186,7 @@ export default function ActivityPage() {
         body: JSON.stringify({ completed: !current }),
       });
       if (res.ok) fetchData();
-    } catch (err) { alert('Error updating log status'); }
+    } catch (err) { alert('Error updating log status'); } finally { setTogglingId(null); }
   }
 
   // Author check resolved at the person level: the actor's account OR any alt sharing the
@@ -275,6 +285,8 @@ export default function ActivityPage() {
   }
 
   async function handleDeleteNote(logId: string, noteId: string) {
+    if (deletingNoteId === noteId) return;
+    setDeletingNoteId(noteId);
     try {
       const res = await fetch(`/api/activity/${logId}/notes/${noteId}`, { method: 'DELETE' });
       if (res.ok) {
@@ -285,17 +297,21 @@ export default function ActivityPage() {
       }
     } catch (err) {
       alert('Error deleting note');
+    } finally {
+      setDeletingNoteId(null);
     }
   }
 
   async function deleteLog() {
+    if (deleting) return;
+    setDeleting(true);
     try {
       const res = await fetch(`/api/activity/${confirmConfig.id}`, { method: 'DELETE' });
       if (res.ok) {
         setConfirmConfig({ ...confirmConfig, isOpen: false });
         fetchData();
       }
-    } catch (err) { alert('Error deleting log'); }
+    } catch (err) { alert('Error deleting log'); } finally { setDeleting(false); }
   }
 
   const categoryIcons: any = {
@@ -388,6 +404,7 @@ export default function ActivityPage() {
                 <div className="warning-card-actions">
                    <button
                     onClick={() => handleToggleComplete(log.id, log.completed)}
+                    disabled={togglingId === log.id}
                     className={`btn ${log.completed ? 'btn-outline' : 'btn-primary'}`}
                     style={{ padding: '0.4rem 0.8rem', fontSize: '0.7rem', border: log.completed ? '1px solid rgba(255,255,255,0.1)' : '' }}
                    >
@@ -450,7 +467,7 @@ export default function ActivityPage() {
                                     {mine && (
                                       <span style={{ display: 'flex', gap: 'var(--space-sm)' }}>
                                         <button onClick={() => { setEditingNoteId(n.id); setEditNoteDraft(n.body); }} style={{ background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }} title="Edit"><Pencil size={13} /></button>
-                                        <button onClick={() => handleDeleteNote(log.id, n.id)} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete"><Trash2 size={13} /></button>
+                                        <button onClick={() => handleDeleteNote(log.id, n.id)} disabled={deletingNoteId === n.id} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete"><Trash2 size={13} /></button>
                                       </span>
                                     )}
                                   </div>
@@ -526,7 +543,7 @@ export default function ActivityPage() {
                   <input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} id="pinned" />
                   <label htmlFor="pinned" style={{ fontSize: '0.85rem', cursor: 'pointer' }}>Pin this entry to top</label>
                </div>
-               <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Save Entry</button>
+               <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={addingLog}>{addingLog ? 'Saving...' : 'Save Entry'}</button>
             </form>
           </div>
         </div>
@@ -588,6 +605,7 @@ export default function ActivityPage() {
         onConfirm={deleteLog}
         title={confirmConfig.title}
         message={confirmConfig.message}
+        isLoading={deleting}
       />
     </div>
   );

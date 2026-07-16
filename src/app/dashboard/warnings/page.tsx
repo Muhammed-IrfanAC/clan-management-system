@@ -149,6 +149,11 @@ export default function WarningsPage() {
   const [description, setDescription] = useState('');
   const [backdate, setBackdate] = useState(false);
   const [loggedAt, setLoggedAt] = useState('');
+  // In-flight guards: block repeat submits/clicks while an API call is pending.
+  const [logging, setLogging] = useState(false);
+  const [deletingWarning, setDeletingWarning] = useState(false);
+  const [ackingId, setAckingId] = useState<string | null>(null);
+  const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
 
   // Edit Warning modal state
   const [editingWarning, setEditingWarning] = useState<ExtendedWarning | null>(null);
@@ -308,6 +313,8 @@ export default function WarningsPage() {
   }
 
   async function handleAcknowledge(id: string, current: boolean) {
+    if (ackingId) return;
+    setAckingId(id);
     try {
       const res = await fetch(`/api/warnings/${id}`, {
         method: 'PATCH',
@@ -316,10 +323,13 @@ export default function WarningsPage() {
       });
       if (res.ok) fetchData();
     } catch (err) { alert('Error updating warning'); }
+    finally { setAckingId(null); }
   }
 
   async function handleLogWarning(e: React.FormEvent) {
     e.preventDefault();
+    if (logging) return;
+    setLogging(true);
     try {
       const res = await fetch('/api/warnings', {
         method: 'POST',
@@ -347,6 +357,7 @@ export default function WarningsPage() {
         alert(data.error || 'Error logging warning');
       }
     } catch (err) { alert('Error logging warning'); }
+    finally { setLogging(false); }
   }
 
   // Author check resolved at the person level: the actor's account OR any alt sharing the
@@ -441,6 +452,8 @@ export default function WarningsPage() {
   }
 
   async function handleDeleteNote(warningId: string, noteId: string) {
+    if (deletingNoteId) return;
+    setDeletingNoteId(noteId);
     try {
       const res = await fetch(`/api/warnings/${warningId}/notes/${noteId}`, { method: 'DELETE' });
       if (res.ok) {
@@ -451,10 +464,14 @@ export default function WarningsPage() {
       }
     } catch (err) {
       alert('Error deleting note');
+    } finally {
+      setDeletingNoteId(null);
     }
   }
 
   async function deleteWarning() {
+    if (deletingWarning) return;
+    setDeletingWarning(true);
     try {
       const res = await fetch(`/api/warnings/${confirmConfig.id}`, { method: 'DELETE' });
       if (res.ok) {
@@ -462,6 +479,7 @@ export default function WarningsPage() {
         fetchData();
       }
     } catch (err) { alert('Error deleting warning'); }
+    finally { setDeletingWarning(false); }
   }
 
   // Dismiss the summary drawer with Escape.
@@ -673,7 +691,7 @@ export default function WarningsPage() {
                     </div>
                   </div>
                   <div className="warning-card-actions" style={{ marginLeft: 'var(--space-xl)' }}>
-                    <button className={`btn ${w.acknowledged ? 'btn-outline' : 'btn-primary'}`} style={{ border: w.acknowledged ? '1px solid rgba(255,255,255,0.1)' : '', color: w.acknowledged ? 'var(--color-muted)' : '', padding: '0.5rem 1rem', fontSize: '0.75rem' }} onClick={() => handleAcknowledge(w.id, w.acknowledged)}>
+                    <button className={`btn ${w.acknowledged ? 'btn-outline' : 'btn-primary'}`} style={{ border: w.acknowledged ? '1px solid rgba(255,255,255,0.1)' : '', color: w.acknowledged ? 'var(--color-muted)' : '', padding: '0.5rem 1rem', fontSize: '0.75rem' }} onClick={() => handleAcknowledge(w.id, w.acknowledged)} disabled={ackingId === w.id}>
                       {w.acknowledged ? <CheckCircle size={16} /> : 'Acknowledge'}
                     </button>
                     {isAuthoredByMe(w.logged_by) && (
@@ -725,7 +743,7 @@ export default function WarningsPage() {
                                       {mine && (
                                         <span style={{ display: 'flex', gap: 'var(--space-sm)' }}>
                                           <button onClick={() => { setEditingNoteId(n.id); setEditNoteDraft(n.body); }} style={{ background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }} title="Edit"><Pencil size={13} /></button>
-                                          <button onClick={() => handleDeleteNote(w.id, n.id)} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete"><Trash2 size={13} /></button>
+                                          <button onClick={() => handleDeleteNote(w.id, n.id)} disabled={deletingNoteId === n.id} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete"><Trash2 size={13} /></button>
                                         </span>
                                       )}
                                     </div>
@@ -815,7 +833,7 @@ export default function WarningsPage() {
                     </div>
                   )}
                </div>
-               <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Finalize Log</button>
+               <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={logging}>{logging ? 'Logging...' : 'Finalize Log'}</button>
             </form>
           </div>
         </div>
@@ -942,6 +960,7 @@ export default function WarningsPage() {
         onConfirm={deleteWarning}
         title={confirmConfig.title}
         message={confirmConfig.message}
+        isLoading={deletingWarning}
       />
     </div>
   );

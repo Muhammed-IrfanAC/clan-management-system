@@ -83,7 +83,13 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
-  
+  const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
+
+  // In-flight guards for onboarding-step and player-removal mutations.
+  const [recordingEvent, setRecordingEvent] = useState(false);
+  const [deletingEvent, setDeletingEvent] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
   // Modal state
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
@@ -182,6 +188,8 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
     eventType: OnboardingEventType,
     opts?: { outcome?: 'replied' | 'ignored'; clanId?: string }
   ) {
+    if (recordingEvent) return;
+    setRecordingEvent(true);
     // Optimistic: show the event immediately, persist in the background, reconcile on response.
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const optimistic: OnboardingEvent = {
@@ -208,10 +216,14 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
     } catch (err: any) {
       updateEvents(list => list.filter(e => e.id !== tempId));
       setToast({ type: 'error', message: err.message || 'Error recording action' });
+    } finally {
+      setRecordingEvent(false);
     }
   }
 
   async function deleteOnboardingEvent(eventId: string) {
+    if (deletingEvent) return;
+    setDeletingEvent(true);
     // Optimistic removal with revert on failure. Temp (unsaved) rows aren't deletable.
     let removed: OnboardingEvent | undefined;
     updateEvents(list => {
@@ -224,6 +236,8 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
     } catch (err: any) {
       if (removed) updateEvents(list => [...list, removed!]);
       setToast({ type: 'error', message: err.message || 'Error removing action' });
+    } finally {
+      setDeletingEvent(false);
     }
   }
 
@@ -271,6 +285,8 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   }
 
   async function handleDeleteComment(commentId: string) {
+    if (deletingCommentId) return;
+    setDeletingCommentId(commentId);
     try {
       const res = await fetch(`/api/members/notes/${commentId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error((await res.json()).error || 'Failed to delete');
@@ -278,10 +294,14 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       setToast({ type: 'success', message: 'Note deleted.' });
     } catch (err: any) {
       setToast({ type: 'error', message: err.message || 'Error deleting comment' });
+    } finally {
+      setDeletingCommentId(null);
     }
   }
 
   async function handleRemovePlayer() {
+    if (removing) return;
+    setRemoving(true);
     try {
       const res = await fetch(`/api/players/${encodeURIComponent(confirmConfig.tag)}`, { method: 'DELETE' });
       if (res.ok) {
@@ -293,6 +313,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
         }
       }
     } catch (err) { alert('Error removing player'); }
+    finally { setRemoving(false); }
   }
 
   async function handleUnlinkPlayer(tag: string) {
@@ -422,6 +443,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                  <button
                    key={ev.id}
                    onClick={() => removable && deleteOnboardingEvent(ev.id)}
+                   disabled={deletingEvent}
                    title={`${actorName(ev)} · ${new Date(ev.created_at).toLocaleDateString()}${removable ? ' · tap to remove' : ''}`}
                    style={{
                      padding: '0.28rem 0.7rem', fontSize: '0.72rem', borderRadius: 999, fontWeight: 600,
@@ -441,15 +463,15 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
                  <span className="text-muted" style={{ fontSize: '0.68rem' }}>Attempt {n}:</span>
                  <span style={{ display: 'inline-flex', borderRadius: 999, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.15)' }}>
-                   <button onClick={() => recordOnboardingEvent('engagement_attempt', { outcome: 'replied' })} style={{ padding: '0.28rem 0.7rem', fontSize: '0.72rem', background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer', borderRight: '1px solid rgba(255,255,255,0.15)' }}>Replied</button>
-                   <button onClick={() => recordOnboardingEvent('engagement_attempt', { outcome: 'ignored' })} style={{ padding: '0.28rem 0.7rem', fontSize: '0.72rem', background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }}>Ignored</button>
+                   <button onClick={() => recordOnboardingEvent('engagement_attempt', { outcome: 'replied' })} disabled={recordingEvent} style={{ padding: '0.28rem 0.7rem', fontSize: '0.72rem', background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer', borderRight: '1px solid rgba(255,255,255,0.15)' }}>Replied</button>
+                   <button onClick={() => recordOnboardingEvent('engagement_attempt', { outcome: 'ignored' })} disabled={recordingEvent} style={{ padding: '0.28rem 0.7rem', fontSize: '0.72rem', background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }}>Ignored</button>
                  </span>
                </span>
              );
 
              const btn = { padding: '0.35rem 0.7rem', fontSize: '0.72rem' } as const;
              const undoBtn = (ev: OnboardingEvent) => (
-               <button onClick={() => deleteOnboardingEvent(ev.id)} className="btn btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }} title="Undo this step">
+               <button onClick={() => deleteOnboardingEvent(ev.id)} disabled={deletingEvent} className="btn btn-outline" style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }} title="Undo this step">
                  <RotateCcw size={12} /> Undo
                </button>
              );
@@ -458,17 +480,17 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
              const pendingControl = (stepKey: string) => {
                switch (stepKey) {
                  case 'rules':
-                   return <button onClick={() => recordOnboardingEvent('rules_passed')} className="btn btn-outline" style={btn}>Mark done</button>;
+                   return <button onClick={() => recordOnboardingEvent('rules_passed')} disabled={recordingEvent} className="btn btn-outline" style={btn}>Mark done</button>;
                  case 'linked':
-                   return <button onClick={() => recordOnboardingEvent('linked_accounts_checked')} className="btn btn-outline" style={btn}>Mark done</button>;
+                   return <button onClick={() => recordOnboardingEvent('linked_accounts_checked')} disabled={recordingEvent} className="btn btn-outline" style={btn}>Mark done</button>;
                  case 'additional':
-                   return <button onClick={() => recordOnboardingEvent('additional_account_registered')} className="btn btn-outline" style={btn}>Mark done</button>;
+                   return <button onClick={() => recordOnboardingEvent('additional_account_registered')} disabled={recordingEvent} className="btn btn-outline" style={btn}>Mark done</button>;
                  case 'assignment':
                    return (
                      <select
                        className="input"
                        value=""
-                       disabled={familyClans.length === 0}
+                       disabled={familyClans.length === 0 || recordingEvent}
                        onChange={(e) => e.target.value && recordOnboardingEvent('assigned_clan', { clanId: e.target.value })}
                        style={{ padding: '0.3rem 0.5rem', fontSize: '0.72rem', width: 'auto', maxWidth: 160 }}
                      >
@@ -481,16 +503,17 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
                        <button
                          onClick={() => recordOnboardingEvent('discord_waived')}
+                         disabled={recordingEvent}
                          style={{ background: 'transparent', border: 'none', color: 'var(--color-muted)', fontSize: '0.7rem', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
                          title="This member has no Discord — skip both Discord steps"
                        >
                          No Discord
                        </button>
-                       <button onClick={() => recordOnboardingEvent('invited_discord')} className="btn btn-outline" style={btn}>Mark done</button>
+                       <button onClick={() => recordOnboardingEvent('invited_discord')} disabled={recordingEvent} className="btn btn-outline" style={btn}>Mark done</button>
                      </span>
                    );
                  case 'joined':
-                   return <button onClick={() => recordOnboardingEvent('joined_discord')} className="btn btn-outline" style={btn}>Mark done</button>;
+                   return <button onClick={() => recordOnboardingEvent('joined_discord')} disabled={recordingEvent} className="btn btn-outline" style={btn}>Mark done</button>;
                  default:
                    return null;
                }
@@ -673,7 +696,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
                                {mine && (
                                  <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
                                    <button onClick={() => { setEditingCommentId(c.id); setEditDraft(c.body); }} style={{ background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }} title="Edit"><Pencil size={13} /></button>
-                                   <button onClick={() => handleDeleteComment(c.id)} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete"><Trash2 size={13} /></button>
+                                   <button onClick={() => handleDeleteComment(c.id)} disabled={deletingCommentId === c.id} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete"><Trash2 size={13} /></button>
                                  </div>
                                )}
                              </div>
@@ -742,6 +765,7 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
         onConfirm={handleRemovePlayer}
         title={confirmConfig.title}
         message={confirmConfig.message}
+        isLoading={removing}
       />
 
       <Toast toast={toast} onClose={() => setToast(null)} />
