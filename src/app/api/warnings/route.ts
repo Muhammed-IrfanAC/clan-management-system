@@ -33,9 +33,11 @@ export async function POST(request: NextRequest) {
 
     const { personId, playerTag, ruleId, description, loggedAt } = await request.json();
 
-    if (!personId || !playerTag || !description) {
+    if (!personId || !playerTag) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
+    // Description is optional — the column is NOT NULL, so an omitted note stores as an empty string.
+    const descriptionText = String(description ?? '').trim();
 
     // Optional backdating: if a loggedAt is supplied it must be a valid date in the
     // past (you can't log a violation in the future). Blank => log as "now".
@@ -57,7 +59,7 @@ export async function POST(request: NextRequest) {
         person_id: personId,
         player_account_tag: playerTag,
         rule_id: ruleId || null,
-        description,
+        description: descriptionText,
         logged_by: auth.actorTag,
         logged_at: loggedAtIso,
         acknowledged: false

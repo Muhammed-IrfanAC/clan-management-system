@@ -793,8 +793,8 @@ export default function WarningsPage() {
                  </div>
                )}
                <div style={{ marginBottom: 'var(--space-md)' }}>
-                  <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Context</label>
-                  <textarea className="input" rows={4} placeholder="Describe the violation..." value={description} onChange={(e) => setDescription(e.target.value)} required />
+                  <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Context <span style={{ fontWeight: '400', textTransform: 'none' }}>(optional)</span></label>
+                  <textarea className="input" rows={4} placeholder="Describe the violation..." value={description} onChange={(e) => setDescription(e.target.value)} />
                </div>
                <div style={{ marginBottom: 'var(--space-lg)' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer', fontSize: '0.85rem' }}>
