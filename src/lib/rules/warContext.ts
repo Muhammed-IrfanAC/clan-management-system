@@ -92,9 +92,11 @@ export function findHitUps(ctx: WarContext, config: HitUpConfig = {}): DetectedV
         `Possible unjustified hit-up — TH${a.attackerTh} hit a TH${a.defenderTh} base while ` +
         `${open.length} equal-or-lower base${open.length === 1 ? '' : 's'} (TH${lowestTh(open)}` +
         `${open.length === 1 ? '' : ' etc'}) sat open${vs}.`,
-      // Per-person (not per-attack) so both hits by the same member collapse into one warning.
+      // Per-person (not per-attack) so both hits by the same member collapse into one violation.
       dedupKey: `war_unjustified_hitup:${ctx.source}:${ctx.roundId}:${a.attackerPersonId}`,
       occurredAt: ctx.endTime || a.firstSeenAt || new Date(0).toISOString(),
+      warRoundId: ctx.roundId,
+      warLabel: warLabelFor(ctx),
       evidence: {
         attacker_th: a.attackerTh,
         defender_th: a.defenderTh,
@@ -149,6 +151,8 @@ export function findLateSnipes(ctx: WarContext, config: LateSnipeConfig = {}): D
         `TH${a.defenderTh} base with ~${fmtHours(hoursLeft)} left${vs}.`,
       dedupKey: `war_late_snipe:${ctx.source}:${ctx.roundId}:${a.order}`,
       occurredAt: ctx.endTime,
+      warRoundId: ctx.roundId,
+      warLabel: warLabelFor(ctx),
       evidence: {
         attacker_th: a.attackerTh,
         defender_th: a.defenderTh,
@@ -160,6 +164,12 @@ export function findLateSnipes(ctx: WarContext, config: LateSnipeConfig = {}): D
     });
   }
   return out;
+}
+
+/** Human war label for a strike, e.g. 'CWL war vs X' / 'Clan war vs Y'. */
+function warLabelFor(ctx: WarContext): string {
+  const kind = ctx.source === 'cwl' ? 'CWL war' : 'Clan war';
+  return `${kind}${ctx.opponentName ? ` vs ${ctx.opponentName}` : ''}`;
 }
 
 function lowestTh(bases: LineupBase[]): number {

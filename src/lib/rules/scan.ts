@@ -1,28 +1,26 @@
 import { supabase } from '@/lib/supabase';
 import { DETECTORS } from './detectors';
 import { detectorMeta } from './registry';
-import { notifyWarningLogged, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
 import { filterViolationsByClanMode, normalizeMode } from './automationScope';
+import { commitStrikes } from '@/lib/strikes/commit';
 import type { RuleAutomationMode } from '@/types/database';
 import type { DetectedViolation } from './types';
 
 /**
- * Rule-violation scan.
+ * Rule-violation scan — the detection half of the Strike Management System.
  *
- * Runs every enabled, detector-backed rule and turns its DetectedViolations into warnings. It is
- * safe to run repeatedly (the cron sync calls it every few minutes): each auto-warning carries a
- * stable `dedup_key` and is inserted with ON CONFLICT DO NOTHING, so an already-logged violation is
- * silently skipped and its member is never re-notified.
+ * Runs every enabled, detector-backed rule and turns its DetectedViolations into strikes. It is safe
+ * to run repeatedly (the cron sync calls it every few minutes): strikes dedup per (person, war) on a
+ * stable strike_key and violations dedup on dedup_key, so an already-struck war is never re-struck.
  *
- * 'auto' detectors log directly (clear-cut violations like a missed attack). 'review' detectors are
- * judgement calls (hit-up, late snipe): their detections are queued into warning_suggestions for a
- * leader to confirm (-> a real warning) or dismiss, and no member is notified until confirmed.
+ * 'auto' detectors strike directly (clear-cut breaks: missed attack, late snipe) — one strike per
+ * war, multiple breaks folding into it. 'review' detectors are judgement calls (hit-up): their
+ * detections are queued into strike_suggestions for a leader to confirm (-> folds into that war's
+ * strike) or dismiss, and no strike is issued until confirmed.
  *
- * Runs from the machine-auth cron with no actor identity, so auto-warnings are attributed to the
+ * Runs from the machine-auth cron with no actor identity, so auto-strikes are attributed to the
  * SYSTEM sentinel rather than any player tag.
  */
-
-const SYSTEM_ACTOR = 'SYSTEM';
 
 type AutomatedRule = {
   id: string;
@@ -70,74 +68,34 @@ export async function scanRuleViolations(): Promise<{ detected: number; logged: 
     if (!violations.length) continue;
 
     if (meta.mode === 'auto') {
-      logged += await commitAuto(rule, violations);
+      const res = await commitStrikes(rule, violations);
+      logged += res.loggedViolations;
     } else {
-      queued += await queueForReview(rule, violations);
+      queued += await queueStrikeSuggestions(rule, violations);
     }
   }
 
   return { detected, logged, queued };
 }
 
-/** Clear-cut ('auto') detectors: insert warnings idempotently and notify only the newly-logged ones. */
-async function commitAuto(rule: AutomatedRule, violations: DetectedViolation[]): Promise<number> {
-  const rows = violations.map((v) => ({
-    person_id: v.personId,
-    player_account_tag: v.playerTag,
-    rule_id: rule.id,
-    description: v.description,
-    logged_by: SYSTEM_ACTOR,
-    logged_at: v.occurredAt,
-    acknowledged: false,
-    source: 'auto',
-    dedup_key: v.dedupKey,
-  }));
-
-  // Idempotent insert: dedup_key is UNIQUE and ignoreDuplicates => already-logged violations are
-  // not re-inserted and not returned, so `inserted` is exactly the set of genuinely new warnings.
-  const { data: inserted, error } = await supabase
-    .from('warnings')
-    .upsert(rows, { onConflict: 'dedup_key', ignoreDuplicates: true })
-    .select('dedup_key');
-  if (error) {
-    console.error('Auto-warning insert failed:', error);
-    return 0;
-  }
-
-  const newKeys = new Set((inserted as { dedup_key: string }[] | null)?.map((w) => w.dedup_key) || []);
-
-  // Notify only for the newly-logged violations (best-effort; a failed send never blocks the scan).
-  for (const v of violations) {
-    if (!newKeys.has(v.dedupKey)) continue;
-    try {
-      await notifyWarningLogged({
-        memberName: v.memberName,
-        playerTag: v.playerTag,
-        ruleName: rule.name,
-        description: v.description,
-        loggedBy: 'ClanOps (automated)',
-        webhookUrl: await webhookUrlForClan(v.clanId),
-        mentionDiscordId: await discordUserIdForPerson(v.personId),
-      });
-    } catch (err) {
-      console.error('Auto-warning Discord notify failed (non-fatal):', err);
-    }
-  }
-  return newKeys.size;
-}
-
 /**
- * Judgement ('review') detectors: enqueue into warning_suggestions for a leader. Idempotent on
+ * Judgement ('review') detectors: enqueue into strike_suggestions for a leader. Idempotent on
  * dedup_key — a re-scan never re-queues an item, and a dismissed one (its key preserved) never
- * reappears. No member is notified here; that happens only if a leader confirms it.
+ * reappears. No strike is issued here; confirming one (Phase 2) folds it into that war's strike.
  */
-async function queueForReview(rule: AutomatedRule, violations: DetectedViolation[]): Promise<number> {
+async function queueStrikeSuggestions(
+  rule: AutomatedRule,
+  violations: DetectedViolation[],
+): Promise<number> {
   const rows = violations.map((v) => ({
     rule_id: rule.id,
     person_id: v.personId,
     player_account_tag: v.playerTag,
     clan_id: v.clanId,
     member_name: v.memberName,
+    war_source: v.source,
+    war_round_id: v.warRoundId,
+    war_label: v.warLabel,
     description: v.description,
     dedup_key: v.dedupKey,
     evidence: v.evidence ?? {},
@@ -146,11 +104,11 @@ async function queueForReview(rule: AutomatedRule, violations: DetectedViolation
   }));
 
   const { data: inserted, error } = await supabase
-    .from('warning_suggestions')
+    .from('strike_suggestions')
     .upsert(rows, { onConflict: 'dedup_key', ignoreDuplicates: true })
     .select('dedup_key');
   if (error) {
-    console.error('Review-suggestion insert failed:', error);
+    console.error('Strike-suggestion insert failed:', error);
     return 0;
   }
   return (inserted as { dedup_key: string }[] | null)?.length || 0;
