@@ -90,6 +90,114 @@ export async function commitStrikes(
   return { newStrikes: newKeys.size, loggedViolations };
 }
 
+/**
+ * Fold a leader-CONFIRMED review suggestion (hit-up) into that war's strike. Same "one strike per
+ * (person, war)" rule as the auto path: if a strike already exists for the war it appends the
+ * violation (never a 2nd strike); otherwise it creates one with origin 'review'. Idempotent on the
+ * suggestion's dedup_key. Returns the target strike id and whether it was newly created (so the
+ * caller can notify only on a brand-new strike). Attributed to the confirming leader.
+ */
+export async function commitReviewStrike(params: {
+  personId: string;
+  playerTag: string | null;
+  clanId: string | null;
+  ruleId: string | null;
+  ruleName?: string | null;
+  warSource: string; // 'regular' | 'cwl'
+  warRoundId: string | null;
+  warLabel: string | null;
+  description: string;
+  dedupKey: string;
+  occurredAt: string | null;
+  memberName?: string | null;
+  actorTag: string;
+}): Promise<{ strikeId: string | null; created: boolean }> {
+  const {
+    personId, playerTag, clanId, ruleId, ruleName, warSource, warRoundId, warLabel,
+    description, dedupKey, occurredAt, memberName, actorTag,
+  } = params;
+
+  // Stable per-(person, war) key — mirrors plan.strikeKeyFor. Null when the war round is unknown,
+  // in which case the strike can't be folded and is created standalone.
+  const strikeKey = warRoundId ? `${warSource}:${warRoundId}:${personId}` : null;
+
+  const strikeRow = {
+    person_id: personId,
+    player_account_tag: playerTag,
+    clan_id: clanId,
+    rule_id: ruleId,
+    war_source: warSource,
+    war_round_id: warRoundId,
+    war_label: warLabel,
+    strike_key: strikeKey,
+    origin: 'review',
+    issued_at: occurredAt || new Date().toISOString(),
+    logged_by: actorTag,
+  };
+
+  // Create-or-find the strike container. With a key we upsert (ignoreDuplicates => a returned row
+  // means brand-new); without a key we plain-insert a standalone strike.
+  let strikeId: string | null = null;
+  let created = false;
+  if (strikeKey) {
+    const { data: ins, error } = await supabase
+      .from('strikes')
+      .upsert([strikeRow], { onConflict: 'strike_key', ignoreDuplicates: true })
+      .select('id');
+    if (error) { console.error('Review strike upsert failed:', error); return { strikeId: null, created: false }; }
+    if (ins && ins.length) {
+      strikeId = (ins[0] as { id: string }).id;
+      created = true;
+    } else {
+      const { data: existing } = await supabase
+        .from('strikes').select('id').eq('strike_key', strikeKey).maybeSingle();
+      strikeId = (existing as { id: string } | null)?.id ?? null;
+    }
+  } else {
+    const { data: ins, error } = await supabase.from('strikes').insert([strikeRow]).select('id').single();
+    if (error) { console.error('Review strike insert failed:', error); return { strikeId: null, created: false }; }
+    strikeId = (ins as { id: string }).id;
+    created = true;
+  }
+  if (!strikeId) return { strikeId: null, created: false };
+
+  // Append the violation (idempotent on dedup_key).
+  const { error: vErr } = await supabase
+    .from('strike_violations')
+    .upsert(
+      [{
+        strike_id: strikeId,
+        rule_id: ruleId,
+        description,
+        evidence: {},
+        dedup_key: dedupKey,
+        occurred_at: occurredAt,
+        source: 'review',
+      }],
+      { onConflict: 'dedup_key', ignoreDuplicates: true },
+    );
+  if (vErr) console.error('Review strike-violation insert failed:', vErr);
+
+  // Notify only when this confirmation created a brand-new strike (best-effort).
+  if (created) {
+    try {
+      await notifyStrikeLogged({
+        memberName: memberName ?? null,
+        playerTag: playerTag ?? '—',
+        ruleName: ruleName ?? null,
+        warLabel,
+        reasons: [description],
+        webhookUrl: await webhookUrlForClan(clanId),
+        mentionDiscordId: await discordUserIdForPerson(personId),
+      });
+    } catch (err) {
+      console.error('Review strike Discord notify failed (non-fatal):', err);
+    }
+  }
+
+  return { strikeId, created };
+}
+
 async function notifyNewStrikes(rule: StrikeRule, newStrikes: PlannedStrike[]): Promise<void> {
   for (const p of newStrikes) {
     try {
