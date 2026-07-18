@@ -247,4 +247,50 @@ describe('allocate', () => {
     const drifter = drafts.find((d) => d.personId === 'drifter')!;
     expect(drifter.recommendedClanId).toBe('B');
   });
+
+  describe('war-ineligible (struck) exclusion', () => {
+    it('pulls a war-ineligible person from the pool and marks them removed with a reason', () => {
+      const players = [
+        player('clean', { currentClanId: 'A', thLevel: 16 }),
+        player('struck', { currentClanId: 'A', thLevel: 15 }),
+      ];
+      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['struck']));
+      const struck = drafts.find((d) => d.personId === 'struck')!;
+      expect(struck.status).toBe('removed');
+      expect(struck.recommendedClanId).toBeNull();
+      expect(struck.rank).toBeNull();
+      expect(struck.note).toMatch(/war-ineligible/i);
+      // The clean player is still allocated normally.
+      expect(drafts.find((d) => d.personId === 'clean')!.recommendedClanId).toBe('A');
+    });
+
+    it('never fills a struck player into a war slot even when the clan has room', () => {
+      const players = Array.from({ length: 3 }, (_, i) =>
+        player(`p${i}`, { currentClanId: 'A', thLevel: 16 - i }),
+      );
+      // p2 is struck; warSize 3 has room for all three, but p2 must NOT be placed.
+      const drafts = allocate(players, [{ clanId: 'A', warSize: 3 }], NO_CONSTRAINTS, new Set(['p2']));
+      const placed = drafts.filter((d) => d.recommendedClanId === 'A').map((d) => d.personId);
+      expect(placed).not.toContain('p2');
+      expect(placed.sort()).toEqual(['p0', 'p1']);
+      expect(drafts.find((d) => d.personId === 'p2')!.status).toBe('removed');
+    });
+
+    it('is a no-op when the ineligible set is empty (default arg)', () => {
+      const players = [player('1', { currentClanId: 'A' }), player('2', { currentClanId: 'B' })];
+      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS);
+      expect(drafts.filter((d) => d.status === 'removed')).toHaveLength(0);
+    });
+
+    it('still keeps every person represented exactly once in the output', () => {
+      const players = [
+        player('a', { currentClanId: 'A' }),
+        player('b', { currentClanId: 'A' }),
+        player('c', { currentClanId: 'B' }),
+      ];
+      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['a', 'c']));
+      const ids = drafts.map((d) => d.personId).sort();
+      expect(ids).toEqual(['a', 'b', 'c']);
+    });
+  });
 });
