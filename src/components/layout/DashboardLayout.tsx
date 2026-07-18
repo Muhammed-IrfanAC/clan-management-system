@@ -143,7 +143,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <nav style={{ flex: 1 }}>
           <SidebarItem href="/dashboard" icon={<LayoutDashboard size={20} />} label="Overview" active={pathname === '/dashboard'} />
           <SidebarItem href="/dashboard/members" icon={<Users size={20} />} label="Members" active={pathname === '/dashboard/members'} />
-          <SidebarItem href="/dashboard/warnings" icon={<AlertTriangle size={20} />} label="Warnings" active={pathname === '/dashboard/warnings'} />
+          <SidebarItem href="/dashboard/strikes" icon={<AlertTriangle size={20} />} label="Strikes" active={pathname === '/dashboard/strikes'} />
           <SidebarItem href="/dashboard/cwl" icon={<Swords size={20} />} label="Clan War League" active={pathname.startsWith('/dashboard/cwl')} />
           <SidebarItem href="/dashboard/activity" icon={<History size={20} />} label="Activity Log" active={pathname === '/dashboard/activity'} />
           <SidebarItem href="/dashboard/settings" icon={<Settings size={20} />} label="Settings" active={pathname === '/dashboard/settings'} />
