@@ -98,6 +98,10 @@ export function allocate(
   players: EligiblePlayer[],
   clans: PoolClan[],
   constraints: CWLConstraints,
+  // Persons pulled from CWL because they hold an active, unresolved strike (war eligibility removed
+  // by the Strike system). They are surfaced as 'removed' with an explaining note rather than
+  // silently dropped, so a leader can override in the rare case they want to field a struck player.
+  warIneligiblePersonIds: ReadonlySet<string> = new Set(),
 ): AllocationDraft[] {
   const poolById = new Map(clans.map((c) => [c.clanId, c]));
   const orderOf = (clanId: string) => poolById.get(clanId)?.displayOrder ?? 0;
@@ -115,7 +119,10 @@ export function allocate(
   const displaced: EligiblePlayer[] = [];
   const stayersByClan = new Map<string, EligiblePlayer[]>();
   for (const c of clans) stayersByClan.set(c.clanId, []);
-  for (const player of players) {
+  // Pull war-ineligible (actively struck) persons out of the pool up front — they are never placed.
+  const warIneligible = players.filter((p) => warIneligiblePersonIds.has(p.personId));
+  const eligiblePool = players.filter((p) => !warIneligiblePersonIds.has(p.personId));
+  for (const player of eligiblePool) {
     const cur = player.currentClanId;
     if (cur && poolById.has(cur) && isEligible(player, ruleForClan(constraints, cur))) {
       stayersByClan.get(cur)!.push(player);
@@ -200,6 +207,18 @@ export function allocate(
       isBench: false,
       rank: null,
       note: 'Family roster full — every eligible clan is at its bench limit',
+    });
+  }
+  // War-ineligible (struck) players — recorded as 'removed' so the reason is visible to leaders.
+  for (const player of warIneligible) {
+    drafts.push({
+      personId: player.personId,
+      recommendedClanId: null,
+      actualClanId: player.currentClanId,
+      status: 'removed',
+      isBench: false,
+      rank: null,
+      note: 'War-ineligible — active strike (trust restoration required)',
     });
   }
 

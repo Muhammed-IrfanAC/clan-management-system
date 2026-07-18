@@ -58,6 +58,28 @@ export async function loadEligiblePlayers(): Promise<EligiblePlayer[]> {
 }
 
 /**
+ * Load the set of person ids that are currently WAR-INELIGIBLE because of the Strike system: they
+ * hold at least one active (not yet 90-day-expired) strike that leadership has not resolved
+ * (leadership_approved = false). This mirrors `isWarEligible` in lib/strikes/status.ts — a person is
+ * war-ineligible exactly when their unresolved-active strike count is > 0. Fed to `allocate()` so
+ * struck players are pulled from the CWL pool automatically. Fail-safe: on error returns an empty
+ * set (never blocks allocation — worst case a struck player isn't auto-excluded and a leader sees them).
+ */
+export async function loadWarIneligiblePersonIds(): Promise<Set<string>> {
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('strikes')
+    .select('person_id')
+    .gt('expires_at', nowIso) // still within the 90-day active window
+    .eq('leadership_approved', false); // and not resolved/acknowledged by leadership
+  if (error) {
+    console.error('loadWarIneligiblePersonIds failed (non-fatal):', error);
+    return new Set();
+  }
+  return new Set((data as { person_id: string }[] | null)?.map((r) => r.person_id) || []);
+}
+
+/**
  * Reconcile the pending-transfer record for an allocation against its recommended vs actual clan.
  *  - recommended matches actual (or removed): no move needed — drop any still-pending transfer.
  *  - recommended differs: ensure exactly one pending transfer (from actual → to recommended).
