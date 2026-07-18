@@ -3,8 +3,9 @@ import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
 
 /**
- * Pending review queue for judgement-mode detectors (hit-up, late snipe). Returns the not-yet-acted
- * suggestions with enough context (person, rule, evidence) for a leader to confirm or dismiss.
+ * Pending review queue for judgement-mode detectors (hit-up). Returns the not-yet-acted strike
+ * suggestions with enough context (person, rule, war, evidence) for a leader to confirm or dismiss.
+ * Confirming folds the suggestion into that war's strike (never a second strike); see [id]/route.ts.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -12,7 +13,7 @@ export async function GET(request: NextRequest) {
     if (auth.error) return auth.error;
 
     const { data, error } = await supabase
-      .from('warning_suggestions')
+      .from('strike_suggestions')
       .select('*, person:persons(id, display_name), rule:rules(id, name)')
       .eq('status', 'pending')
       .order('detected_at', { ascending: false });
