@@ -14,8 +14,9 @@
 
 import { supabase } from './supabase';
 
-// Discord embed colors (decimal). Amber for warnings.
+// Discord embed colors (decimal). Amber for warnings, red for strikes.
 const COLOR_WARNING = 0xf59e0b;
+const COLOR_STRIKE = 0xdc2626;
 
 type DiscordEmbedField = { name: string; value: string; inline?: boolean };
 
@@ -136,6 +137,51 @@ export async function notifyWarningLogged(params: {
           color: COLOR_WARNING,
           fields,
           footer: { text: 'ClanOps' },
+        },
+      ],
+    },
+    webhookUrl,
+  );
+}
+
+/**
+ * Notify a Discord channel that a STRIKE was issued against a member (one strike per war; it may
+ * carry several reasons). Best-effort — see module docs. `mentionDiscordId` @-mentions the member.
+ * The richer end-of-war roll-up (all new + outstanding strikes) lands in a later phase; this is the
+ * immediate per-strike ping so the member is told the moment a war-break is detected.
+ */
+export async function notifyStrikeLogged(params: {
+  memberName?: string | null;
+  playerTag: string;
+  ruleName?: string | null;
+  warLabel?: string | null;
+  reasons: string[];        // one line per folded violation
+  webhookUrl?: string | null;
+  mentionDiscordId?: string | null;
+}): Promise<void> {
+  const { memberName, playerTag, ruleName, warLabel, reasons, webhookUrl, mentionDiscordId } = params;
+
+  const fields: DiscordEmbedField[] = [
+    { name: 'Member', value: `${memberName || 'Unknown'} (${playerTag})`, inline: true },
+  ];
+  if (warLabel) fields.push({ name: 'War', value: warLabel, inline: true });
+  if (ruleName) fields.push({ name: 'Rule', value: ruleName, inline: false });
+
+  const description = reasons.length
+    ? reasons.map((r) => `• ${r}`).join('\n')
+    : 'A war rule was broken.';
+
+  await sendDiscordMessage(
+    {
+      content: mentionDiscordId ? `<@${mentionDiscordId}>` : undefined,
+      allowed_mentions: mentionDiscordId ? { users: [mentionDiscordId] } : { parse: [] },
+      embeds: [
+        {
+          title: '🛑 Strike Issued',
+          description,
+          color: COLOR_STRIKE,
+          fields,
+          footer: { text: 'ClanOps · trust restoration required before Elder/war eligibility returns' },
         },
       ],
     },

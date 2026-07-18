@@ -77,6 +77,8 @@ async function detectRegular(since: string): Promise<DetectedViolation[]> {
       }.`,
       dedupKey: `war_missed_attack:regular:${round.id}:${r.player_tag}`,
       occurredAt: round.end_time || new Date().toISOString(),
+      warRoundId: round.id,
+      warLabel: `Clan war${round.opponent_name ? ` vs ${round.opponent_name}` : ''}`,
     });
   }
   return violations;
@@ -129,6 +131,10 @@ async function detectCwl(since: string): Promise<DetectedViolation[]> {
       }.`,
       dedupKey: `war_missed_attack:cwl:${round.id}:${r.player_tag}`,
       occurredAt: round.end_time || new Date().toISOString(),
+      warRoundId: round.id,
+      warLabel: `CWL Round ${round.round_number}${
+        round.opponent_name ? ` vs ${round.opponent_name}` : ''
+      }`,
     });
   }
   return violations;
