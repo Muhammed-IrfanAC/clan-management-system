@@ -7,11 +7,12 @@ import {
   AlertTriangle,
   Users,
   TrendingUp,
-  Clock,
+  UserMinus,
   RefreshCw,
   Baby
 } from 'lucide-react';
 import { useClan } from '@/lib/ClanContext';
+import { buildDossiers, buildWorklist, type StrikeWithContext } from '@/lib/strikes/dossier';
 import LeadershipPerformance from '@/components/dashboard/LeadershipPerformance';
 import LeadershipContribution from '@/components/dashboard/LeadershipContribution';
 import OnboardingQueues from '@/components/dashboard/OnboardingQueues';
@@ -31,8 +32,8 @@ export default function DashboardPage() {
     style: { cursor: 'pointer' },
   });
   const [stats, setStats] = useState({
-    highWarnings: 0,
-    pendingAcknowledge: 0,
+    warIneligible: 0,
+    removalFlagged: 0,
     totalMembers: 0,
     unlinkedAccounts: 0,
     currentBabies: 0
@@ -46,17 +47,6 @@ export default function DashboardPage() {
   async function fetchData() {
     setLoading(true);
     try {
-      // 1. Fetch Stats
-      const { data: escalationSetting } = await supabase
-        .from('settings')
-        .select('value')
-        .eq('key', 'warning_escalation_days')
-        .single();
-      
-      const escalationDays = escalationSetting?.value || 3;
-      const escalationDate = new Date();
-      escalationDate.setDate(escalationDate.getDate() - escalationDays);
-
       // Person count (needs to be joined with player_accounts if filtering by clan)
       const personQuery = supabase.from('persons').select('id', { count: 'exact', head: true });
       if (selectedClanId !== 'all') {
@@ -97,27 +87,20 @@ export default function DashboardPage() {
       if (selectedClanId !== 'all') unlinkedQuery = unlinkedQuery.eq('clan_id', selectedClanId);
       const { count: unlinkedCount } = await unlinkedQuery;
 
-      // Pending warnings
-      let pendingQuery = supabase
-        .from('warnings')
-        .select('*, player_account:player_accounts!inner(*)', { count: 'exact', head: true })
-        .eq('acknowledged', false);
-      if (selectedClanId !== 'all') pendingQuery = pendingQuery.eq('player_account.clan_id', selectedClanId);
-      const { count: pendingCount } = await pendingQuery;
-
-      // High warnings
-      let highQuery = supabase
-        .from('warnings')
-        .select('*, player_account:player_accounts!inner(*)', { count: 'exact', head: true })
-        .eq('acknowledged', false)
-        .lt('logged_at', escalationDate.toISOString());
-      if (selectedClanId !== 'all') highQuery = highQuery.eq('player_account.clan_id', selectedClanId);
-      const { count: highCount } = await highQuery;
+      // Strike-derived counts: war-ineligible (active unresolved) and removal-flagged (3+ active).
+      // Derived client-side via the same pure engine the Strikes page uses, so the numbers agree.
+      let strikeQuery = supabase
+        .from('strikes')
+        .select('person_id, issued_at, leadership_approved, clan_id, person:persons(id, display_name)');
+      if (selectedClanId !== 'all') strikeQuery = strikeQuery.eq('clan_id', selectedClanId);
+      const { data: strikeRows } = await strikeQuery;
+      const dossiers = buildDossiers((strikeRows as unknown as StrikeWithContext[]) || [], new Date());
+      const worklist = buildWorklist(dossiers, new Date());
 
       setStats(prev => ({
         ...prev,
-        highWarnings: highCount || 0,
-        pendingAcknowledge: pendingCount || 0,
+        warIneligible: worklist.unresolved.length,
+        removalFlagged: worklist.removalFlagged.length,
         unlinkedAccounts: unlinkedCount || 0
       }));
 
@@ -149,26 +132,26 @@ export default function DashboardPage() {
         gap: 'var(--space-lg)',
         marginBottom: 'var(--space-2xl)'
       }}>
-        <div className="card" {...cardLinkProps('/dashboard/warnings?filter=high')}>
+        <div className="card" {...cardLinkProps('/dashboard/strikes?filter=removalFlagged')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
             <div style={{ padding: 'var(--space-sm)', background: 'rgba(239, 68, 68, 0.1)', borderRadius: 'var(--radius-md)' }}>
-              <AlertTriangle color="var(--color-danger)" size={24} />
+              <UserMinus color="var(--color-danger)" size={24} />
             </div>
-            <span className="text-muted" style={{ fontWeight: '600', textTransform: 'uppercase', fontSize: '0.75rem' }}>High Warnings</span>
+            <span className="text-muted" style={{ fontWeight: '600', textTransform: 'uppercase', fontSize: '0.75rem' }}>Removal Flagged</span>
           </div>
-          <h2 style={{ fontSize: '2.5rem', margin: 0 }}>{loading ? '...' : stats.highWarnings}</h2>
-          <p className="text-danger" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>Action required today</p>
+          <h2 style={{ fontSize: '2.5rem', margin: 0 }}>{loading ? '...' : stats.removalFlagged}</h2>
+          <p className="text-danger" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>3+ active strikes</p>
         </div>
 
-        <div className="card" {...cardLinkProps('/dashboard/warnings?filter=pending')}>
+        <div className="card" {...cardLinkProps('/dashboard/strikes?filter=unresolved')}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
             <div style={{ padding: 'var(--space-sm)', background: 'rgba(245, 158, 11, 0.1)', borderRadius: 'var(--radius-md)' }}>
-              <Clock color="var(--color-warning)" size={24} />
+              <AlertTriangle color="var(--color-warning)" size={24} />
             </div>
-            <span className="text-muted" style={{ fontWeight: '600', textTransform: 'uppercase', fontSize: '0.75rem' }}>Pending Acknowledge</span>
+            <span className="text-muted" style={{ fontWeight: '600', textTransform: 'uppercase', fontSize: '0.75rem' }}>War-Ineligible</span>
           </div>
-          <h2 style={{ fontSize: '2.5rem', margin: 0 }}>{loading ? '...' : stats.pendingAcknowledge}</h2>
-          <p className="text-warning" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>Needs leadership review</p>
+          <h2 style={{ fontSize: '2.5rem', margin: 0 }}>{loading ? '...' : stats.warIneligible}</h2>
+          <p className="text-warning" style={{ fontSize: '0.75rem', marginTop: 'var(--space-sm)' }}>Active unresolved strike</p>
         </div>
 
         <div className="card" {...cardLinkProps('/dashboard/members')}>
