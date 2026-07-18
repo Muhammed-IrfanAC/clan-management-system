@@ -214,6 +214,89 @@ export interface WarningSuggestion {
   warning_id: string | null;
 }
 
+// ---- Strike Management System ----
+// A strike is one per (person, single war); status (active count, colour, war eligibility) is
+// DERIVED in src/lib/strikes/status.ts — only the 90-day expiry removes a strike from the count.
+
+export type WarStrikeSource = 'regular' | 'cwl' | 'manual' | 'legacy';
+export type StrikeOrigin = 'auto' | 'manual' | 'review';
+
+export interface Strike {
+  id: string;
+  person_id: string;
+  player_account_tag: string | null;
+  clan_id: string | null;
+  rule_id: string | null;
+  war_source: WarStrikeSource;
+  war_round_id: string | null; // war_rounds.id or cwl_rounds.id (disambiguated by war_source)
+  war_label: string | null;
+  strike_key: string | null;   // stable per-(person,war) key; null for manual/legacy
+  origin: StrikeOrigin;
+  issued_at: string;           // drives the rolling 90-day expiry
+  expires_at: string;          // generated: issued_at + 90 days
+  logged_by: string;
+  // Trust restoration (leader-marked; clears demotion/eligibility intent, never removes the strike).
+  owned: boolean;
+  apologised: boolean;
+  understands_rule: boolean;
+  promised: boolean;
+  leadership_approved: boolean;
+  approved_by: string | null;
+  approved_at: string | null;
+  elder_restored_at: string | null;
+  war_eligible_at: string | null;
+  // Third-strike removal (recorded intent; the in-game kick is manual).
+  removal_at: string | null;
+  rejoin_at: string | null;
+  discord_message_id: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+// One rule-break folded into a strike; "all their violations should be visible".
+export interface StrikeViolation {
+  id: string;
+  strike_id: string;
+  rule_id: string | null;
+  description: string;
+  evidence: Record<string, any>;
+  dedup_key: string;
+  occurred_at: string | null;
+  detected_at: string;
+  source: StrikeOrigin;
+}
+
+export interface StrikeNote {
+  id: string;
+  strike_id: string;
+  author_tag: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Review queue for judgement detectors (hit-up). On confirm, folds into the (person,war) strike.
+export interface StrikeSuggestion {
+  id: string;
+  rule_id: string | null;
+  person_id: string;
+  player_account_tag: string;
+  clan_id: string | null;
+  member_name: string | null;
+  war_source: WarStrikeSource;
+  war_round_id: string | null;
+  war_label: string | null;
+  description: string;
+  dedup_key: string;
+  evidence: Record<string, any>;
+  occurred_at: string | null;
+  detected_at: string;
+  status: 'pending' | 'confirmed' | 'dismissed';
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  strike_id: string | null;
+}
+
 // One of our members' lineup slot + attack result within a regular war. attacks_used is 0..2.
 // person_id is null for unlinked or guest tags.
 export interface WarMember {
