@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { authorizeActive } from '@/lib/auth-server';
+import { authorizeActive, requireAuth, requireCapability, authErrorResponse } from '@/lib/auth-server';
 
 // A Discord user id is a snowflake: a 17–20 digit decimal string. We store it as TEXT so the full
 // precision survives (it overflows a JS number), and validate the shape here rather than trusting the
@@ -74,5 +74,58 @@ export async function PATCH(
   } catch (error: any) {
     console.error('API Person Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+/**
+ * DELETE /api/persons/:id — remove a person from the registry.
+ *
+ * Their linked accounts are DETACHED back to the Unlinked pool (player_accounts.person_id → NULL) —
+ * this must happen before the delete since that FK has no ON DELETE rule, and it's the behaviour we
+ * want: the in-game accounts survive, only the human record goes. Deleting the person then CASCADES
+ * to their strikes, member notes and onboarding events (ON DELETE CASCADE), so this is irreversible.
+ *
+ * Gated on `leader.manage` (leaders + super_admin). Guardrail: a person who still holds dashboard
+ * access can't be deleted — revoke their access first, mirroring the baby auto-sweep which never
+ * removes an access-holder.
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const auth = await requireAuth(request);
+    await requireCapability(auth, 'leader.manage');
+
+    const { data: person, error: readError } = await supabase
+      .from('persons')
+      .select('id, access_role, display_name')
+      .eq('id', id)
+      .maybeSingle();
+    if (readError) throw readError;
+    if (!person) return NextResponse.json({ error: 'Person not found' }, { status: 404 });
+    if (person.access_role) {
+      return NextResponse.json(
+        { error: 'This person holds dashboard access. Revoke their access in Settings before deleting.' },
+        { status: 409 }
+      );
+    }
+
+    // Return every linked account to the Unlinked pool before removing the person.
+    const { error: detachError } = await supabase
+      .from('player_accounts')
+      .update({ person_id: null })
+      .eq('person_id', id);
+    if (detachError) throw detachError;
+
+    // Cascades to strikes / member_notes / onboarding_events via their ON DELETE CASCADE FKs.
+    const { error: deleteError } = await supabase.from('persons').delete().eq('id', id);
+    if (deleteError) throw deleteError;
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error('API Person Delete Error:', error);
+    return authErrorResponse(error) ?? NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
