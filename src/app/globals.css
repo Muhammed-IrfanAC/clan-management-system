@@ -1,6 +1,10 @@
 @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=Russo+One&display=swap');
 
 :root {
+  /* Dark UA rendering: native controls (date pickers, <select> option lists, scrollbars) inherit the
+     dark theme instead of defaulting to a light scheme with black text on our dark inputs. */
+  color-scheme: dark;
+
   /* Color Palette - ClanOps Gaming/OLED Dark Mode */
   --color-primary: #0F172A;
   --color-secondary: #1E293B;
