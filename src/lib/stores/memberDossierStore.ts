@@ -27,6 +27,7 @@ import type {
   OnboardingEvent,
   OnboardingEventType,
 } from '@/types/database';
+import type { Capability } from '@/lib/permissions';
 import type { ToastState } from '@/components/ui/Toast';
 
 export type FullPerson = Person & {
@@ -52,6 +53,8 @@ type DossierState = {
   currentUserTag: string | null;
   currentUserName: string | null;
   myPersonId: string | null;
+  // The acting leader's EFFECTIVE capabilities (coded defaults + runtime overrides), for UI gating.
+  myCapabilities: Capability[];
   loading: boolean;
   toast: ToastState | null;
 
@@ -59,6 +62,7 @@ type DossierState = {
   recordingEvent: boolean;
   deletingEvent: boolean;
   removing: boolean;
+  deletingPerson: boolean;
   postingComment: boolean;
   savingEdit: boolean;
   deletingCommentId: string | null;
@@ -79,6 +83,7 @@ type DossierState = {
   deleteComment: (commentId: string) => Promise<boolean>;
   removePlayer: (tag: string) => Promise<MutationResult>;
   unlinkPlayer: (tag: string) => Promise<MutationResult>;
+  deletePerson: () => Promise<MutationResult>;
   isAuthoredByMe: (authorTag: string | null) => boolean;
 };
 
@@ -100,11 +105,13 @@ export const useMemberDossierStore = create<DossierState>((set, get) => ({
   currentUserTag: null,
   currentUserName: null,
   myPersonId: null,
+  myCapabilities: [],
   loading: true,
   toast: null,
   recordingEvent: false,
   deletingEvent: false,
   removing: false,
+  deletingPerson: false,
   postingComment: false,
   savingEdit: false,
   deletingCommentId: null,
@@ -124,6 +131,7 @@ export const useMemberDossierStore = create<DossierState>((set, get) => ({
         currentUserTag: d?.user?.player_tag ?? null,
         currentUserName: d?.user?.in_game_name ?? null,
         myPersonId: d?.user?.person_id ?? null,
+        myCapabilities: (d?.capabilities as Capability[] | undefined) ?? [],
       });
     } catch {
       /* identity is best-effort; ownership just falls back to tag equality */
@@ -408,6 +416,25 @@ export const useMemberDossierStore = create<DossierState>((set, get) => ({
     } catch (err: any) {
       set({ toast: { type: 'error', message: err.message || 'Error unlinking player' } });
       return { ok: false, navigateAway: false };
+    }
+  },
+
+  // Delete the whole person: their accounts return to the Unlinked pool and the person + all their
+  // strikes, notes and onboarding history are permanently removed (cascade in the API). Always
+  // navigates away — the profile no longer exists.
+  async deletePerson() {
+    const { deletingPerson, personId } = get();
+    if (deletingPerson || !personId) return { ok: false, navigateAway: false };
+    set({ deletingPerson: true });
+    try {
+      const res = await fetch(`/api/persons/${personId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to delete person');
+      return { ok: true, navigateAway: true };
+    } catch (err: any) {
+      set({ toast: { type: 'error', message: err.message || 'Error deleting person' } });
+      return { ok: false, navigateAway: false };
+    } finally {
+      set({ deletingPerson: false });
     }
   },
 

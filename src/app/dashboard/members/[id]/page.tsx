@@ -27,9 +27,18 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
   const loadFamilyClans = useMemberDossierStore((s) => s.loadFamilyClans);
   const removePlayer = useMemberDossierStore((s) => s.removePlayer);
   const unlinkPlayer = useMemberDossierStore((s) => s.unlinkPlayer);
+  const deletingPerson = useMemberDossierStore((s) => s.deletingPerson);
+  const deletePerson = useMemberDossierStore((s) => s.deletePerson);
 
   // Confirm-delete modal is UI-local: the trigger lives in PersonCard, the modal renders here.
-  const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, tag: '', title: '', message: '' });
+  // `mode` distinguishes deleting one account from deleting the whole person.
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    mode: 'account' | 'person';
+    tag: string;
+    title: string;
+    message: string;
+  }>({ isOpen: false, mode: 'account', tag: '', title: '', message: '' });
 
   useEffect(() => {
     fetchPerson(id);
@@ -40,8 +49,9 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
     loadFamilyClans();
   }, [loadIdentity, loadFamilyClans]);
 
-  async function handleRemovePlayer() {
-    const { ok, navigateAway } = await removePlayer(confirmConfig.tag);
+  async function handleConfirm() {
+    const { mode, tag } = confirmConfig;
+    const { ok, navigateAway } = mode === 'person' ? await deletePerson() : await removePlayer(tag);
     if (!ok) return;
     setConfirmConfig((c) => ({ ...c, isOpen: false }));
     if (navigateAway) router.push('/dashboard/members');
@@ -66,9 +76,18 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
           <PersonCard
             onRequestRemove={(tag, inGameName) =>
-              setConfirmConfig({ isOpen: true, tag, title: 'Remove Account', message: `Permanently delete ${inGameName} from registry?` })
+              setConfirmConfig({ isOpen: true, mode: 'account', tag, title: 'Remove Account', message: `Permanently delete ${inGameName} from registry?` })
             }
             onUnlink={handleUnlink}
+            onRequestDeletePerson={() =>
+              setConfirmConfig({
+                isOpen: true,
+                mode: 'person',
+                tag: '',
+                title: 'Delete Person',
+                message: `Permanently delete ${person.display_name}? Their ${person.player_accounts.length} account${person.player_accounts.length === 1 ? '' : 's'} return to the Unlinked pool, and all strikes, notes and onboarding history are erased. This cannot be undone.`,
+              })
+            }
           />
         </div>
 
@@ -84,10 +103,10 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
       <ConfirmationModal
         isOpen={confirmConfig.isOpen}
         onClose={() => setConfirmConfig((c) => ({ ...c, isOpen: false }))}
-        onConfirm={handleRemovePlayer}
+        onConfirm={handleConfirm}
         title={confirmConfig.title}
         message={confirmConfig.message}
-        isLoading={removing}
+        isLoading={confirmConfig.mode === 'person' ? deletingPerson : removing}
       />
 
       <Toast toast={toast} onClose={() => setToast(null)} />

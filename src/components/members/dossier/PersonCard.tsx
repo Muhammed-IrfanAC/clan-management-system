@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { User, Baby, Clock, AtSign, CheckCircle, Link as LinkIcon, Trash2 } from 'lucide-react';
+import { User, Baby, Clock, AtSign, CheckCircle, Link as LinkIcon, Trash2, AlertTriangle } from 'lucide-react';
 import { useMemberDossierStore } from '@/lib/stores/memberDossierStore';
 import { babyDaysLeft } from '@/lib/babies';
 
@@ -10,14 +10,21 @@ import { babyDaysLeft } from '@/lib/babies';
 export default function PersonCard({
   onRequestRemove,
   onUnlink,
+  onRequestDeletePerson,
 }: {
   onRequestRemove: (tag: string, inGameName: string) => void;
   onUnlink: (tag: string) => void;
+  onRequestDeletePerson: () => void;
 }) {
   const person = useMemberDossierStore((s) => s.person);
   const babyTrialDays = useMemberDossierStore((s) => s.babyTrialDays);
   const savingDiscord = useMemberDossierStore((s) => s.savingDiscord);
   const saveDiscordId = useMemberDossierStore((s) => s.saveDiscordId);
+  const myCapabilities = useMemberDossierStore((s) => s.myCapabilities);
+
+  // UI gating only (API enforces): capabilities are overrides-aware, so a co-leader granted
+  // leader.manage in Settings → Permissions sees the Danger Zone too.
+  const canManage = myCapabilities.includes('leader.manage');
 
   const [editingDiscord, setEditingDiscord] = useState(false);
   const [discordDraft, setDiscordDraft] = useState('');
@@ -29,6 +36,7 @@ export default function PersonCard({
   }
 
   return (
+    <>
     <div className="card">
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
         <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -118,5 +126,34 @@ export default function PersonCard({
         </div>
       </div>
     </div>
+
+    {/* Danger Zone: delete the whole person (accounts → Unlinked, history erased). leader.manage
+        only; blocked while the person still holds dashboard access. */}
+    {canManage && (
+      <div className="card" style={{ border: '1px solid rgba(239,68,68,0.25)', background: 'rgba(239,68,68,0.02)' }}>
+        <h3 style={{ fontSize: '0.9rem', margin: '0 0 var(--space-sm)', display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', color: 'var(--color-danger)' }}>
+          <AlertTriangle size={15} /> Danger Zone
+        </h3>
+        {person.access_role ? (
+          <p className="text-muted" style={{ fontSize: '0.78rem', margin: 0 }}>
+            This member holds dashboard access ({person.access_role.replace('_', ' ')}). Revoke it in Settings → Leaders before you can delete them.
+          </p>
+        ) : (
+          <>
+            <p className="text-muted" style={{ fontSize: '0.78rem', margin: '0 0 var(--space-md)' }}>
+              Deletes this person. Their {person.player_accounts.length} linked account{person.player_accounts.length === 1 ? '' : 's'} return to the Unlinked pool; all strikes, notes and onboarding history are permanently erased. This cannot be undone.
+            </p>
+            <button
+              onClick={onRequestDeletePerson}
+              className="btn"
+              style={{ background: 'var(--color-danger)', color: '#fff', fontSize: '0.8rem' }}
+            >
+              <Trash2 size={14} /> Delete Person
+            </button>
+          </>
+        )}
+      </div>
+    )}
+    </>
   );
 }
