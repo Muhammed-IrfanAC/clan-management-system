@@ -232,8 +232,7 @@ export interface Strike {
   war_label: string | null;
   strike_key: string | null;   // stable per-(person,war) key; null for manual/legacy
   origin: StrikeOrigin;
-  issued_at: string;           // drives the rolling 90-day expiry
-  expires_at: string;          // generated: issued_at + 90 days
+  issued_at: string;           // drives the rolling 90-day expiry (derived, not stored — see status.ts)
   logged_by: string;
   // Trust restoration (leader-marked; clears demotion/eligibility intent, never removes the strike).
   owned: boolean;
