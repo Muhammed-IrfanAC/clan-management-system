@@ -401,20 +401,27 @@ export const useMemberDossierStore = create<DossierState>((set, get) => ({
     }
   },
 
+  // Detach an account from this person via the auth-enforced API (PATCH players/:tag). The server
+  // decides whether this collapsed into a person deletion (unlinking their LAST account, gated like
+  // Delete Person) and returns { deletedPerson }; we navigate away in that case, else splice the
+  // account out. Replaces a raw client-side supabase mutation that bypassed auth entirely.
   async unlinkPlayer(tag) {
-    const { person, personId } = get();
-    const navigateAway = person?.player_accounts.length === 1;
     try {
-      const { error } = await supabase.from('player_accounts').update({ person_id: null }).eq('player_tag', tag);
-      if (error) throw error;
-      if (navigateAway && personId) {
-        await supabase.from('persons').delete().eq('id', personId);
-      } else {
-        patchPerson(set, (p) => ({ ...p, player_accounts: p.player_accounts.filter((a) => a.player_tag !== tag) }));
+      const res = await fetch(`/api/players/${encodeURIComponent(tag)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ person_id: null }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to unlink account');
+      const body = await res.json();
+      if (body.deletedPerson) {
+        return { ok: true, navigateAway: true };
       }
-      return { ok: true, navigateAway: !!navigateAway };
+      patchPerson(set, (p) => ({ ...p, player_accounts: p.player_accounts.filter((a) => a.player_tag !== tag) }));
+      set({ toast: { type: 'success', message: 'Account unlinked.' } });
+      return { ok: true, navigateAway: false };
     } catch (err: any) {
-      set({ toast: { type: 'error', message: err.message || 'Error unlinking player' } });
+      set({ toast: { type: 'error', message: err.message || 'Error unlinking account' } });
       return { ok: false, navigateAway: false };
     }
   },
