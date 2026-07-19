@@ -2,6 +2,7 @@ import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
 import { notifyStrikeLogged, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
+import { loadStrikeNotifyContext } from '@/lib/strikes/notify-context';
 
 /**
  * Strikes collection endpoint (the Strike system replacing Warnings).
@@ -101,11 +102,15 @@ export async function POST(request: NextRequest) {
       const { data: rule } = ruleId
         ? await supabase.from('rules').select('name').eq('id', ruleId).maybeSingle()
         : { data: null };
+      const ctx = await loadStrikeNotifyContext(playerTag);
       await notifyStrikeLogged({
         memberName: account?.in_game_name,
         playerTag,
         ruleName: rule?.name ?? null,
         reasons: descriptionText ? [descriptionText] : [],
+        strikeNumber: ctx.strikeNumber,
+        level: ctx.level,
+        activeStrikes: ctx.activeStrikes,
         webhookUrl: await webhookUrlForClan(account?.clan_id),
         mentionDiscordId: await discordUserIdForPerson(personId),
       });

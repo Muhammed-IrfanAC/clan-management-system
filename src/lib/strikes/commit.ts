@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { notifyStrikeLogged, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
+import { loadStrikeNotifyContext } from './notify-context';
 import { planStrikes, type PlannedStrike } from './plan';
 import type { DetectedViolation } from '@/lib/rules/types';
 
@@ -181,12 +182,16 @@ export async function commitReviewStrike(params: {
   // Notify only when this confirmation created a brand-new strike (best-effort).
   if (created) {
     try {
+      const ctx = await loadStrikeNotifyContext(playerTag);
       await notifyStrikeLogged({
         memberName: memberName ?? null,
         playerTag: playerTag ?? '—',
         ruleName: ruleName ?? null,
         warLabel,
         reasons: [description],
+        strikeNumber: ctx.strikeNumber,
+        level: ctx.level,
+        activeStrikes: ctx.activeStrikes,
         webhookUrl: await webhookUrlForClan(clanId),
         mentionDiscordId: await discordUserIdForPerson(personId),
       });
@@ -201,12 +206,16 @@ export async function commitReviewStrike(params: {
 async function notifyNewStrikes(rule: StrikeRule, newStrikes: PlannedStrike[]): Promise<void> {
   for (const p of newStrikes) {
     try {
+      const ctx = await loadStrikeNotifyContext(p.playerTag);
       await notifyStrikeLogged({
         memberName: p.violations[0]?.memberName ?? null,
         playerTag: p.playerTag,
         ruleName: rule.name,
         warLabel: p.warLabel,
         reasons: p.violations.map((v) => v.description),
+        strikeNumber: ctx.strikeNumber,
+        level: ctx.level,
+        activeStrikes: ctx.activeStrikes,
         webhookUrl: await webhookUrlForClan(p.clanId),
         mentionDiscordId: await discordUserIdForPerson(p.personId),
       });
