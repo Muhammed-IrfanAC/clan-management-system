@@ -88,10 +88,11 @@ export default function DashboardPage() {
       const { count: unlinkedCount } = await unlinkedQuery;
 
       // Strike-derived counts: war-ineligible (active unresolved) and removal-flagged (3+ active).
-      // Derived client-side via the same pure engine the Strikes page uses, so the numbers agree.
+      // Derived client-side via the same pure engine the Strikes page uses — grouped per ACCOUNT — so
+      // the numbers agree with the Strikes screen.
       let strikeQuery = supabase
         .from('strikes')
-        .select('person_id, issued_at, leadership_approved, clan_id, person:persons(id, display_name)');
+        .select('person_id, player_account_tag, issued_at, leadership_approved, clan_id, person:persons(id, display_name), player_account:player_accounts(in_game_name)');
       if (selectedClanId !== 'all') strikeQuery = strikeQuery.eq('clan_id', selectedClanId);
       const { data: strikeRows } = await strikeQuery;
       const dossiers = buildDossiers((strikeRows as unknown as StrikeWithContext[]) || [], new Date());

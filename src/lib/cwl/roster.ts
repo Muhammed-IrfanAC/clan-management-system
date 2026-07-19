@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import type { EligiblePlayer } from './allocation';
 import { normalizeLeague } from './leagues';
+import { STRIKE_WINDOW_DAYS } from '@/lib/strikes/status';
 
 /**
  * Server-side CWL roster helpers shared by the API routes: loading the eligible player pool and
@@ -58,25 +59,33 @@ export async function loadEligiblePlayers(): Promise<EligiblePlayer[]> {
 }
 
 /**
- * Load the set of person ids that are currently WAR-INELIGIBLE because of the Strike system: they
+ * Load the set of account tags that are currently WAR-INELIGIBLE because of the Strike system: they
  * hold at least one active (not yet 90-day-expired) strike that leadership has not resolved
- * (leadership_approved = false). This mirrors `isWarEligible` in lib/strikes/status.ts — a person is
- * war-ineligible exactly when their unresolved-active strike count is > 0. Fed to `allocate()` so
- * struck players are pulled from the CWL pool automatically. Fail-safe: on error returns an empty
- * set (never blocks allocation — worst case a struck player isn't auto-excluded and a leader sees them).
+ * (leadership_approved = false). Strikes are per-account, so this excludes only the specific account —
+ * a struck alt never holds out the person's other accounts. This mirrors `isWarEligible` in
+ * lib/strikes/status.ts — an account is war-ineligible exactly when its unresolved-active strike count
+ * is > 0. Fed to `allocate()` (matched against each person's fielded account) so struck accounts are
+ * pulled from the CWL pool automatically. Fail-safe: on error returns an empty set (never blocks
+ * allocation — worst case a struck account isn't auto-excluded and a leader sees them).
  */
-export async function loadWarIneligiblePersonIds(): Promise<Set<string>> {
-  const nowIso = new Date().toISOString();
+export async function loadWarIneligibleAccountTags(): Promise<Set<string>> {
+  // Expiry is derived, not stored (see 019_strike_system.sql), so filter on issued_at against the
+  // same window constant the pure status module uses.
+  const cutoffIso = new Date(Date.now() - STRIKE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from('strikes')
-    .select('person_id')
-    .gt('expires_at', nowIso) // still within the 90-day active window
+    .select('player_account_tag')
+    .gt('issued_at', cutoffIso) // still within the 90-day active window
     .eq('leadership_approved', false); // and not resolved/acknowledged by leadership
   if (error) {
-    console.error('loadWarIneligiblePersonIds failed (non-fatal):', error);
+    console.error('loadWarIneligibleAccountTags failed (non-fatal):', error);
     return new Set();
   }
-  return new Set((data as { person_id: string }[] | null)?.map((r) => r.person_id) || []);
+  return new Set(
+    (data as { player_account_tag: string | null }[] | null)
+      ?.map((r) => r.player_account_tag)
+      .filter((t): t is string => !!t) || [],
+  );
 }
 
 /**

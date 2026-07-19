@@ -2,7 +2,7 @@ import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
 import { allocate, type PoolClan } from '@/lib/cwl/allocation';
-import { loadEligiblePlayers, loadWarIneligiblePersonIds } from '@/lib/cwl/roster';
+import { loadEligiblePlayers, loadWarIneligibleAccountTags } from '@/lib/cwl/roster';
 import type { CWLConstraints } from '@/types/database';
 
 /**
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
 
     // 3. Run the allocation engine over the eligible pool.
     const players = await loadEligiblePlayers();
-    const warIneligible = await loadWarIneligiblePersonIds();
+    const warIneligible = await loadWarIneligibleAccountTags();
     const pool: PoolClan[] = clans.map((c, i) => ({ clanId: c.clanId, warSize: c.warSize || 15, displayOrder: i }));
     const drafts = allocate(players, pool, constraints, warIneligible);
 
