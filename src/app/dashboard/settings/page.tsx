@@ -1,29 +1,34 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Settings, Shield, Users, RefreshCw } from 'lucide-react';
+import { Settings, Shield, Users, RefreshCw, ShieldCheck } from 'lucide-react';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { useCurrentUser } from '@/lib/useCurrentUser';
-import { can } from '@/lib/permissions';
 import { useSettingsStore } from '@/lib/stores/settingsStore';
 import Toast from '@/components/ui/Toast';
 import GeneralTab from '@/components/settings/GeneralTab';
 import ClansTab from '@/components/settings/ClansTab';
 import RulesTab from '@/components/settings/RulesTab';
 import LeadersTab from '@/components/settings/LeadersTab';
+import PermissionsTab from '@/components/settings/PermissionsTab';
 import AddClanModal from '@/components/settings/AddClanModal';
 import AddRuleModal from '@/components/settings/AddRuleModal';
 import AddLeaderModal from '@/components/settings/AddLeaderModal';
 import type { ConfirmArgs } from '@/components/settings/types';
 
-type Tab = 'general' | 'clans' | 'rules' | 'leaders';
+type Tab = 'general' | 'clans' | 'rules' | 'leaders' | 'permissions';
 
 export default function SettingsPage() {
-  const { role } = useCurrentUser();
-  // Admin tabs (general config, clan family, leadership) require the leader-management capability;
-  // co-leaders get the Rules tab only. UI gating is cosmetic — the API routes enforce the rest.
-  const canManage = can(role, 'leader.manage');
-  const visibleTabs: Tab[] = canManage ? ['general', 'clans', 'rules', 'leaders'] : ['rules'];
+  const { role, capabilities } = useCurrentUser();
+  // Gating is driven by the actor's EFFECTIVE capabilities (coded defaults + runtime overrides) from
+  // /api/auth/me, so it matches what the API allows. Admin tabs need leader-management; configuring
+  // co-leader permissions is owner-only (role.assign_any). UI gating is cosmetic — routes enforce.
+  const canManage = capabilities.includes('leader.manage');
+  const canConfigurePerms = capabilities.includes('role.assign_any');
+  const visibleTabs: Tab[] = [
+    ...(canManage ? (['general', 'clans', 'rules', 'leaders'] as Tab[]) : (['rules'] as Tab[])),
+    ...(canConfigurePerms ? (['permissions'] as Tab[]) : []),
+  ];
 
   const [activeTab, setActiveTab] = useState<Tab>('general');
   // Clamp the selected tab to what the role may see — co-leaders fall through to Rules — without
@@ -82,6 +87,7 @@ export default function SettingsPage() {
               {tab === 'clans' && <RefreshCw size={18} />}
               {tab === 'rules' && <Shield size={18} />}
               {tab === 'leaders' && <Users size={18} />}
+              {tab === 'permissions' && <ShieldCheck size={18} />}
               <span style={{ marginLeft: '10px', textTransform: 'capitalize' }}>{tab}</span>
             </button>
           ))}
@@ -95,8 +101,9 @@ export default function SettingsPage() {
             <>
               {effectiveTab === 'general' && <GeneralTab />}
               {effectiveTab === 'clans' && <ClansTab onAdd={() => setShowAddClan(true)} confirm={confirm} />}
-              {effectiveTab === 'rules' && <RulesTab role={role} onAdd={() => setShowAddRule(true)} confirm={confirm} />}
+              {effectiveTab === 'rules' && <RulesTab canDelete={capabilities.includes('rules.delete')} onAdd={() => setShowAddRule(true)} confirm={confirm} />}
               {effectiveTab === 'leaders' && <LeadersTab onAdd={() => setShowAddLeader(true)} confirm={confirm} />}
+              {effectiveTab === 'permissions' && <PermissionsTab />}
             </>
           )}
         </div>
@@ -104,7 +111,7 @@ export default function SettingsPage() {
 
       {showAddClan && <AddClanModal onClose={() => setShowAddClan(false)} />}
       {showAddRule && <AddRuleModal onClose={() => setShowAddRule(false)} />}
-      {showAddLeader && <AddLeaderModal role={role} onClose={() => setShowAddLeader(false)} />}
+      {showAddLeader && <AddLeaderModal role={role} capabilities={capabilities} onClose={() => setShowAddLeader(false)} />}
 
       <ConfirmationModal
         isOpen={!!confirmArgs}

@@ -2,13 +2,12 @@
 
 import { Plus, Trash2 } from 'lucide-react';
 import { useSettingsStore } from '@/lib/stores/settingsStore';
-import { can } from '@/lib/permissions';
-import type { AccessRole } from '@/types/database';
 import { DETECTOR_REGISTRY, detectorMeta, defaultConfigFor } from '@/lib/rules/registry';
 import type { Confirm } from './types';
 
 // Rules library tab: create/delete rules and wire each to a built-in detector (attach, enable, tune).
-export default function RulesTab({ role, onAdd, confirm }: { role: AccessRole | null; onAdd: () => void; confirm: Confirm }) {
+// `canDelete` is the caller's effective rules.delete capability (overrides-aware); UI gating only.
+export default function RulesTab({ canDelete, onAdd, confirm }: { canDelete: boolean; onAdd: () => void; confirm: Confirm }) {
   const rules = useSettingsStore((s) => s.rules);
   const togglingRuleId = useSettingsStore((s) => s.togglingRuleId);
   const updateRuleAutomation = useSettingsStore((s) => s.updateRuleAutomation);
@@ -26,7 +25,7 @@ export default function RulesTab({ role, onAdd, confirm }: { role: AccessRole | 
           <div key={r.id} className="card" style={{ background: 'rgba(255,255,255,0.02)', cursor: 'default' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-sm)' }}>
               <h4 style={{ margin: 0 }}>{r.name}</h4>
-              {can(role, 'rules.delete') && (
+              {canDelete && (
                 <button
                   onClick={() =>
                     confirm({

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { X, AlertCircle } from 'lucide-react';
 import { useSettingsStore } from '@/lib/stores/settingsStore';
-import { assignableRoles } from '@/lib/permissions';
+import { assignableRolesFromCaps, type Capability } from '@/lib/permissions';
 import type { AccessRole } from '@/types/database';
 
 const ROLE_LABELS: Record<AccessRole, string> = {
@@ -14,10 +14,11 @@ const ROLE_LABELS: Record<AccessRole, string> = {
 
 // Grant dashboard access to a registry member. Access is a person-level grant, addressed via one of
 // the person's account tags. Owns its picker + role draft; the store owns the candidate list and the
-// mutation. The assignable roles are capped by the acting role (see assignableRoles).
-export default function AddLeaderModal({ role, onClose }: { role: AccessRole | null; onClose: () => void }) {
+// mutation. The assignable roles come from the actor's EFFECTIVE capabilities (overrides-aware).
+export default function AddLeaderModal({ role, capabilities, onClose }: { role: AccessRole | null; capabilities: Capability[]; onClose: () => void }) {
   const personOptions = useSettingsStore((s) => s.personOptions);
   const addLeader = useSettingsStore((s) => s.addLeader);
+  const roleOptions = assignableRolesFromCaps(capabilities);
 
   const [personQuery, setPersonQuery] = useState('');
   const [selectedPersonId, setSelectedPersonId] = useState('');
@@ -82,7 +83,7 @@ export default function AddLeaderModal({ role, onClose }: { role: AccessRole | n
           <div style={{ marginBottom: 'var(--space-lg)' }}>
             <label className="text-muted" style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase' }}>Role</label>
             <select className="input" value={newLeaderRole} onChange={(e) => setNewLeaderRole(e.target.value as AccessRole)}>
-              {assignableRoles(role).map((r) => (
+              {roleOptions.map((r) => (
                 <option key={r} value={r}>{ROLE_LABELS[r]}</option>
               ))}
             </select>

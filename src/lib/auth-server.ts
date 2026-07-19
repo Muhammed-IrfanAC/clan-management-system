@@ -3,6 +3,7 @@ import { jwtVerify } from 'jose';
 import { supabase } from './supabase';
 import { AccessRole } from '@/types/database';
 import { Capability, can } from './permissions';
+import { loadCapabilityOverrides } from './permissions-server';
 
 /**
  * Server-side auth + authorization helpers, shared by every API route.
@@ -68,14 +69,16 @@ async function liveRole(playerTag: string): Promise<AccessRole | null> {
 export async function requireCapability(auth: AuthContext, cap: Capability): Promise<AccessRole> {
   const role = await liveRole(auth.playerTag);
   if (!role) throw new AuthError('Access has been revoked', 403);
-  if (!can(role, cap)) throw new AuthError('You do not have permission to perform this action', 403);
+  const overrides = await loadCapabilityOverrides();
+  if (!can(role, cap, overrides)) throw new AuthError('You do not have permission to perform this action', 403);
   return role;
 }
 
-/** Non-throwing capability probe (live DB role). Use to widen author-only checks for overriders. */
+/** Non-throwing capability probe (live DB role + runtime overrides). Widens author-only checks. */
 export async function hasCapability(playerTag: string, cap: Capability): Promise<boolean> {
   const role = await liveRole(playerTag);
-  return role ? can(role, cap) : false;
+  if (!role) return false;
+  return can(role, cap, await loadCapabilityOverrides());
 }
 
 /** In a route's catch: turn an AuthError into its NextResponse, or return null to rethrow/500. */
