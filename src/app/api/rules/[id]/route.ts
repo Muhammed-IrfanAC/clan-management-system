@@ -2,6 +2,7 @@ import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
 import { can } from '@/lib/permissions';
+import { loadCapabilityOverrides } from '@/lib/permissions-server';
 import { DETECTOR_REGISTRY } from '@/lib/rules/registry';
 
 /**
@@ -48,8 +49,8 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const { id } = await params;
     const auth = await authorizeActive(request);
     if (auth.error) return auth.error;
-    if (!can(auth.role, 'rules.delete')) {
-      return NextResponse.json({ error: 'Only leaders and super admins can delete rules' }, { status: 403 });
+    if (!can(auth.role, 'rules.delete', await loadCapabilityOverrides())) {
+      return NextResponse.json({ error: 'You do not have permission to delete rules' }, { status: 403 });
     }
 
     // Detach the rule from any warnings first, so the delete can't fail on a foreign-key reference.

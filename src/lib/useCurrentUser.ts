@@ -2,15 +2,19 @@
 
 import { useEffect, useState } from 'react';
 import { PlayerAccount, AccessRole } from '@/types/database';
+import type { Capability } from '@/lib/permissions';
 
 /**
  * Client hook for the logged-in leader. Reads /api/auth/me (which resolves the LIVE access_role of
- * the linked person, so a grant/revoke is reflected without a re-login) and exposes the current role
- * for UI gating. UI gating is cosmetic — the API routes are the real authorization boundary.
+ * the linked person AND the role's EFFECTIVE capabilities — coded defaults plus runtime overrides —
+ * so a grant/revoke or a permissions-config change is reflected without a re-login). Exposes both
+ * the role and the capability list for UI gating. UI gating is cosmetic — the API routes are the
+ * real authorization boundary.
  */
 export function useCurrentUser() {
   const [user, setUser] = useState<PlayerAccount | null>(null);
   const [role, setRole] = useState<AccessRole | null>(null);
+  const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -23,6 +27,7 @@ export function useCurrentUser() {
           if (active) {
             setUser(data.user);
             setRole((data.role as AccessRole | null) ?? null);
+            setCapabilities((data.capabilities as Capability[] | undefined) ?? []);
           }
         }
       } catch {
@@ -36,5 +41,5 @@ export function useCurrentUser() {
     };
   }, []);
 
-  return { user, role, loading };
+  return { user, role, capabilities, loading };
 }

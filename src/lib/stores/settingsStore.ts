@@ -1,7 +1,11 @@
 import { create } from 'zustand';
 import { supabase } from '@/lib/supabase';
 import type { Clan, Rule, Setting, AccessRole, RuleAutomationMode } from '@/types/database';
+import type { Capability } from '@/lib/permissions';
 import type { ToastState } from '@/components/ui/Toast';
+
+// Effective on/off state for the configurable co-leader capabilities, as served by /api/permissions.
+export type CoLeaderCaps = Partial<Record<Capability, boolean>>;
 
 // One access-holder row = a person (with access_role) plus a representative account for display.
 export type LeaderRow = {
@@ -89,9 +93,17 @@ type SettingsState = {
   togglingRuleId: string | null;
   toast: ToastState | null;
 
+  // Co-leader permissions editor (super_admin only).
+  coLeaderCaps: CoLeaderCaps;
+  permsLoading: boolean;
+  savingCap: Capability | null;
+
   setToast: (toast: ToastState | null) => void;
   fetchData: () => Promise<void>;
   refresh: () => Promise<void>;
+
+  fetchPermissions: () => Promise<void>;
+  toggleCapability: (cap: Capability, enabled: boolean) => Promise<void>;
 
   updateSetting: (key: string, value: unknown) => Promise<void>;
 
@@ -117,6 +129,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   loading: true,
   togglingRuleId: null,
   toast: null,
+
+  coLeaderCaps: {},
+  permsLoading: true,
+  savingCap: null,
 
   setToast: (toast) => set({ toast }),
 
@@ -308,6 +324,43 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ toast: { message: 'Access revoked.', type: 'success' } });
     } catch (err) {
       set({ toast: { message: err instanceof Error ? err.message : 'Error revoking access', type: 'error' } });
+    }
+  },
+
+  async fetchPermissions() {
+    set({ permsLoading: true });
+    try {
+      const res = await fetch('/api/permissions');
+      if (!res.ok) throw new Error('Failed to load permissions');
+      const body = await res.json();
+      set({ coLeaderCaps: (body.capabilities as CoLeaderCaps) || {}, permsLoading: false });
+    } catch (err) {
+      set({ permsLoading: false, toast: { message: err instanceof Error ? err.message : 'Error loading permissions', type: 'error' } });
+    }
+  },
+
+  async toggleCapability(cap, enabled) {
+    if (get().savingCap) return;
+    set({ savingCap: cap });
+    try {
+      const res = await fetch('/api/permissions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ capability: cap, enabled }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || 'Error updating permission');
+      }
+      const body = await res.json();
+      set({
+        coLeaderCaps: (body.capabilities as CoLeaderCaps) || {},
+        toast: { message: `Co-leaders ${enabled ? 'granted' : 'revoked'}: ${cap}.`, type: 'success' },
+      });
+    } catch (err) {
+      set({ toast: { message: err instanceof Error ? err.message : 'Error updating permission', type: 'error' } });
+    } finally {
+      set({ savingCap: null });
     }
   },
 }));

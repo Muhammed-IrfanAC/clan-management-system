@@ -2,6 +2,7 @@ import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { requireAuth, requireCapability, authErrorResponse, AuthError } from '@/lib/auth-server';
 import { canAssignRole } from '@/lib/permissions';
+import { loadCapabilityOverrides } from '@/lib/permissions-server';
 import { AccessRole } from '@/types/database';
 
 /**
@@ -44,7 +45,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     // within the actor's assignment power. This makes revoke symmetric with grant: a leader can lift
     // access they could have granted (co_leaders), but cannot revoke a fellow leader; super_admin can.
     const roleInQuestion = nextRole ?? currentRole;
-    if (roleInQuestion && !canAssignRole(actorRole, roleInQuestion)) {
+    if (roleInQuestion && !canAssignRole(actorRole, roleInQuestion, await loadCapabilityOverrides())) {
       throw new AuthError('You are not allowed to change access at that level', 403);
     }
 
