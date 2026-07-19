@@ -25,8 +25,11 @@ CREATE TABLE IF NOT EXISTS strikes (
     -- log several manual strikes without collision.
     strike_key TEXT,
     origin TEXT NOT NULL DEFAULT 'manual' CHECK (origin IN ('auto', 'manual', 'review')),
-    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),           -- drives the rolling 90-day expiry
-    expires_at TIMESTAMPTZ GENERATED ALWAYS AS (issued_at + INTERVAL '90 days') STORED,
+    -- Drives the rolling 90-day expiry. There is deliberately NO stored expires_at column:
+    -- `timestamptz + interval` is only STABLE (day arithmetic depends on the session TimeZone), so
+    -- Postgres rejects it in a generated column. Expiry is derived instead — STRIKE_WINDOW_DAYS /
+    -- isActive() / expiryOf() in src/lib/strikes/status.ts — and queries filter on issued_at.
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     logged_by TEXT NOT NULL DEFAULT 'SYSTEM',
     -- Trust restoration: a leader-marked checklist. Completing it (leadership_approved) clears the
     -- should-be-Member / war-ineligible INTENT for this strike, but never removes the strike itself.
