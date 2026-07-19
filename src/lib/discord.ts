@@ -13,10 +13,27 @@
  */
 
 import { supabase } from './supabase';
+import type { StrikeLevel } from './strikes/status';
 
-// Discord embed colors (decimal). Amber for warnings, red for strikes.
+// Discord embed colors (decimal). Amber for warnings; strikes take the member's live strike LEVEL
+// colour (green/orange/red) so the embed mirrors the dashboard badge — see LEVEL_COLOR below.
 const COLOR_WARNING = 0xf59e0b;
-const COLOR_STRIKE = 0xdc2626;
+
+// Strike-level → embed colour, matching the dashboard tokens (--color-cta / --color-warning /
+// --color-danger). green=1 active, orange=2, red>=3; clear is a defensive fallback only.
+const LEVEL_COLOR: Record<StrikeLevel, number> = {
+  clear: 0x94a3b8,
+  green: 0x22c55e,
+  orange: 0xf59e0b,
+  red: 0xef4444,
+};
+const LEVEL_EMOJI: Record<StrikeLevel, string> = {
+  clear: '⚪',
+  green: '🟢',
+  orange: '🟠',
+  red: '🔴',
+};
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 type DiscordEmbedField = { name: string; value: string; inline?: boolean };
 
@@ -147,8 +164,11 @@ export async function notifyWarningLogged(params: {
 /**
  * Notify a Discord channel that a STRIKE was issued against a member (one strike per war; it may
  * carry several reasons). Best-effort — see module docs. `mentionDiscordId` @-mentions the member.
- * The richer end-of-war roll-up (all new + outstanding strikes) lands in a later phase; this is the
- * immediate per-strike ping so the member is told the moment a war-break is detected.
+ *
+ * The embed is scoped to the fielded ACCOUNT's live strike standing (`loadStrikeNotifyContext`):
+ * the title names the strike NUMBER (Strike 1/2/3…), the embed colour follows the green/orange/red
+ * LEVEL, and an "Active strikes" field spells out every strike still counting against the account —
+ * so the member sees exactly where this puts them without opening the dashboard.
  */
 export async function notifyStrikeLogged(params: {
   memberName?: string | null;
@@ -156,10 +176,16 @@ export async function notifyStrikeLogged(params: {
   ruleName?: string | null;
   warLabel?: string | null;
   reasons: string[];        // one line per folded violation
+  strikeNumber: number;     // this account's active strike count after this strike (1, 2, 3…)
+  level: StrikeLevel;       // drives the embed colour + title emoji
+  activeStrikes: { issuedAt: string; label: string }[]; // full active list on the account, oldest-first
   webhookUrl?: string | null;
   mentionDiscordId?: string | null;
 }): Promise<void> {
-  const { memberName, playerTag, ruleName, warLabel, reasons, webhookUrl, mentionDiscordId } = params;
+  const {
+    memberName, playerTag, ruleName, warLabel, reasons,
+    strikeNumber, level, activeStrikes, webhookUrl, mentionDiscordId,
+  } = params;
 
   const fields: DiscordEmbedField[] = [
     { name: 'Member', value: `${memberName || 'Unknown'} (${playerTag})`, inline: true },
@@ -167,9 +193,27 @@ export async function notifyStrikeLogged(params: {
   if (warLabel) fields.push({ name: 'War', value: warLabel, inline: true });
   if (ruleName) fields.push({ name: 'Rule', value: ruleName, inline: false });
 
+  // The full active-strike list so this ping is self-contained. Numbered oldest-first; capped so we
+  // never blow Discord's 1024-char field limit.
+  if (activeStrikes.length) {
+    const lines = activeStrikes.map((s, i) => {
+      const d = new Date(s.issuedAt);
+      const date = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+      return `\`${i + 1}.\` ${date} — ${s.label}`;
+    });
+    fields.push({
+      name: `Active strikes (${activeStrikes.length})`,
+      value: truncateField(lines.join('\n')),
+      inline: false,
+    });
+  }
+
   const description = reasons.length
     ? reasons.map((r) => `• ${r}`).join('\n')
     : 'A war rule was broken.';
+
+  const removalNote = level === 'red' ? ' — removal threshold reached' : '';
+  const title = `${LEVEL_EMOJI[level]} Strike ${strikeNumber} Issued${removalNote}`;
 
   await sendDiscordMessage(
     {
@@ -177,9 +221,9 @@ export async function notifyStrikeLogged(params: {
       allowed_mentions: mentionDiscordId ? { users: [mentionDiscordId] } : { parse: [] },
       embeds: [
         {
-          title: '🛑 Strike Issued',
+          title,
           description,
-          color: COLOR_STRIKE,
+          color: LEVEL_COLOR[level],
           fields,
           footer: { text: 'ClanOps · trust restoration required before Elder/war eligibility returns' },
         },
@@ -187,4 +231,16 @@ export async function notifyStrikeLogged(params: {
     },
     webhookUrl,
   );
+}
+
+/** Keep an embed field within Discord's 1024-char limit, trimming whole lines from the tail. */
+function truncateField(value: string): string {
+  if (value.length <= 1024) return value;
+  const lines = value.split('\n');
+  let out = '';
+  for (const line of lines) {
+    if (out.length + line.length + 1 > 980) break;
+    out += (out ? '\n' : '') + line;
+  }
+  return `${out}\n…`;
 }
