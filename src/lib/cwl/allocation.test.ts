@@ -248,13 +248,14 @@ describe('allocate', () => {
     expect(drifter.recommendedClanId).toBe('B');
   });
 
-  describe('war-ineligible (struck) exclusion', () => {
-    it('pulls a war-ineligible person from the pool and marks them removed with a reason', () => {
+  describe('war-ineligible (struck) exclusion — matched on the fielded account tag', () => {
+    it('pulls a war-ineligible account from the pool and marks it removed with a reason', () => {
       const players = [
         player('clean', { currentClanId: 'A', thLevel: 16 }),
         player('struck', { currentClanId: 'A', thLevel: 15 }),
       ];
-      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['struck']));
+      // The set holds account tags (player_account_tag), not person ids.
+      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#struck']));
       const struck = drafts.find((d) => d.personId === 'struck')!;
       expect(struck.status).toBe('removed');
       expect(struck.recommendedClanId).toBeNull();
@@ -264,12 +265,21 @@ describe('allocate', () => {
       expect(drafts.find((d) => d.personId === 'clean')!.recommendedClanId).toBe('A');
     });
 
-    it('never fills a struck player into a war slot even when the clan has room', () => {
+    it('does NOT exclude a person when only a benched alt (a different account) is struck', () => {
+      // The person fields their clean main #clean; their struck alt #alt is not in the pool. Because
+      // eligibility is per-account, the struck alt tag must not hold the fielded account out.
+      const players = [player('clean', { currentClanId: 'A', thLevel: 16 })];
+      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#alt']));
+      expect(drafts[0].status).not.toBe('removed');
+      expect(drafts[0].recommendedClanId).toBe('A');
+    });
+
+    it('never fills a struck account into a war slot even when the clan has room', () => {
       const players = Array.from({ length: 3 }, (_, i) =>
         player(`p${i}`, { currentClanId: 'A', thLevel: 16 - i }),
       );
-      // p2 is struck; warSize 3 has room for all three, but p2 must NOT be placed.
-      const drafts = allocate(players, [{ clanId: 'A', warSize: 3 }], NO_CONSTRAINTS, new Set(['p2']));
+      // #p2 is struck; warSize 3 has room for all three, but p2 must NOT be placed.
+      const drafts = allocate(players, [{ clanId: 'A', warSize: 3 }], NO_CONSTRAINTS, new Set(['#p2']));
       const placed = drafts.filter((d) => d.recommendedClanId === 'A').map((d) => d.personId);
       expect(placed).not.toContain('p2');
       expect(placed.sort()).toEqual(['p0', 'p1']);
@@ -288,7 +298,7 @@ describe('allocate', () => {
         player('b', { currentClanId: 'A' }),
         player('c', { currentClanId: 'B' }),
       ];
-      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['a', 'c']));
+      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#a', '#c']));
       const ids = drafts.map((d) => d.personId).sort();
       expect(ids).toEqual(['a', 'b', 'c']);
     });

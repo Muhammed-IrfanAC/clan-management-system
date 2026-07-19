@@ -1,11 +1,13 @@
 /**
  * PURE dossier + leadership-worklist derivation — no DB, no I/O, fully unit-testable.
  *
- * The strikes API returns a flat list of strikes (with their person / rule / violations / notes
- * embedded). Both the Player Dossier and the Leadership worklist are just two views over that same
- * list, derived deterministically from `deriveStrikeStatus`. This module groups the flat list by
- * person into dossiers, then buckets those dossiers into the leader's actionable worklist. `now` is
- * always injected so the whole thing stays pure (tests pass a fixed clock; callers pass new Date()).
+ * The strikes API returns a flat list of strikes (with their person / account / rule / violations /
+ * notes embedded). Both the Account Dossier and the Leadership worklist are just two views over that
+ * same list, derived deterministically from `deriveStrikeStatus`. Strikes are scoped to the ACCOUNT
+ * (player tag): each of a person's alts is judged on its own strikes — so this module groups the flat
+ * list by `player_account_tag` into dossiers, then buckets those dossiers into the leader's actionable
+ * worklist. `now` is always injected so the whole thing stays pure (tests pass a fixed clock; callers
+ * pass new Date()).
  */
 
 import type { Strike, StrikeViolation, StrikeNote } from '@/types/database';
@@ -24,46 +26,48 @@ export type StrikeWithContext = Strike & {
   strike_notes?: StrikeNote[];
 };
 
-export type PersonDossier = {
-  personId: string;
-  displayName: string;
-  strikes: StrikeWithContext[];       // all strikes, newest-issued first
+export type AccountDossier = {
+  accountTag: string;                 // the player tag this dossier is scoped to (grouping key)
+  inGameName: string;                 // the account's in-game name (card title)
+  personId: string;                   // the person the account belongs to (links to their profile)
+  displayName: string;                // the person's display name (card subtitle — the human)
+  strikes: StrikeWithContext[];       // all strikes on this account, newest-issued first
   activeStrikes: StrikeWithContext[]; // the subset still inside the 90-day window
   status: StrikeStatus;               // derived colour/count/eligibility for the active set
 };
-
-/** True while the member has engaged with the strike (any trust-checklist box ticked). */
-export function hasEngaged(s: Strike): boolean {
-  return s.owned || s.apologised || s.understands_rule || s.promised;
-}
 
 function newestFirst(a: StrikeWithContext, b: StrikeWithContext): number {
   return new Date(b.issued_at).getTime() - new Date(a.issued_at).getTime();
 }
 
 /**
- * Group a flat strike list into one dossier per person, each carrying its derived status. Persons are
- * ordered by severity (most active strikes first, then by soonest next expiry) so the worst offenders
- * surface at the top of the dossier list.
+ * Group a flat strike list into one dossier per ACCOUNT (player tag), each carrying its derived
+ * status. Accounts are ordered by severity (most active strikes first, then by soonest next expiry)
+ * so the worst offenders surface at the top of the dossier list. Strikes with no account tag fall
+ * back to their person id as the grouping key (legacy rows only).
  */
-export function buildDossiers(strikes: StrikeWithContext[], now: Date): PersonDossier[] {
-  const byPerson = new Map<string, StrikeWithContext[]>();
+export function buildDossiers(strikes: StrikeWithContext[], now: Date): AccountDossier[] {
+  const byAccount = new Map<string, StrikeWithContext[]>();
   for (const s of strikes) {
-    const list = byPerson.get(s.person_id) ?? [];
+    const key = s.player_account_tag ?? s.person_id;
+    const list = byAccount.get(key) ?? [];
     list.push(s);
-    byPerson.set(s.person_id, list);
+    byAccount.set(key, list);
   }
 
-  const dossiers: PersonDossier[] = [];
-  for (const [personId, list] of byPerson) {
+  const dossiers: AccountDossier[] = [];
+  for (const [key, list] of byAccount) {
     const sorted = [...list].sort(newestFirst);
     const status = deriveStrikeStatus(
       sorted.map((s) => ({ issuedAt: s.issued_at, leadershipApproved: s.leadership_approved })),
       now,
     );
+    const head = sorted[0];
     dossiers.push({
-      personId,
-      displayName: sorted[0]?.person?.display_name || 'Unknown',
+      accountTag: head?.player_account_tag ?? key,
+      inGameName: head?.player_account?.in_game_name || head?.player_account_tag || 'Unknown account',
+      personId: head?.person_id ?? '',
+      displayName: head?.person?.display_name || 'Unknown',
       strikes: sorted,
       activeStrikes: sorted.filter((s) => isActive(s.issued_at, now)),
       status,
@@ -79,38 +83,26 @@ export function buildDossiers(strikes: StrikeWithContext[], now: Date): PersonDo
 }
 
 export type Worklist = {
-  // Active, not-yet-trust-restored strikes: the member is currently war-ineligible / should be demoted.
-  unresolved: PersonDossier[];
-  // Has an active unresolved strike but has NOT engaged yet — awaiting the member's Discord response.
-  awaitingResponse: PersonDossier[];
-  // Member has engaged (owned/apologised/promised) but leadership hasn't signed off yet.
-  awaitingApproval: PersonDossier[];
-  // All active strikes now trust-restored but still on record -> re-promote to Elder in-game.
-  eligibleForElderRestoration: PersonDossier[];
-  // 3+ active strikes -> flagged for removal regardless of trust status.
-  removalFlagged: PersonDossier[];
+  // Active, not-yet-approved strikes: the account is currently war-ineligible / should be demoted.
+  // Cleared by a single leader approval (trust restoration), which lifts the demotion/eligibility intent.
+  unresolved: AccountDossier[];
+  // All active strikes now approved but still on record -> re-promote to Elder in-game.
+  eligibleForElderRestoration: AccountDossier[];
+  // 3+ active strikes -> flagged for removal regardless of approval status.
+  removalFlagged: AccountDossier[];
   // An active strike expiring within EXPIRY_SOON_DAYS — the count is about to drop.
-  expiringSoon: PersonDossier[];
+  expiringSoon: AccountDossier[];
 };
 
 /**
- * Bucket dossiers into the leader worklist. A dossier can appear in more than one bucket (e.g. an
- * unresolved strike is both `unresolved` and either `awaitingResponse` or `awaitingApproval`); the UI
- * renders each bucket as its own actionable list.
+ * Bucket dossiers into the leader worklist. A dossier can appear in more than one bucket; the UI
+ * renders each bucket as its own actionable, click-to-filter list.
  */
-export function buildWorklist(dossiers: PersonDossier[], now: Date): Worklist {
+export function buildWorklist(dossiers: AccountDossier[], now: Date): Worklist {
   const soonCutoff = now.getTime() + EXPIRY_SOON_DAYS * 86_400_000;
 
-  const unresolved = dossiers.filter((d) => d.status.activeCount > 0 && !d.status.warEligible);
-
   return {
-    unresolved,
-    awaitingResponse: unresolved.filter(
-      (d) => !d.activeStrikes.some((s) => !s.leadership_approved && hasEngaged(s)),
-    ),
-    awaitingApproval: unresolved.filter(
-      (d) => d.activeStrikes.some((s) => !s.leadership_approved && hasEngaged(s)),
-    ),
+    unresolved: dossiers.filter((d) => d.status.activeCount > 0 && !d.status.warEligible),
     eligibleForElderRestoration: dossiers.filter((d) => d.status.eligibleForElderRestoration),
     removalFlagged: dossiers.filter((d) => d.status.removalFlagged),
     expiringSoon: dossiers.filter(

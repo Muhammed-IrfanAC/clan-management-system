@@ -19,8 +19,8 @@ function violation(over: Partial<DetectedViolation>): DetectedViolation {
 }
 
 describe('strikeKeyFor', () => {
-  it('keys by source:round:person', () => {
-    expect(strikeKeyFor(violation({}))).toBe('regular:round1:p1');
+  it('keys by source:round:account (player tag, not person)', () => {
+    expect(strikeKeyFor(violation({}))).toBe('regular:round1:#P1');
   });
   it('is null without a war round', () => {
     expect(strikeKeyFor(violation({ warRoundId: null }))).toBeNull();
@@ -28,25 +28,36 @@ describe('strikeKeyFor', () => {
 });
 
 describe('planStrikes', () => {
-  it('folds multiple violations of the same person+war into ONE strike', () => {
+  it('folds multiple violations of the same account+war into ONE strike', () => {
     const plan = planStrikes([
       violation({ dedupKey: 'missed', description: 'missed attack' }),
       violation({ dedupKey: 'snipe', description: 'late snipe' }),
     ]);
     expect(plan).toHaveLength(1);
-    expect(plan[0].strikeKey).toBe('regular:round1:p1');
+    expect(plan[0].strikeKey).toBe('regular:round1:#P1');
     expect(plan[0].violations.map((v) => v.dedupKey)).toEqual(['missed', 'snipe']);
   });
 
-  it('separates different wars and different people', () => {
+  it('separates different wars and different accounts', () => {
     const plan = planStrikes([
-      violation({ personId: 'p1', warRoundId: 'r1', dedupKey: 'a' }),
-      violation({ personId: 'p1', warRoundId: 'r2', dedupKey: 'b' }),
-      violation({ personId: 'p2', warRoundId: 'r1', dedupKey: 'c' }),
+      violation({ playerTag: '#P1', warRoundId: 'r1', dedupKey: 'a' }),
+      violation({ playerTag: '#P1', warRoundId: 'r2', dedupKey: 'b' }),
+      violation({ playerTag: '#P2', warRoundId: 'r1', dedupKey: 'c' }),
     ]);
     expect(plan).toHaveLength(3);
     expect(new Set(plan.map((p) => p.strikeKey))).toEqual(
-      new Set(['regular:r1:p1', 'regular:r2:p1', 'regular:r1:p2']),
+      new Set(['regular:r1:#P1', 'regular:r2:#P1', 'regular:r1:#P2']),
+    );
+  });
+
+  it('separates two accounts of the SAME person in the same war (per-account, not per-person)', () => {
+    const plan = planStrikes([
+      violation({ personId: 'p1', playerTag: '#MAIN', warRoundId: 'r1', dedupKey: 'a' }),
+      violation({ personId: 'p1', playerTag: '#ALT', warRoundId: 'r1', dedupKey: 'b' }),
+    ]);
+    expect(plan).toHaveLength(2);
+    expect(new Set(plan.map((p) => p.strikeKey))).toEqual(
+      new Set(['regular:r1:#MAIN', 'regular:r1:#ALT']),
     );
   });
 

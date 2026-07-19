@@ -1,16 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { buildDossiers, buildWorklist, hasEngaged, type StrikeWithContext } from './dossier';
+import { buildDossiers, buildWorklist, type StrikeWithContext } from './dossier';
 
 const NOW = new Date('2026-07-18T12:00:00.000Z');
 const DAY = 86_400_000;
 
-// A minimal strike row with sensible defaults; override per-test.
-function strike(personId: string, opts: Partial<StrikeWithContext> = {}): StrikeWithContext {
+// A minimal strike row with sensible defaults; override per-test. The first arg is the ACCOUNT key
+// (dossiers group per account): it seeds both the player tag (`#<key>`) and, by default, the person
+// id — pass `person_id` explicitly to model two accounts of the SAME person.
+function strike(acct: string, opts: Partial<StrikeWithContext> = {}): StrikeWithContext {
   const issuedAt = opts.issued_at ?? NOW.toISOString();
+  const personId = opts.person_id ?? acct;
   return {
-    id: `${personId}-${issuedAt}`,
+    id: `${acct}-${issuedAt}`,
     person_id: personId,
-    player_account_tag: '#TAG',
+    player_account_tag: `#${acct}`,
     clan_id: null,
     rule_id: null,
     war_source: 'manual',
@@ -19,7 +22,6 @@ function strike(personId: string, opts: Partial<StrikeWithContext> = {}): Strike
     strike_key: null,
     origin: 'manual',
     issued_at: issuedAt,
-    expires_at: new Date(new Date(issuedAt).getTime() + 90 * DAY).toISOString(),
     logged_by: '#LEADER',
     owned: false,
     apologised: false,
@@ -36,6 +38,7 @@ function strike(personId: string, opts: Partial<StrikeWithContext> = {}): Strike
     notes: null,
     created_at: issuedAt,
     person: { id: personId, display_name: `Player ${personId}` },
+    player_account: { in_game_name: `Acct ${acct}` },
     ...opts,
   };
 }
@@ -44,17 +47,34 @@ function strike(personId: string, opts: Partial<StrikeWithContext> = {}): Strike
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * DAY).toISOString();
 
 describe('buildDossiers', () => {
-  it('groups strikes by person and derives the active count/level', () => {
+  it('groups strikes by account and derives the active count/level', () => {
     const dossiers = buildDossiers(
       [strike('A', { issued_at: daysAgo(1) }), strike('A', { issued_at: daysAgo(2) }), strike('B')],
       NOW,
     );
-    const a = dossiers.find((d) => d.personId === 'A')!;
-    const b = dossiers.find((d) => d.personId === 'B')!;
+    const a = dossiers.find((d) => d.accountTag === '#A')!;
+    const b = dossiers.find((d) => d.accountTag === '#B')!;
     expect(a.status.activeCount).toBe(2);
     expect(a.status.level).toBe('orange');
     expect(b.status.activeCount).toBe(1);
     expect(b.status.level).toBe('green');
+  });
+
+  it('judges two accounts of the SAME person independently (never combined)', () => {
+    const dossiers = buildDossiers(
+      [
+        strike('MAIN', { person_id: 'p1', issued_at: daysAgo(1) }),
+        strike('MAIN', { person_id: 'p1', issued_at: daysAgo(2) }),
+        strike('ALT', { person_id: 'p1', issued_at: daysAgo(3) }),
+      ],
+      NOW,
+    );
+    const main = dossiers.find((d) => d.accountTag === '#MAIN')!;
+    const alt = dossiers.find((d) => d.accountTag === '#ALT')!;
+    expect(main.personId).toBe('p1');
+    expect(alt.personId).toBe('p1');
+    expect(main.status.activeCount).toBe(2); // not 3 — the alt's strike doesn't count against the main
+    expect(alt.status.activeCount).toBe(1);
   });
 
   it('excludes expired strikes from the active set but keeps them in history', () => {
@@ -64,43 +84,33 @@ describe('buildDossiers', () => {
     expect(d.status.activeCount).toBe(1);
   });
 
-  it('sorts strikes newest-first and persons by severity', () => {
+  it('sorts strikes newest-first and accounts by severity', () => {
     const dossiers = buildDossiers(
       [strike('B'), strike('A', { issued_at: daysAgo(5) }), strike('A', { issued_at: daysAgo(1) }), strike('A', { issued_at: daysAgo(3) })],
       NOW,
     );
-    expect(dossiers[0].personId).toBe('A'); // 3 active > B's 1
+    expect(dossiers[0].accountTag).toBe('#A'); // 3 active > B's 1
     expect(dossiers[0].strikes[0].issued_at).toBe(daysAgo(1)); // newest first
   });
 });
 
-describe('hasEngaged', () => {
-  it('is true when any checklist box is ticked', () => {
-    expect(hasEngaged(strike('A'))).toBe(false);
-    expect(hasEngaged(strike('A', { apologised: true }))).toBe(true);
-    expect(hasEngaged(strike('A', { promised: true }))).toBe(true);
-  });
-});
-
 describe('buildWorklist', () => {
-  it('splits unresolved into awaiting-response vs awaiting-approval by engagement', () => {
+  it('lists active, not-yet-approved dossiers as unresolved (war-ineligible)', () => {
     const dossiers = buildDossiers(
       [
-        strike('A'),                              // unresolved, no engagement
-        strike('B', { owned: true, promised: true }), // unresolved, engaged
+        strike('A'),                             // active, unapproved -> unresolved
+        strike('B', { leadership_approved: true }), // active, approved -> war-eligible, not unresolved
       ],
       NOW,
     );
     const wl = buildWorklist(dossiers, NOW);
-    expect(wl.unresolved).toHaveLength(2);
-    expect(wl.awaitingResponse.map((d) => d.personId)).toEqual(['A']);
-    expect(wl.awaitingApproval.map((d) => d.personId)).toEqual(['B']);
+    expect(wl.unresolved.map((d) => d.accountTag)).toEqual(['#A']);
   });
 
   it('surfaces Elder-restoration when active strikes are all approved', () => {
     const dossiers = buildDossiers([strike('A', { leadership_approved: true })], NOW);
     const wl = buildWorklist(dossiers, NOW);
-    expect(wl.eligibleForElderRestoration.map((d) => d.personId)).toEqual(['A']);
+    expect(wl.eligibleForElderRestoration.map((d) => d.accountTag)).toEqual(['#A']);
     expect(wl.unresolved).toHaveLength(0); // approved => war-eligible => not unresolved
   });
 
@@ -114,7 +124,7 @@ describe('buildWorklist', () => {
       NOW,
     );
     const wl = buildWorklist(dossiers, NOW);
-    expect(wl.removalFlagged.map((d) => d.personId)).toEqual(['A']);
+    expect(wl.removalFlagged.map((d) => d.accountTag)).toEqual(['#A']);
   });
 
   it('lists strikes expiring within the soon-window', () => {
@@ -124,6 +134,6 @@ describe('buildWorklist', () => {
     );
     const wl = buildWorklist(dossiers, NOW);
     // A expires in ~10 days (within 14); B expires in ~80 days (not soon).
-    expect(wl.expiringSoon.map((d) => d.personId)).toEqual(['A']);
+    expect(wl.expiringSoon.map((d) => d.accountTag)).toEqual(['#A']);
   });
 });

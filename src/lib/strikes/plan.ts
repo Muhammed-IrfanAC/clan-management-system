@@ -1,16 +1,18 @@
 /**
- * PURE strike planner — groups a detector's DetectedViolations into per-(person, war) strikes.
+ * PURE strike planner — groups a detector's DetectedViolations into per-(account, war) strikes.
  *
- * The rule is "one strike per (player, single war)": a member who breaks two rules in the same war
- * (or snipes twice) gets ONE strike carrying multiple violations, not several strikes. This module
- * does the grouping deterministically; the DB layer (commit.ts) then upserts each planned strike on
- * its stable strike_key, so the guarantee also holds across detectors and across repeated scans.
+ * The rule is "one strike per (account, single war)": an account that breaks two rules in the same
+ * war (or snipes twice) gets ONE strike carrying multiple violations, not several strikes. Strikes
+ * are keyed to the ACCOUNT (player tag), not the person — each of a person's alts is judged on its
+ * own. This module does the grouping deterministically; the DB layer (commit.ts) then upserts each
+ * planned strike on its stable strike_key, so the guarantee also holds across detectors and repeated
+ * scans.
  */
 
 import type { DetectedViolation } from '@/lib/rules/types';
 
 export type PlannedStrike = {
-  strikeKey: string;          // `${warSource}:${warRoundId}:${personId}` — stable, unique per war
+  strikeKey: string;          // `${warSource}:${warRoundId}:${playerTag}` — stable, unique per war
   personId: string;
   playerTag: string;
   clanId: string | null;
@@ -21,10 +23,10 @@ export type PlannedStrike = {
   violations: DetectedViolation[];
 };
 
-/** Build the stable per-(person, war) strike key. Returns null when the violation isn't war-scoped. */
+/** Build the stable per-(account, war) strike key. Returns null when the violation isn't war-scoped. */
 export function strikeKeyFor(v: DetectedViolation): string | null {
   if (!v.warRoundId) return null;
-  return `${v.source}:${v.warRoundId}:${v.personId}`;
+  return `${v.source}:${v.warRoundId}:${v.playerTag}`;
 }
 
 /**

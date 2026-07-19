@@ -92,7 +92,7 @@ export async function commitStrikes(
 
 /**
  * Fold a leader-CONFIRMED review suggestion (hit-up) into that war's strike. Same "one strike per
- * (person, war)" rule as the auto path: if a strike already exists for the war it appends the
+ * (account, war)" rule as the auto path: if a strike already exists for the war it appends the
  * violation (never a 2nd strike); otherwise it creates one with origin 'review'. Idempotent on the
  * suggestion's dedup_key. Returns the target strike id and whether it was newly created (so the
  * caller can notify only on a brand-new strike). Attributed to the confirming leader.
@@ -117,9 +117,9 @@ export async function commitReviewStrike(params: {
     description, dedupKey, occurredAt, memberName, actorTag,
   } = params;
 
-  // Stable per-(person, war) key — mirrors plan.strikeKeyFor. Null when the war round is unknown,
-  // in which case the strike can't be folded and is created standalone.
-  const strikeKey = warRoundId ? `${warSource}:${warRoundId}:${personId}` : null;
+  // Stable per-(account, war) key — mirrors plan.strikeKeyFor. Null when the war round or the account
+  // tag is unknown, in which case the strike can't be folded and is created standalone.
+  const strikeKey = warRoundId && playerTag ? `${warSource}:${warRoundId}:${playerTag}` : null;
 
   const strikeRow = {
     person_id: personId,

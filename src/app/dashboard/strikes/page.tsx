@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { supabase } from '@/lib/supabase';
 import {
   CheckCircle,
   Plus,
@@ -21,26 +20,16 @@ import {
   Clock,
   Swords,
 } from 'lucide-react';
-import { Person, PlayerAccount, Rule, StrikeSuggestion } from '@/types/database';
 import {
   buildDossiers,
   buildWorklist,
-  hasEngaged,
   type StrikeWithContext,
-  type PersonDossier,
+  type AccountDossier,
 } from '@/lib/strikes/dossier';
 import { expiryOf } from '@/lib/strikes/status';
+import { useStrikeStore } from '@/lib/stores/strikeStore';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { useClan } from '@/lib/ClanContext';
-
-// An account joined with the person it's linked to, so selecting the account resolves the person.
-type AccountWithPerson = PlayerAccount & { person: Pick<Person, 'id' | 'display_name'> | null };
-
-// A queued judgement-rule detection (hit-up) awaiting a leader's confirm/dismiss.
-type ReviewItem = StrikeSuggestion & {
-  person: Pick<Person, 'id' | 'display_name'> | null;
-  rule: Pick<Rule, 'id' | 'name'> | null;
-};
 
 const DISCORD_LIMIT = 2000;
 const INGAME_LIMIT = 256;
@@ -114,25 +103,29 @@ function daysUntil(iso: string): number {
 type WorklistKey =
   | 'all'
   | 'unresolved'
-  | 'awaitingResponse'
-  | 'awaitingApproval'
   | 'eligibleForElderRestoration'
   | 'removalFlagged'
   | 'expiringSoon';
 
 export default function StrikesPage() {
   const { selectedClanId } = useClan();
-  const [strikes, setStrikes] = useState<StrikeWithContext[]>([]);
-  const [loggerNames, setLoggerNames] = useState<Record<string, string>>({});
-  const [authorPersons, setAuthorPersons] = useState<Record<string, string | null>>({});
-  const [currentUserTag, setCurrentUserTag] = useState<string | null>(null);
-  const [myPersonId, setMyPersonId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  // Review queue — auto-detected judgement violations (hit-up) awaiting confirm/dismiss.
-  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
+  // Server data + mutations live in the store; a mutation updates just the affected strike, so
+  // approving trust no longer re-fetches and flashes the whole page.
+  const strikes = useStrikeStore((s) => s.strikes);
+  const loading = useStrikeStore((s) => s.loading);
+  const reviewItems = useStrikeStore((s) => s.reviewItems);
+  const rules = useStrikeStore((s) => s.rules);
+  const accounts = useStrikeStore((s) => s.accounts);
+  const actingReviewId = useStrikeStore((s) => s.actingReviewId);
+  const fetchData = useStrikeStore((s) => s.fetchData);
+  const loadIdentity = useStrikeStore((s) => s.loadIdentity);
+  const logStrikeAction = useStrikeStore((s) => s.logStrike);
+  const actOnReviewAction = useStrikeStore((s) => s.actOnReview);
+  const deleteStrikeAction = useStrikeStore((s) => s.deleteStrike);
+
+  // Review queue UI-local toggle.
   const [reviewOpen, setReviewOpen] = useState(true);
-  const [actingReviewId, setActingReviewId] = useState<string | null>(null);
 
   const [showLogModal, setShowLogModal] = useState(false);
   const [worklistFilter, setWorklistFilter] = useState<WorklistKey>('all');
@@ -143,18 +136,13 @@ export default function StrikesPage() {
   const [deletingStrike, setDeletingStrike] = useState(false);
 
   // Log-strike modal state.
-  const [accounts, setAccounts] = useState<AccountWithPerson[]>([]);
   const [selectedPerson, setSelectedPerson] = useState('');
   const [selectedAccount, setSelectedAccount] = useState('');
-  const [rules, setRules] = useState<Rule[]>([]);
   const [selectedRule, setSelectedRule] = useState('');
   const [description, setDescription] = useState('');
   const [backdate, setBackdate] = useState(false);
   const [issuedAt, setIssuedAt] = useState('');
   const [logging, setLogging] = useState(false);
-
-  // Per-strike in-flight guards.
-  const [savingStrikeId, setSavingStrikeId] = useState<string | null>(null);
 
   // Removal editor (per strike): rejoin date draft.
   const [rejoinDrafts, setRejoinDrafts] = useState<Record<string, string>>({});
@@ -162,8 +150,6 @@ export default function StrikesPage() {
   // Notes state.
   const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({});
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
-  const [postingNote, setPostingNote] = useState<string | null>(null);
-  const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
 
   // Summary builder.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -173,83 +159,15 @@ export default function StrikesPage() {
   const [ingameText, setIngameText] = useState('');
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => { fetchData(); }, [selectedClanId]);
+  useEffect(() => { loadIdentity(); }, [loadIdentity]);
+  useEffect(() => { fetchData(selectedClanId); }, [selectedClanId, fetchData]);
 
   useEffect(() => {
     const f = new URLSearchParams(window.location.search).get('filter') as WorklistKey | null;
-    if (f && ['unresolved', 'awaitingResponse', 'awaitingApproval', 'eligibleForElderRestoration', 'removalFlagged', 'expiringSoon'].includes(f)) {
+    if (f && ['unresolved', 'eligibleForElderRestoration', 'removalFlagged', 'expiringSoon'].includes(f)) {
       setWorklistFilter(f);
     }
   }, []);
-
-  useEffect(() => {
-    fetch('/api/auth/me')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        setCurrentUserTag(d?.user?.player_tag ?? null);
-        setMyPersonId(d?.user?.person_id ?? null);
-      })
-      .catch(() => {});
-  }, []);
-
-  async function fetchData() {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/strikes');
-      const data: StrikeWithContext[] = res.ok ? await res.json() : [];
-      const list = Array.isArray(data) ? data : [];
-      setStrikes(list);
-
-      // Resolve logger + note-author tags to display names / personas (no FK to player_accounts).
-      const tags = Array.from(new Set(list.flatMap((s) => [
-        s.logged_by,
-        ...((s.strike_notes || []).map((n) => n.author_tag)),
-        ...(s.approved_by ? [s.approved_by] : []),
-      ]).filter(Boolean)));
-      if (tags.length) {
-        const { data: loggers } = await supabase
-          .from('player_accounts')
-          .select('player_tag, person_id, in_game_name, person:persons (display_name)')
-          .in('player_tag', tags);
-        const map: Record<string, string> = {};
-        const persons: Record<string, string | null> = {};
-        for (const l of (loggers as any[]) || []) {
-          map[l.player_tag] = l.person?.display_name || l.in_game_name || l.player_tag;
-          persons[l.player_tag] = l.person_id ?? null;
-        }
-        setLoggerNames(map);
-        setAuthorPersons(persons);
-      } else {
-        setLoggerNames({});
-        setAuthorPersons({});
-      }
-
-      const { data: rulesData } = await supabase.from('rules').select('*');
-      setRules(rulesData || []);
-
-      // Pending review queue (hit-up). Best-effort — a failure must not blank the page.
-      try {
-        const rres = await fetch('/api/rules/review');
-        const items = rres.ok ? await rres.json() : [];
-        const rlist: ReviewItem[] = Array.isArray(items) ? items : [];
-        setReviewItems(selectedClanId === 'all' ? rlist : rlist.filter((i) => !i.clan_id || i.clan_id === selectedClanId));
-      } catch {
-        setReviewItems([]);
-      }
-
-      const { data: accountsData } = await supabase
-        .from('player_accounts')
-        .select('*, person:persons (id, display_name)')
-        .eq('status', 'active')
-        .not('person_id', 'is', null)
-        .order('in_game_name');
-      setAccounts((accountsData as AccountWithPerson[]) || []);
-    } catch (err) {
-      console.error('Error fetching strikes:', err);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   // Clan-scope the strike list; keep clan-less (manual) strikes visible under any filter.
   const scopedStrikes = useMemo(
@@ -264,157 +182,47 @@ export default function StrikesPage() {
   const visibleDossiers = useMemo(() => {
     if (worklistFilter === 'all') return dossiers;
     const bucket = worklist[worklistFilter];
-    const ids = new Set(bucket.map((d) => d.personId));
-    return dossiers.filter((d) => ids.has(d.personId));
+    const tags = new Set(bucket.map((d) => d.accountTag));
+    return dossiers.filter((d) => tags.has(d.accountTag));
   }, [dossiers, worklist, worklistFilter]);
-
-  function isAuthoredByMe(authorTag: string) {
-    if (currentUserTag && authorTag === currentUserTag) return true;
-    return !!myPersonId && authorPersons[authorTag] != null && authorPersons[authorTag] === myPersonId;
-  }
 
   function handleSelectAccount(tag: string) {
     setSelectedAccount(tag);
     setSelectedPerson(accounts.find((a) => a.player_tag === tag)?.person?.id || '');
   }
 
-  async function actOnReview(id: string, action: 'confirm' | 'dismiss') {
-    setActingReviewId(id);
-    try {
-      const res = await fetch(`/api/rules/review/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-      if (res.ok) {
-        setReviewItems((prev) => prev.filter((i) => i.id !== id));
-        if (action === 'confirm') fetchData();
-      } else {
-        const d = await res.json().catch(() => ({}));
-        alert(d.error || 'Error updating review item');
-      }
-    } catch {
-      alert('Error updating review item');
-    } finally {
-      setActingReviewId(null);
-    }
-  }
-
-  // PATCH a strike's status (trust checklist / approval / removal / notes) and refresh.
-  async function patchStrike(id: string, patch: Record<string, unknown>) {
-    setSavingStrikeId(id);
-    try {
-      const res = await fetch(`/api/strikes/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-      if (res.ok) fetchData();
-      else {
-        const d = await res.json().catch(() => ({}));
-        alert(d.error || 'Error updating strike');
-      }
-    } catch {
-      alert('Error updating strike');
-    } finally {
-      setSavingStrikeId(null);
-    }
-  }
-
   async function handleLogStrike(e: React.FormEvent) {
     e.preventDefault();
     if (logging) return;
     setLogging(true);
-    try {
-      const res = await fetch('/api/strikes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          personId: selectedPerson,
-          playerTag: selectedAccount,
-          ruleId: selectedRule || null,
-          description,
-          issuedAt: backdate && issuedAt ? dateToNoonIso(issuedAt) : null,
-        }),
-      });
-      if (res.ok) {
-        setShowLogModal(false);
-        setSelectedPerson('');
-        setSelectedAccount('');
-        setSelectedRule('');
-        setDescription('');
-        setBackdate(false);
-        setIssuedAt('');
-        fetchData();
-      } else {
-        const d = await res.json().catch(() => ({}));
-        alert(d.error || 'Error logging strike');
-      }
-    } catch {
-      alert('Error logging strike');
-    } finally {
-      setLogging(false);
-    }
-  }
-
-  async function handleAddNote(strikeId: string) {
-    const body = (noteDrafts[strikeId] || '').trim();
-    if (!body) return;
-    setPostingNote(strikeId);
-    try {
-      const res = await fetch(`/api/strikes/${strikeId}/notes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body }),
-      });
-      if (res.ok) {
-        setNoteDrafts((p) => ({ ...p, [strikeId]: '' }));
-        fetchData();
-      } else {
-        const d = await res.json().catch(() => ({}));
-        alert(d.error || 'Error adding note');
-      }
-    } catch {
-      alert('Error adding note');
-    } finally {
-      setPostingNote(null);
-    }
-  }
-
-  async function handleDeleteNote(strikeId: string, noteId: string) {
-    if (deletingNoteId) return;
-    setDeletingNoteId(noteId);
-    try {
-      const res = await fetch(`/api/strikes/${strikeId}/notes/${noteId}`, { method: 'DELETE' });
-      if (res.ok) fetchData();
-      else {
-        const d = await res.json().catch(() => ({}));
-        alert(d.error || 'Error deleting note');
-      }
-    } catch {
-      alert('Error deleting note');
-    } finally {
-      setDeletingNoteId(null);
+    const ok = await logStrikeAction(
+      {
+        personId: selectedPerson,
+        playerTag: selectedAccount,
+        ruleId: selectedRule || null,
+        description,
+        issuedAt: backdate && issuedAt ? dateToNoonIso(issuedAt) : null,
+      },
+      selectedClanId,
+    );
+    setLogging(false);
+    if (ok) {
+      setShowLogModal(false);
+      setSelectedPerson('');
+      setSelectedAccount('');
+      setSelectedRule('');
+      setDescription('');
+      setBackdate(false);
+      setIssuedAt('');
     }
   }
 
   async function deleteStrike() {
     if (deletingStrike) return;
     setDeletingStrike(true);
-    try {
-      const res = await fetch(`/api/strikes/${confirmConfig.id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setConfirmConfig({ ...confirmConfig, isOpen: false });
-        fetchData();
-      } else {
-        const d = await res.json().catch(() => ({}));
-        alert(d.error || 'Error deleting strike');
-      }
-    } catch {
-      alert('Error deleting strike');
-    } finally {
-      setDeletingStrike(false);
-    }
+    const ok = await deleteStrikeAction(confirmConfig.id);
+    setDeletingStrike(false);
+    if (ok) setConfirmConfig((c) => ({ ...c, isOpen: false }));
   }
 
   // Summary drawer.
@@ -463,8 +271,6 @@ export default function StrikesPage() {
 
   const WORKLIST_CARDS: { key: Exclude<WorklistKey, 'all'>; label: string; icon: React.ReactNode; color: string }[] = [
     { key: 'unresolved', label: 'War-Ineligible', icon: <Swords size={18} />, color: 'var(--color-danger)' },
-    { key: 'awaitingResponse', label: 'Awaiting Response', icon: <MessageSquare size={18} />, color: 'var(--color-warning)' },
-    { key: 'awaitingApproval', label: 'Awaiting Approval', icon: <ClipboardCheck size={18} />, color: 'var(--color-warning)' },
     { key: 'eligibleForElderRestoration', label: 'Restore to Elder', icon: <CheckCircle size={18} />, color: 'var(--color-cta)' },
     { key: 'removalFlagged', label: 'Flag for Removal', icon: <UserMinus size={18} />, color: 'var(--color-danger)' },
     { key: 'expiringSoon', label: 'Expiring Soon', icon: <Clock size={18} />, color: 'var(--color-muted)' },
@@ -558,10 +364,10 @@ export default function StrikesPage() {
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-                    <button className="btn btn-primary" style={{ padding: '0.4rem 0.9rem', fontSize: '0.75rem' }} disabled={actingReviewId === r.id} onClick={() => actOnReview(r.id, 'confirm')}>
+                    <button className="btn btn-primary" style={{ padding: '0.4rem 0.9rem', fontSize: '0.75rem' }} disabled={actingReviewId === r.id} onClick={() => actOnReviewAction(r.id, 'confirm', selectedClanId)}>
                       <Check size={15} /> Confirm
                     </button>
-                    <button className="btn btn-outline" style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-muted)', padding: '0.4rem 0.9rem', fontSize: '0.75rem' }} disabled={actingReviewId === r.id} onClick={() => actOnReview(r.id, 'dismiss')}>
+                    <button className="btn btn-outline" style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-muted)', padding: '0.4rem 0.9rem', fontSize: '0.75rem' }} disabled={actingReviewId === r.id} onClick={() => actOnReviewAction(r.id, 'dismiss', selectedClanId)}>
                       <X size={15} /> Dismiss
                     </button>
                   </div>
@@ -583,26 +389,18 @@ export default function StrikesPage() {
         ) : (
           visibleDossiers.map((d) => (
             <DossierCard
-              key={d.personId}
+              key={d.accountTag}
               d={d}
-              open={!!expanded[d.personId]}
-              onToggle={() => setExpanded((p) => ({ ...p, [d.personId]: !p[d.personId] }))}
-              loggerNames={loggerNames}
+              open={!!expanded[d.accountTag]}
+              onToggle={() => setExpanded((p) => ({ ...p, [d.accountTag]: !p[d.accountTag] }))}
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
-              savingStrikeId={savingStrikeId}
-              onPatch={patchStrike}
               rejoinDrafts={rejoinDrafts}
               setRejoinDrafts={setRejoinDrafts}
               openNotes={openNotes}
               setOpenNotes={setOpenNotes}
               noteDrafts={noteDrafts}
               setNoteDrafts={setNoteDrafts}
-              postingNote={postingNote}
-              onAddNote={handleAddNote}
-              deletingNoteId={deletingNoteId}
-              onDeleteNote={handleDeleteNote}
-              isAuthoredByMe={isAuthoredByMe}
               onRequestDelete={(id, name) => setConfirmConfig({ isOpen: true, id, title: 'Delete Strike', message: `Permanently remove this strike for ${name}? This cannot be undone.` })}
             />
           ))
@@ -728,43 +526,46 @@ export default function StrikesPage() {
 }
 
 // ------------------------------------------------------------------------------------------------
-// Dossier card — one per person: header shows colour/level/count/eligibility; body lists each strike
-// with its violations, the trust-restoration checklist, leadership approval, removal, and notes.
+// Dossier card — one per ACCOUNT: header shows colour/level/count/eligibility (account name as title,
+// the person it belongs to as subtitle); body lists each strike with its violations, a single
+// trust-restoration approval, removal bookkeeping, and notes. It reads server data + mutation actions
+// straight from the store; only UI-local drafts are passed.
 // ------------------------------------------------------------------------------------------------
 
-const CHECKLIST: { key: 'owned' | 'apologised' | 'understands_rule' | 'promised'; patchKey: string; label: string }[] = [
-  { key: 'owned', patchKey: 'owned', label: 'Owned it' },
-  { key: 'apologised', patchKey: 'apologised', label: 'Apologised' },
-  { key: 'understands_rule', patchKey: 'understandsRule', label: 'Understands rule' },
-  { key: 'promised', patchKey: 'promised', label: 'Promised' },
-];
-
 function DossierCard(props: {
-  d: PersonDossier;
+  d: AccountDossier;
   open: boolean;
   onToggle: () => void;
-  loggerNames: Record<string, string>;
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
-  savingStrikeId: string | null;
-  onPatch: (id: string, patch: Record<string, unknown>) => void;
   rejoinDrafts: Record<string, string>;
   setRejoinDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   openNotes: Record<string, boolean>;
   setOpenNotes: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   noteDrafts: Record<string, string>;
   setNoteDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  postingNote: string | null;
-  onAddNote: (id: string) => void;
-  deletingNoteId: string | null;
-  onDeleteNote: (strikeId: string, noteId: string) => void;
-  isAuthoredByMe: (tag: string) => boolean;
   onRequestDelete: (id: string, name: string) => void;
 }) {
-  const { d, open, onToggle, loggerNames, selectedIds, onToggleSelect, savingStrikeId, onPatch } = props;
+  const { d, open, onToggle, selectedIds, onToggleSelect } = props;
+
+  const loggerNames = useStrikeStore((s) => s.loggerNames);
+  const savingStrikeId = useStrikeStore((s) => s.savingStrikeId);
+  const savingAction = useStrikeStore((s) => s.savingAction);
+  const postingNote = useStrikeStore((s) => s.postingNote);
+  const deletingNoteId = useStrikeStore((s) => s.deletingNoteId);
+  const onPatch = useStrikeStore((s) => s.patchStrike);
+  const addNote = useStrikeStore((s) => s.addNote);
+  const deleteNote = useStrikeStore((s) => s.deleteNote);
+  const isAuthoredByMe = useStrikeStore((s) => s.isAuthoredByMe);
+
   const st = d.status;
   const color = LEVEL_COLOR[st.level];
   const activeIds = new Set(d.activeStrikes.map((s) => s.id));
+
+  async function handleAddNote(strikeId: string) {
+    const ok = await addNote(strikeId, props.noteDrafts[strikeId] || '');
+    if (ok) props.setNoteDrafts((p) => ({ ...p, [strikeId]: '' }));
+  }
 
   return (
     <div className="card" style={{ borderLeft: `4px solid ${color}`, padding: 0 }}>
@@ -778,13 +579,13 @@ function DossierCard(props: {
         </span>
         <div style={{ flex: 1, minWidth: '180px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
-            <h3 style={{ margin: 0 }}>{d.displayName}</h3>
+            <h3 style={{ margin: 0 }}>{d.inGameName}</h3>
             {st.removalFlagged && <span style={{ fontSize: '0.62rem', padding: '2px 8px', background: 'var(--color-danger)', color: '#fff', borderRadius: '10px', fontWeight: 700 }}>REMOVAL</span>}
             {!st.warEligible && <span style={{ fontSize: '0.62rem', padding: '2px 8px', background: 'rgba(239,68,68,0.15)', color: 'var(--color-danger)', borderRadius: '10px', fontWeight: 700 }}>WAR-INELIGIBLE</span>}
             {st.eligibleForElderRestoration && <span style={{ fontSize: '0.62rem', padding: '2px 8px', background: 'rgba(34,197,94,0.12)', color: 'var(--color-cta)', borderRadius: '10px', fontWeight: 700 }}>RESTORE ELDER</span>}
           </div>
           <span className="text-muted" style={{ fontSize: '0.75rem' }}>
-            {st.activeCount} active {st.activeCount === 1 ? 'strike' : 'strikes'}
+            {d.displayName} • {st.activeCount} active {st.activeCount === 1 ? 'strike' : 'strikes'}
             {d.strikes.length > st.activeCount ? ` • ${d.strikes.length - st.activeCount} expired` : ''}
             {st.nextExpiry ? ` • next expires in ${daysUntil(st.nextExpiry)}d` : ''}
           </span>
@@ -852,33 +653,23 @@ function DossierCard(props: {
                   </button>
                 </div>
 
-                {/* Trust-restoration checklist + approval */}
+                {/* Trust restoration — a single leader approval clears the demotion / war-ineligibility intent. */}
                 <div style={{ marginTop: 'var(--space-md)', paddingTop: 'var(--space-md)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                  <p className="text-muted" style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0 0 6px' }}>Trust Restoration</p>
-                  <div style={{ display: 'flex', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
-                    {CHECKLIST.map((c) => (
-                      <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: saving ? 'wait' : 'pointer' }}>
-                        <input type="checkbox" checked={!!s[c.key]} disabled={saving} onChange={() => onPatch(s.id, { [c.patchKey]: !s[c.key] })} style={{ width: '15px', height: '15px', cursor: 'inherit' }} />
-                        {c.label}
-                      </label>
-                    ))}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap', marginTop: 'var(--space-md)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
                     {s.leadership_approved ? (
                       <>
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--color-cta)', fontWeight: 600 }}>
                           <CheckCircle size={15} /> Trust restored{s.approved_by ? ` by ${loggerNames[s.approved_by] || s.approved_by}` : ''}
                         </span>
-                        <button className="btn btn-outline" style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-muted)', padding: '0.3rem 0.7rem', fontSize: '0.72rem' }} disabled={saving} onClick={() => onPatch(s.id, { leadershipApproved: false })}>
-                          Reopen
+                        <button className="btn btn-outline" style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-muted)', padding: '0.3rem 0.7rem', fontSize: '0.72rem' }} disabled={saving} onClick={() => onPatch(s.id, { leadershipApproved: false }, 'reopen')}>
+                          {saving && savingAction === 'reopen' ? 'Reopening...' : 'Reopen'}
                         </button>
                       </>
                     ) : (
-                      <button className="btn btn-primary" style={{ padding: '0.4rem 0.9rem', fontSize: '0.75rem' }} disabled={saving} onClick={() => onPatch(s.id, { leadershipApproved: true })}>
-                        <ClipboardCheck size={15} /> Approve trust restoration
+                      <button className="btn btn-primary" style={{ padding: '0.4rem 0.9rem', fontSize: '0.75rem' }} disabled={saving} onClick={() => onPatch(s.id, { leadershipApproved: true }, 'approve')}>
+                        <ClipboardCheck size={15} /> {saving && savingAction === 'approve' ? 'Approving...' : 'Approve trust restoration'}
                       </button>
                     )}
-                    {!s.leadership_approved && hasEngaged(s) && <span className="text-warning" style={{ fontSize: '0.72rem' }}>Member engaged — awaiting your approval</span>}
                   </div>
                   <p className="text-muted" style={{ fontSize: '0.68rem', margin: '6px 0 0', lineHeight: 1.5 }}>
                     Approval clears the demotion / war-ineligibility intent. It does <strong>not</strong> remove the strike — only the 90-day expiry does.
@@ -893,8 +684,8 @@ function DossierCard(props: {
                         <UserMinus size={15} /> Marked removed {new Date(s.removal_at).toLocaleDateString()}
                         {s.rejoin_at ? ` • may rejoin ${new Date(s.rejoin_at).toLocaleDateString()}` : ''}
                       </span>
-                      <button className="btn btn-outline" style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-muted)', padding: '0.3rem 0.7rem', fontSize: '0.72rem' }} disabled={saving} onClick={() => onPatch(s.id, { markRemoved: false })}>
-                        Undo
+                      <button className="btn btn-outline" style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-muted)', padding: '0.3rem 0.7rem', fontSize: '0.72rem' }} disabled={saving} onClick={() => onPatch(s.id, { markRemoved: false }, 'removal')}>
+                        {saving && savingAction === 'removal' ? 'Undoing...' : 'Undo'}
                       </button>
                     </div>
                   ) : (
@@ -911,9 +702,9 @@ function DossierCard(props: {
                         className="btn btn-outline"
                         style={{ border: '1px solid var(--color-danger)', color: 'var(--color-danger)', padding: '0.35rem 0.8rem', fontSize: '0.75rem' }}
                         disabled={saving}
-                        onClick={() => onPatch(s.id, { markRemoved: true, rejoinAt: props.rejoinDrafts[s.id] ? dateToNoonIso(props.rejoinDrafts[s.id]) : null })}
+                        onClick={() => onPatch(s.id, { markRemoved: true, rejoinAt: props.rejoinDrafts[s.id] ? dateToNoonIso(props.rejoinDrafts[s.id]) : null }, 'removal')}
                       >
-                        <UserMinus size={15} /> Mark removed
+                        <UserMinus size={15} /> {saving && savingAction === 'removal' ? 'Marking...' : 'Mark removed'}
                       </button>
                       <span className="text-muted" style={{ fontSize: '0.7rem' }}>Records the intent — the in-game kick stays manual.</span>
                     </div>
@@ -931,7 +722,7 @@ function DossierCard(props: {
                       {notes.length > 0 && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', marginBottom: 'var(--space-md)' }}>
                           {notes.map((n) => {
-                            const mine = props.isAuthoredByMe(n.author_tag);
+                            const mine = isAuthoredByMe(n.author_tag);
                             const edited = n.updated_at && n.updated_at !== n.created_at;
                             return (
                               <div key={n.id} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)', padding: 'var(--space-sm) var(--space-md)' }}>
@@ -939,7 +730,7 @@ function DossierCard(props: {
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
                                   <span className="text-muted" style={{ fontSize: '0.7rem' }}>{loggerNames[n.author_tag] || n.author_tag} • {new Date(n.created_at).toLocaleDateString()}{edited ? ' (edited)' : ''}</span>
                                   {mine && (
-                                    <button onClick={() => props.onDeleteNote(s.id, n.id)} disabled={props.deletingNoteId === n.id} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete"><Trash2 size={13} /></button>
+                                    <button onClick={() => deleteNote(s.id, n.id)} disabled={deletingNoteId === n.id} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete"><Trash2 size={13} /></button>
                                   )}
                                 </div>
                               </div>
@@ -949,8 +740,8 @@ function DossierCard(props: {
                       )}
                       <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'flex-end' }}>
                         <textarea className="input" rows={1} placeholder="Add a progress note..." value={props.noteDrafts[s.id] || ''} onChange={(e) => props.setNoteDrafts((p) => ({ ...p, [s.id]: e.target.value }))} style={{ resize: 'vertical', flex: 1 }} />
-                        <button onClick={() => props.onAddNote(s.id)} disabled={props.postingNote === s.id || !(props.noteDrafts[s.id] || '').trim()} className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                          <Send size={14} /> {props.postingNote === s.id ? 'Posting...' : 'Post'}
+                        <button onClick={() => handleAddNote(s.id)} disabled={postingNote === s.id || !(props.noteDrafts[s.id] || '').trim()} className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                          <Send size={14} /> {postingNote === s.id ? 'Posting...' : 'Post'}
                         </button>
                       </div>
                     </div>
