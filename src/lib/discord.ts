@@ -33,7 +33,13 @@ const LEVEL_EMOJI: Record<StrikeLevel, string> = {
   orange: '🟠',
   red: '🔴',
 };
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** A Discord timestamp token that each reader's client renders in their own local timezone.
+ * `D` = long date (e.g. "12 October 2026"), `R` = relative (e.g. "in 2 months"). See
+ * https://discord.com/developers/docs/reference#message-formatting-timestamp-styles. */
+function discordTs(iso: string, style: 'd' | 'D' | 'f' | 'F' | 'R' = 'D'): string {
+  return `<t:${Math.floor(new Date(iso).getTime() / 1000)}:${style}>`;
+}
 
 type DiscordEmbedField = { name: string; value: string; inline?: boolean };
 
@@ -197,12 +203,13 @@ export async function notifyStrikeLogged(params: {
   // The full active-strike list so this ping is self-contained. Numbered oldest-first; capped so we
   // never blow Discord's 1024-char field limit. Each line shows when the strike EXPIRES (issue + 90d,
   // the moment it stops counting) rather than when it was logged — that's the date the member cares
-  // about. Trust-restored strikes lead with a bold "Restored" tag so their status reads first and
-  // stays visually distinct from live, unresolved ones (which are plain).
+  // about. The expiry is emitted as a Discord timestamp token so every reader sees it in their own
+  // local timezone (long date + a relative "in N days" hint). Trust-restored strikes lead with a bold
+  // "Restored" tag so their status reads first and stays visually distinct from live, unresolved ones.
   if (activeStrikes.length) {
     const lines = activeStrikes.map((s, i) => {
-      const d = new Date(expiryOf(s.issuedAt));
-      const expires = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+      const expiry = expiryOf(s.issuedAt);
+      const expires = `${discordTs(expiry, 'D')} (${discordTs(expiry, 'R')})`;
       const tag = s.leadershipApproved ? '**[Restored]** ' : '';
       return `\`${i + 1}.\` ${tag}${s.label} — expires ${expires}`;
     });
