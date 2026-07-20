@@ -159,8 +159,25 @@ describe('findLateSnipes', () => {
     });
     const v = findLateSnipes(c, { window_hours: 6 });
     expect(v).toHaveLength(1);
-    expect(v[0].dedupKey).toBe('war_late_snipe:regular:r1:1');
+    expect(v[0].dedupKey).toBe('war_late_snipe:regular:r1:person-1');
     expect(v[0].evidence?.rank).toBe('elder');
+  });
+
+  it('collapses both late attacks by the same member into one concatenated violation', () => {
+    const c = ctx({
+      lineup,
+      attacks: [
+        attack({ order: 1, attackerTag: '#same', attackerPersonId: 'p', attackerRank: 'member', attackerTh: 14, defenderTag: '#hit', defenderTh: 14, stars: 2, firstSeenAt: beforeEnd(3) }),
+        attack({ order: 2, attackerTag: '#same', attackerPersonId: 'p', attackerRank: 'member', attackerTh: 14, defenderTag: '#hard', defenderTh: 15, stars: 1, firstSeenAt: beforeEnd(1) }),
+      ],
+    });
+    const v = findLateSnipes(c, { window_hours: 6 });
+    expect(v).toHaveLength(1); // one violation per member per war, not one per attack
+    expect(v[0].dedupKey).toBe('war_late_snipe:regular:r1:p');
+    expect(v[0].description).toContain('made 2 late attacks');
+    expect(v[0].description).toContain('TH14');
+    expect(v[0].description).toContain('TH15');
+    expect(v[0].evidence?.late_attacks).toHaveLength(2);
   });
 
   it('flags a late attack even when no equal/lower base is open (loot snipe on a cleared higher base)', () => {

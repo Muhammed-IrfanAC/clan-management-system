@@ -127,47 +127,92 @@ export type LateSnipeConfig = {
  * persons.access_role, and all their alts) is exempt. Timing is only trusted when the attack was first
  * observed while state was 'inWar' (an attack first seen only at 'warEnded' has no reliable timestamp
  * and is skipped).
+ *
+ * At most one violation per member per war: a member who snipes on BOTH of their attacks is flagged
+ * once, with both late hits CONCATENATED into a single description/evidence entry. Keying the dedup_key
+ * per person (not per attack) means the strike carries one line, not two near-identical ones — the same
+ * collapse findHitUps does.
  */
 export function findLateSnipes(ctx: WarContext, config: LateSnipeConfig = {}): DetectedViolation[] {
   const windowMs = Math.max(0, Number(config.window_hours ?? 6)) * 3600 * 1000;
   const exempt = config.exemptPersonIds ?? new Set<string>();
   if (!ctx.endTime) return [];
   const endMs = new Date(ctx.endTime).getTime();
-  const out: DetectedViolation[] = [];
 
-  for (const a of ctx.attacks) {
+  // Gather every qualifying late attack, grouped by person, preserving attack order.
+  type LateHit = { defenderTh: number; hoursLeft: number };
+  type Group = {
+    personId: string;
+    playerTag: string;
+    attackerName: string | null;
+    attackerRank: string | null;
+    attackerTh: number;
+    hits: LateHit[];
+  };
+  const groups = new Map<string, Group>();
+
+  for (const a of [...ctx.attacks].sort((x, y) => x.order - y.order)) {
     if (!a.attackerPersonId) continue;
     if (exempt.has(a.attackerPersonId)) continue; // leader/co-leader (by access_role) — exempt
     if (a.firstSeenState !== 'inWar' || !a.firstSeenAt) continue; // timing not trustworthy
     const remainingMs = endMs - new Date(a.firstSeenAt).getTime();
     if (remainingMs > windowMs) continue; // not in the final window
 
-    const hoursLeft = Math.max(0, remainingMs) / 3600000;
-    const vs = ctx.opponentName ? ` vs ${ctx.opponentName}` : '';
+    const g =
+      groups.get(a.attackerPersonId) ??
+      {
+        personId: a.attackerPersonId,
+        playerTag: a.attackerTag,
+        attackerName: a.attackerName,
+        attackerRank: a.attackerRank,
+        attackerTh: a.attackerTh,
+        hits: [],
+      };
+    g.hits.push({ defenderTh: a.defenderTh, hoursLeft: Math.max(0, remainingMs) / 3600000 });
+    groups.set(a.attackerPersonId, g);
+  }
+
+  const vs = ctx.opponentName ? ` vs ${ctx.opponentName}` : '';
+  const out: DetectedViolation[] = [];
+  for (const g of groups.values()) {
     out.push({
-      personId: a.attackerPersonId,
-      playerTag: a.attackerTag,
+      personId: g.personId,
+      playerTag: g.playerTag,
       clanId: ctx.clanId,
       source: ctx.source,
-      memberName: a.attackerName,
-      description:
-        `Possible late snipe — ${a.attackerName || a.attackerTag} (${a.attackerRank}) attacked a ` +
-        `TH${a.defenderTh} base with ~${fmtHours(hoursLeft)} left${vs}.`,
-      dedupKey: `war_late_snipe:${ctx.source}:${ctx.roundId}:${a.order}`,
+      memberName: g.attackerName,
+      description: `Possible late snipe — ${g.attackerName || g.playerTag} (${g.attackerRank}) ${lateHitsPhrase(g.hits)}${vs}.`,
+      // Per-person (not per-attack) so both late hits by the same member collapse into one violation.
+      dedupKey: `war_late_snipe:${ctx.source}:${ctx.roundId}:${g.personId}`,
       occurredAt: ctx.endTime,
       warRoundId: ctx.roundId,
       warLabel: warLabelFor(ctx),
       evidence: {
-        attacker_th: a.attackerTh,
-        defender_th: a.defenderTh,
-        rank: a.attackerRank,
-        hours_left: Number(hoursLeft.toFixed(1)),
+        attacker_th: g.attackerTh,
+        rank: g.attackerRank,
         opponent: ctx.opponentName,
         source: ctx.source,
+        // The representative first hit stays top-level for back-compat; all late hits are itemised.
+        defender_th: g.hits[0].defenderTh,
+        hours_left: Number(g.hits[0].hoursLeft.toFixed(1)),
+        late_attacks: g.hits.map((h) => ({
+          defender_th: h.defenderTh,
+          hours_left: Number(h.hoursLeft.toFixed(1)),
+        })),
       },
     });
   }
   return out;
+}
+
+/** Phrasing for one or more late hits, e.g. "attacked a TH14 base with ~3.0h left" or
+ * "made 2 late attacks (TH14 ~3.0h left, TH15 ~1.0h left)". */
+function lateHitsPhrase(hits: { defenderTh: number; hoursLeft: number }[]): string {
+  if (hits.length === 1) {
+    return `attacked a TH${hits[0].defenderTh} base with ~${fmtHours(hits[0].hoursLeft)} left`;
+  }
+  const parts = hits.map((h) => `TH${h.defenderTh} ~${fmtHours(h.hoursLeft)} left`).join(', ');
+  return `made ${hits.length} late attacks (${parts})`;
 }
 
 /** Human war label for a strike, e.g. 'CWL war vs X' / 'Clan war vs Y'. */
