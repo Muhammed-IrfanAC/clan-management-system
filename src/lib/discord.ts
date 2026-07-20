@@ -13,7 +13,7 @@
  */
 
 import { supabase } from './supabase';
-import type { StrikeLevel } from './strikes/status';
+import { expiryOf, type StrikeLevel } from './strikes/status';
 
 // Discord embed colors (decimal). Amber for warnings; strikes take the member's live strike LEVEL
 // colour (green/orange/red) so the embed mirrors the dashboard badge — see LEVEL_COLOR below.
@@ -178,7 +178,8 @@ export async function notifyStrikeLogged(params: {
   reasons: string[];        // one line per folded violation
   strikeNumber: number;     // this account's active strike count after this strike (1, 2, 3…)
   level: StrikeLevel;       // drives the embed colour + title emoji
-  activeStrikes: { issuedAt: string; label: string }[]; // full active list on the account, oldest-first
+  // full active list on the account, oldest-first; leadershipApproved marks trust-restored strikes
+  activeStrikes: { issuedAt: string; label: string; leadershipApproved: boolean }[];
   webhookUrl?: string | null;
   mentionDiscordId?: string | null;
 }): Promise<void> {
@@ -194,12 +195,15 @@ export async function notifyStrikeLogged(params: {
   if (ruleName) fields.push({ name: 'Rule', value: ruleName, inline: false });
 
   // The full active-strike list so this ping is self-contained. Numbered oldest-first; capped so we
-  // never blow Discord's 1024-char field limit.
+  // never blow Discord's 1024-char field limit. Each line shows when the strike EXPIRES (issue + 90d,
+  // the moment it stops counting) rather than when it was logged — that's the date the member cares
+  // about. Trust-restored strikes are tagged ✅ so they read distinctly from live, unresolved ones.
   if (activeStrikes.length) {
     const lines = activeStrikes.map((s, i) => {
-      const d = new Date(s.issuedAt);
-      const date = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
-      return `\`${i + 1}.\` ${date} — ${s.label}`;
+      const d = new Date(expiryOf(s.issuedAt));
+      const expires = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+      const tag = s.leadershipApproved ? ' · ✅ trust restored' : '';
+      return `\`${i + 1}.\` ${s.label} — expires ${expires}${tag}`;
     });
     fields.push({
       name: `Active strikes (${activeStrikes.length})`,

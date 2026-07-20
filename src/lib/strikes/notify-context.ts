@@ -13,7 +13,9 @@ import { deriveStrikeStatus, isActive, type StrikeLevel } from './status';
 export type StrikeNotifyContext = {
   strikeNumber: number;       // this account's active strike count (i.e. "Strike N")
   level: StrikeLevel;         // green=1, orange=2, red>=3 — drives the embed colour + title emoji
-  activeStrikes: { issuedAt: string; label: string }[]; // oldest-first, for the embed's list field
+  // oldest-first, for the embed's list field. `leadershipApproved` lets the embed mark trust-restored
+  // strikes apart from live unresolved ones (see notifyStrikeLogged).
+  activeStrikes: { issuedAt: string; label: string; leadershipApproved: boolean }[];
 };
 
 const EMPTY: StrikeNotifyContext = { strikeNumber: 0, level: 'clear', activeStrikes: [] };
@@ -52,7 +54,7 @@ export async function loadStrikeNotifyContext(
   );
   const activeStrikes = rows
     .filter((r) => isActive(r.issued_at, now))
-    .map((r) => ({ issuedAt: r.issued_at, label: labelFor(r) }))
+    .map((r) => ({ issuedAt: r.issued_at, label: labelFor(r), leadershipApproved: r.leadership_approved }))
     .reverse(); // rows come newest-first; show the list oldest-first so numbering reads 1,2,3…
 
   return { strikeNumber: status.activeCount, level: status.level, activeStrikes };
