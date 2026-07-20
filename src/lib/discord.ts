@@ -197,13 +197,14 @@ export async function notifyStrikeLogged(params: {
   // The full active-strike list so this ping is self-contained. Numbered oldest-first; capped so we
   // never blow Discord's 1024-char field limit. Each line shows when the strike EXPIRES (issue + 90d,
   // the moment it stops counting) rather than when it was logged — that's the date the member cares
-  // about. Trust-restored strikes are tagged ✅ so they read distinctly from live, unresolved ones.
+  // about. Trust-restored strikes lead with a bold "Restored" tag so their status reads first and
+  // stays visually distinct from live, unresolved ones (which are plain).
   if (activeStrikes.length) {
     const lines = activeStrikes.map((s, i) => {
       const d = new Date(expiryOf(s.issuedAt));
       const expires = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
-      const tag = s.leadershipApproved ? ' · ✅ trust restored' : '';
-      return `\`${i + 1}.\` ${s.label} — expires ${expires}${tag}`;
+      const tag = s.leadershipApproved ? '**[Restored]** ' : '';
+      return `\`${i + 1}.\` ${tag}${s.label} — expires ${expires}`;
     });
     fields.push({
       name: `Active strikes (${activeStrikes.length})`,
