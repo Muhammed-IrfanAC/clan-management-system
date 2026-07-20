@@ -58,6 +58,7 @@ type StrikeState = {
   addNote: (strikeId: string, body: string) => Promise<boolean>;
   deleteNote: (strikeId: string, noteId: string) => Promise<boolean>;
   deleteStrike: (id: string) => Promise<boolean>;
+  deleteStrikes: (ids: string[]) => Promise<boolean>;
   logStrike: (input: LogStrikeInput, selectedClanId: string) => Promise<boolean>;
   actOnReview: (id: string, action: 'confirm' | 'dismiss', selectedClanId: string) => Promise<boolean>;
   isAuthoredByMe: (authorTag: string) => boolean;
@@ -255,6 +256,28 @@ export const useStrikeStore = create<StrikeState>((set, get) => ({
       return false;
     } catch {
       alert('Error deleting strike');
+      return false;
+    }
+  },
+
+  async deleteStrikes(ids) {
+    if (!ids.length) return false;
+    try {
+      const res = await fetch('/api/strikes/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (res.ok) {
+        const removed = new Set(ids);
+        set((s) => ({ strikes: s.strikes.filter((st) => !removed.has(st.id)) }));
+        return true;
+      }
+      const d = await res.json().catch(() => ({}));
+      alert(d.error || 'Error deleting strikes');
+      return false;
+    } catch {
+      alert('Error deleting strikes');
       return false;
     }
   },

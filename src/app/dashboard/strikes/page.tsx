@@ -19,6 +19,8 @@ import {
   UserMinus,
   Clock,
   Swords,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import {
   buildDossiers,
@@ -30,6 +32,7 @@ import { expiryOf } from '@/lib/strikes/status';
 import { useStrikeStore } from '@/lib/stores/strikeStore';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { useClan } from '@/lib/ClanContext';
+import { useCurrentUser } from '@/lib/useCurrentUser';
 
 const DISCORD_LIMIT = 2000;
 const INGAME_LIMIT = 256;
@@ -123,6 +126,12 @@ export default function StrikesPage() {
   const logStrikeAction = useStrikeStore((s) => s.logStrike);
   const actOnReviewAction = useStrikeStore((s) => s.actOnReview);
   const deleteStrikeAction = useStrikeStore((s) => s.deleteStrike);
+  const deleteStrikesAction = useStrikeStore((s) => s.deleteStrikes);
+
+  // Bulk delete is a leadership-only sweep — gated on the same 'content.override' capability the API
+  // enforces, which only leaders and super admins hold. UI gating is cosmetic; the route is the boundary.
+  const { capabilities } = useCurrentUser();
+  const canBulkDelete = capabilities.includes('content.override');
 
   // Review queue UI-local toggle.
   const [reviewOpen, setReviewOpen] = useState(true);
@@ -134,6 +143,10 @@ export default function StrikesPage() {
   // Confirmation modal (delete strike).
   const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, id: '', title: '', message: '' });
   const [deletingStrike, setDeletingStrike] = useState(false);
+
+  // Bulk delete of the currently-selected strikes (leadership only).
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [deletingBulk, setDeletingBulk] = useState(false);
 
   // Log-strike modal state.
   const [selectedPerson, setSelectedPerson] = useState('');
@@ -225,6 +238,19 @@ export default function StrikesPage() {
     if (ok) setConfirmConfig((c) => ({ ...c, isOpen: false }));
   }
 
+  async function bulkDeleteSelected() {
+    if (deletingBulk) return;
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    setDeletingBulk(true);
+    const ok = await deleteStrikesAction(ids);
+    setDeletingBulk(false);
+    if (ok) {
+      setSelectedIds(new Set());
+      setBulkConfirmOpen(false);
+    }
+  }
+
   // Summary drawer.
   useEffect(() => {
     if (!showSummary) return;
@@ -237,6 +263,20 @@ export default function StrikesPage() {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+  // Select-all operates on what's currently on screen (respecting the active worklist filter).
+  const visibleStrikeIds = useMemo(
+    () => visibleDossiers.flatMap((d) => d.strikes.map((s) => s.id)),
+    [visibleDossiers],
+  );
+  const allVisibleSelected = visibleStrikeIds.length > 0 && visibleStrikeIds.every((id) => selectedIds.has(id));
+  function toggleSelectAll() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleStrikeIds.forEach((id) => next.delete(id));
+      else visibleStrikeIds.forEach((id) => next.add(id));
       return next;
     });
   }
@@ -284,6 +324,27 @@ export default function StrikesPage() {
           <p className="text-muted">Track rule violations, restore trust, and enforce the three-strike standard.</p>
         </div>
         <div className="header-actions">
+          <button
+            className="btn btn-outline"
+            onClick={toggleSelectAll}
+            disabled={visibleStrikeIds.length === 0}
+            title={allVisibleSelected ? 'Clear the selection' : 'Select every strike currently shown'}
+            style={{ whiteSpace: 'nowrap', opacity: visibleStrikeIds.length === 0 ? 0.5 : 1, cursor: visibleStrikeIds.length === 0 ? 'not-allowed' : 'pointer' }}
+          >
+            {allVisibleSelected ? <Square size={18} /> : <CheckSquare size={18} />}
+            {allVisibleSelected ? 'Clear' : `Select all (${visibleStrikeIds.length})`}
+          </button>
+          {canBulkDelete && (
+            <button
+              className="btn btn-outline"
+              onClick={() => setBulkConfirmOpen(true)}
+              disabled={selectedIds.size === 0}
+              title={selectedIds.size === 0 ? 'Select one or more strikes first' : 'Permanently delete the selected strikes'}
+              style={{ whiteSpace: 'nowrap', borderColor: 'var(--color-danger)', color: 'var(--color-danger)', opacity: selectedIds.size === 0 ? 0.5 : 1, cursor: selectedIds.size === 0 ? 'not-allowed' : 'pointer' }}
+            >
+              <Trash2 size={18} /> Delete{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+            </button>
+          )}
           <button
             className="btn btn-outline"
             onClick={openSummary}
@@ -520,6 +581,15 @@ export default function StrikesPage() {
         title={confirmConfig.title}
         message={confirmConfig.message}
         isLoading={deletingStrike}
+      />
+
+      <ConfirmationModal
+        isOpen={bulkConfirmOpen}
+        onClose={() => setBulkConfirmOpen(false)}
+        onConfirm={bulkDeleteSelected}
+        title="Delete Selected Strikes"
+        message={`Permanently remove ${selectedIds.size} selected strike${selectedIds.size === 1 ? '' : 's'}? This also deletes their notes and cannot be undone.`}
+        isLoading={deletingBulk}
       />
     </div>
   );
