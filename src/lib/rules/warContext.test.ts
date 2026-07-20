@@ -86,14 +86,15 @@ describe('findHitUps', () => {
     expect(v[0].evidence?.open_bases).toEqual([13]);
   });
 
-  it('exempts higher ranks (co-leader hitting up is not flagged)', () => {
+  it('exempts a leadership person (by access_role), whatever the account rank', () => {
     const c = ctx({
       lineup: [{ tag: '#easy', th: 13 }, { tag: '#hard', th: 15 }],
-      attacks: [attack({ order: 1, attackerRank: 'co_leader', attackerTh: 13, defenderTag: '#hard', defenderTh: 15, stars: 2 })],
+      // The account attacked as a plain member, but its person is designated leadership.
+      attacks: [attack({ order: 1, attackerPersonId: 'boss', attackerRank: 'member', attackerTh: 13, defenderTag: '#hard', defenderTh: 15, stars: 2 })],
     });
-    expect(findHitUps(c)).toHaveLength(0);
-    // ...but honours a custom ranks list that includes them.
-    expect(findHitUps(c, { ranks: ['co_leader'] })).toHaveLength(1);
+    expect(findHitUps(c, { exemptPersonIds: new Set(['boss']) })).toHaveLength(0);
+    // Not exempt when the person isn't in the leadership set.
+    expect(findHitUps(c)).toHaveLength(1);
   });
 
   it('flags a member once even when BOTH of their attacks hit up', () => {
@@ -170,12 +171,12 @@ describe('findLateSnipes', () => {
     expect(findLateSnipes(c, { window_hours: 6 })).toHaveLength(1);
   });
 
-  it('does not flag a co-leader (not a low rank)', () => {
+  it('does not flag a leadership person (by access_role)', () => {
     const c = ctx({
       lineup,
-      attacks: [attack({ order: 1, attackerRank: 'co_leader', attackerTh: 14, defenderTag: '#hit', stars: 2, firstSeenAt: beforeEnd(3) })],
+      attacks: [attack({ order: 1, attackerPersonId: 'boss', attackerRank: 'member', attackerTh: 14, defenderTag: '#hit', stars: 2, firstSeenAt: beforeEnd(3) })],
     });
-    expect(findLateSnipes(c)).toHaveLength(0);
+    expect(findLateSnipes(c, { exemptPersonIds: new Set(['boss']) })).toHaveLength(0);
   });
 
   it('does not flag attacks outside the final window', () => {
@@ -202,11 +203,13 @@ describe('findLateSnipes', () => {
     expect(findLateSnipes(c)).toHaveLength(1);
   });
 
-  it('honours a custom ranks list', () => {
+  it('flags a linked member when no one is exempt', () => {
     const c = ctx({
       lineup,
       attacks: [attack({ order: 1, attackerRank: 'co_leader', attackerTh: 14, defenderTag: '#hit', stars: 2, firstSeenAt: beforeEnd(3) })],
     });
-    expect(findLateSnipes(c, { ranks: ['co_leader'] })).toHaveLength(1);
+    // Exemption is by person now, not by account rank: a co_leader-ranked account whose person has no
+    // access_role is still flagged.
+    expect(findLateSnipes(c)).toHaveLength(1);
   });
 });

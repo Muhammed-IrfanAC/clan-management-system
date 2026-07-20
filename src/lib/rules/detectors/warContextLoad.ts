@@ -96,6 +96,31 @@ export async function loadWarContexts(since: string): Promise<WarContext[]> {
   return contexts;
 }
 
+/**
+ * The set of person IDs exempt from the war-conduct rules: everyone the org has designated leadership
+ * via `persons.access_role` (co_leader / leader / super_admin). Deliberately NOT the in-game `db_role`,
+ * which flips around as ranks are shuffled in-game — access_role is the stable, intentional "this
+ * person is leadership" signal. It already lives on the person, so a leader's every linked alt is
+ * exempt automatically, regardless of that alt's own in-game rank.
+ */
+export async function loadExemptPersonIds(personIds: (string | null)[]): Promise<Set<string>> {
+  const ids = [...new Set(personIds.filter((x): x is string => !!x))];
+  const out = new Set<string>();
+  if (!ids.length) return out;
+
+  const { data, error } = await supabase
+    .from('persons')
+    .select('id')
+    .in('id', ids)
+    .not('access_role', 'is', null);
+  if (error) {
+    console.error('loadExemptPersonIds failed:', error);
+    return out;
+  }
+  for (const row of (data as { id: string }[]) || []) out.add(row.id);
+  return out;
+}
+
 // INTERNAL scan window — NOT a user-facing rule setting. It only bounds the DB query so the 5-minute
 // cron doesn't re-sweep all history; correctness comes from dedup_key, not from this. 48h comfortably
 // covers one war cycle plus a cron hiccup, so every ended war is scanned at least once. Overridable

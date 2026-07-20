@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { DetectedViolation } from '../types';
-import { DEFAULT_LOOKBACK_HOURS } from './warContextLoad';
+import { DEFAULT_LOOKBACK_HOURS, loadExemptPersonIds } from './warContextLoad';
 
 /**
  * Missed-attack detector (`war_missed_attack`), covering BOTH war types:
@@ -13,6 +13,10 @@ import { DEFAULT_LOOKBACK_HOURS } from './warContextLoad';
  * target). The scan window (DEFAULT_LOOKBACK_HOURS) bounds it to recently-ended rounds so the cron
  * doesn't re-sweep all history — an internal bound, not a rule setting; correctness is guaranteed
  * regardless by the caller's dedup key.
+ *
+ * Leaders and co-leaders are EXEMPT — mirroring the hit-up / late-snipe rules. Leadership is the
+ * org's persons.access_role designation (not the fickle in-game db_role), and it lives on the person,
+ * so a leader who missed on a member-rank alt is still exempt — the exemption spans all their accounts.
  */
 export async function detectMissedAttacks(
   config: Record<string, unknown>,
@@ -24,7 +28,12 @@ export async function detectMissedAttacks(
     detectRegular(since),
     detectCwl(since),
   ]);
-  return [...regular, ...cwl];
+  const all = [...regular, ...cwl];
+
+  // Drop leaders/co-leaders (by persons.access_role). The exemption is per person, so a leader who
+  // missed on a member-rank alt is exempt too — access_role covers all their linked accounts.
+  const exempt = await loadExemptPersonIds(all.map((v) => v.personId));
+  return all.filter((v) => !exempt.has(v.personId));
 }
 
 /** Regular clan wars — a miss is attacks_used < attacks_per_member. */

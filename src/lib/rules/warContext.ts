@@ -19,7 +19,7 @@ export type WarAttackRec = {
   attackerName: string | null;
   attackerPersonId: string | null; // null => unlinked/guest; never flagged (a warning needs a person)
   attackerTh: number;
-  attackerRank: string | null;      // db_role at ingest, for the rank filter
+  attackerRank: string | null;      // db_role at ingest — for display/evidence only, NOT the exemption
   defenderTag: string;
   defenderTh: number;
   stars: number;
@@ -53,13 +53,17 @@ export function openBasesBefore(ctx: WarContext, order: number, maxTh: number): 
 export type HitUpConfig = {
   // How much higher (in TH levels) the hit base must be than the attacker to count as "hitting up".
   min_th_gap?: number;
-  ranks?: string[]; // db_roles that the rule applies to (default elder & below), mirroring late snipe
+  // Persons exempt from the rule: those the org designated leadership via persons.access_role.
+  // Supplied by the detector wrapper (a DB read). access_role is per-person, so the exemption spans
+  // every one of a leader's linked alts, whatever that alt's in-game rank was when it attacked.
+  exemptPersonIds?: Set<string>;
 };
 
 /**
- * Unjustified hit-up: a low-rank member (of `ranks`, default elder-or-lower) hit a base at least
- * `min_th_gap` TH levels ABOVE their own while an equal-or-lower TH base sat open. Like the late-snipe
- * rule, higher ranks are exempt — leaders/co-leaders often hit up deliberately to open the map.
+ * Unjustified hit-up: a member hit a base at least `min_th_gap` TH levels ABOVE their own while an
+ * equal-or-lower TH base sat open. Leadership (leaders/co-leaders, by persons.access_role) is exempt —
+ * they often hit up deliberately to open the map — and, because access_role lives on the person, so
+ * are all of a leader's alts.
  *
  * At most one violation per member per war: a member who hits up on BOTH of their attacks is flagged
  * once (the earliest by attack order), so the dedup_key — and therefore the leader's queue — carries a
@@ -67,14 +71,14 @@ export type HitUpConfig = {
  */
 export function findHitUps(ctx: WarContext, config: HitUpConfig = {}): DetectedViolation[] {
   const minGap = Math.max(1, Number(config.min_th_gap ?? 1));
-  const ranks = new Set(config.ranks && config.ranks.length ? config.ranks : DEFAULT_LOW_RANKS);
+  const exempt = config.exemptPersonIds ?? new Set<string>();
   const out: DetectedViolation[] = [];
   const seen = new Set<string>(); // personIds already flagged this war
 
   // Earliest-order-first so the representative attack (and its evidence) is deterministic.
   for (const a of [...ctx.attacks].sort((x, y) => x.order - y.order)) {
     if (!a.attackerPersonId) continue;
-    if (!a.attackerRank || !ranks.has(a.attackerRank)) continue; // higher rank — exempt
+    if (exempt.has(a.attackerPersonId)) continue; // leader/co-leader (by access_role) — exempt
     if (a.defenderTh - a.attackerTh < minGap) continue; // didn't hit up
     const open = openBasesBefore(ctx, a.order, a.attackerTh); // equal/lower bases still available
     if (!open.length) continue;
@@ -112,28 +116,28 @@ export function findHitUps(ctx: WarContext, config: HitUpConfig = {}): DetectedV
 
 export type LateSnipeConfig = {
   window_hours?: number;   // "final N hours" window
-  ranks?: string[];        // db_roles that count as low rank (default elder & below)
+  // Leadership (persons.access_role) is exempt — per-person, so it covers a leader's alts too.
+  exemptPersonIds?: Set<string>;
 };
 
-const DEFAULT_LOW_RANKS = ['member', 'elder'];
-
 /**
- * Low-rank late snipe: a member of `ranks` (default elder-or-lower) attacked within the war's final
- * `window_hours`. Any such late attack is flagged — this catches members who deliberately wait until
- * the end to snipe loot off already-cleared higher bases, not just those who left an equal-or-lower
- * base open. Timing is only trusted when the attack was first observed while state was 'inWar' (an
- * attack first seen only at 'warEnded' has no reliable timestamp and is skipped).
+ * Late snipe: a member attacked within the war's final `window_hours`. Any such late attack is
+ * flagged — this catches members who deliberately wait until the end to snipe loot off already-cleared
+ * higher bases, not just those who left an equal-or-lower base open. Leadership (leaders/co-leaders, by
+ * persons.access_role, and all their alts) is exempt. Timing is only trusted when the attack was first
+ * observed while state was 'inWar' (an attack first seen only at 'warEnded' has no reliable timestamp
+ * and is skipped).
  */
 export function findLateSnipes(ctx: WarContext, config: LateSnipeConfig = {}): DetectedViolation[] {
   const windowMs = Math.max(0, Number(config.window_hours ?? 6)) * 3600 * 1000;
-  const ranks = new Set((config.ranks && config.ranks.length ? config.ranks : DEFAULT_LOW_RANKS));
+  const exempt = config.exemptPersonIds ?? new Set<string>();
   if (!ctx.endTime) return [];
   const endMs = new Date(ctx.endTime).getTime();
   const out: DetectedViolation[] = [];
 
   for (const a of ctx.attacks) {
     if (!a.attackerPersonId) continue;
-    if (!a.attackerRank || !ranks.has(a.attackerRank)) continue; // not a low rank
+    if (exempt.has(a.attackerPersonId)) continue; // leader/co-leader (by access_role) — exempt
     if (a.firstSeenState !== 'inWar' || !a.firstSeenAt) continue; // timing not trustworthy
     const remainingMs = endMs - new Date(a.firstSeenAt).getTime();
     if (remainingMs > windowMs) continue; // not in the final window

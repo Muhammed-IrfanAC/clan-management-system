@@ -33,7 +33,8 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
     label: 'Missed war attack',
     description:
       'Flags any linked member who left war attacks unused in a completed war — regular clan wars ' +
-      '(2 attacks) and CWL (1 attack). Clear-cut, so it auto-strikes. Multiple breaks in the same ' +
+      '(2 attacks) and CWL (1 attack). Leaders and co-leaders are exempt (by dashboard access role, ' +
+      'so all their alts are covered too). Clear-cut, so it auto-strikes. Multiple breaks in the same ' +
       'war fold into that war’s single strike.',
     mode: 'auto',
     // No tunables — a missed attack is a missed attack. (The scan window is internal; see
@@ -46,7 +47,8 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
     description:
       'Flags an elder-or-lower member who attacked a HIGHER town hall while an equal-or-lower base ' +
       'was still open (not 3-starred), in regular clan wars and CWL. Leaders and co-leaders are ' +
-      'exempt — they often hit up deliberately to open the map. A member is flagged at most once per ' +
+      'exempt (by dashboard access role, so their alts are covered too) — they often hit up ' +
+      'deliberately to open the map. A member is flagged at most once per ' +
       'war, even if both of their attacks hit up. A judgement call, so it is queued for a leader to ' +
       'confirm or dismiss rather than auto-striking. Confirming folds it into that war’s strike (it ' +
       'never adds a second strike for a war the member is already struck for).',
@@ -62,7 +64,8 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
     description:
       'Flags an elder-or-lower member who attacked in the war’s final hours — catching members who ' +
       'wait until the end to snipe loot off already-cleared bases, in regular clan wars and CWL. ' +
-      'Leaders and co-leaders are exempt. Attack timing is inferred from the sync polls. Auto-strikes ' +
+      'Leaders and co-leaders are exempt (by dashboard access role, so their alts are covered too). ' +
+      'Attack timing is inferred from the sync polls. Auto-strikes ' +
       'on detection; it folds into that war’s single strike alongside any other break.',
     mode: 'auto',
     configFields: [
