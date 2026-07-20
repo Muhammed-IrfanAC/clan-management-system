@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { DetectedViolation } from '../types';
-import { DEFAULT_LOOKBACK_HOURS, loadExemptPersonIds } from './warContextLoad';
+import { lookbackSince, loadExemptPersonIds } from './warContextLoad';
 
 /**
  * Missed-attack detector (`war_missed_attack`), covering BOTH war types:
@@ -21,8 +21,7 @@ import { DEFAULT_LOOKBACK_HOURS, loadExemptPersonIds } from './warContextLoad';
 export async function detectMissedAttacks(
   config: Record<string, unknown>,
 ): Promise<DetectedViolation[]> {
-  const lookbackHours = Number(config.lookback_hours ?? DEFAULT_LOOKBACK_HOURS);
-  const since = new Date(Date.now() - lookbackHours * 3600 * 1000).toISOString();
+  const since = lookbackSince(config);
 
   const [regular, cwl] = await Promise.all([
     detectRegular(since),

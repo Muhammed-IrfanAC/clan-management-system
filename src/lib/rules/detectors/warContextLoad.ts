@@ -127,8 +127,32 @@ export async function loadExemptPersonIds(personIds: (string | null)[]): Promise
 // via automation_config.lookback_hours if ever needed, but deliberately absent from the Settings UI.
 export const DEFAULT_LOOKBACK_HOURS = 48;
 
-/** Common lookback -> `since` ISO for the judgement detectors. */
+/**
+ * Fresh-start floor — a hard "never scan any war that ended before this instant" cutoff, set once via
+ * the RULES_FRESH_START env var (any ISO-8601 date, e.g. 2026-07-20 or 2026-07-20T00:00:00Z). Unlike
+ * the rolling lookback (which relies on dedup rows to skip already-struck wars), this survives a strike
+ * reset: wipe the strikes, set this to the reset moment, and prior wars stay invisible to every
+ * detector permanently — no stale dedup row means no re-strike of the old war. Unset/invalid => no
+ * floor (returns null), preserving the original behaviour.
+ */
+export function freshStartFloor(): string | null {
+  const raw = process.env.RULES_FRESH_START;
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  if (Number.isNaN(t)) {
+    console.error(`RULES_FRESH_START is set but not a parseable date: ${raw} — ignoring.`);
+    return null;
+  }
+  return new Date(t).toISOString();
+}
+
+/**
+ * Common lookback -> `since` ISO for the detectors. Returns the MORE restrictive (later) of the rolling
+ * lookback window and the fresh-start floor, so a configured floor always wins when it is more recent.
+ */
 export function lookbackSince(config: Record<string, unknown>): string {
   const hours = Number(config.lookback_hours ?? DEFAULT_LOOKBACK_HOURS);
-  return new Date(Date.now() - hours * 3600 * 1000).toISOString();
+  const rolling = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+  const floor = freshStartFloor();
+  return floor && floor > rolling ? floor : rolling;
 }
