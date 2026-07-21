@@ -6,6 +6,7 @@ import { addOnboardingEvent } from './onboarding';
 import { syncCwlLiveState } from './cwl/live';
 import { syncWarState } from './war';
 import { scanRuleViolations } from './rules/scan';
+import { STRIKE_WINDOW_DAYS } from './strikes/status';
 
 export async function syncClan(clanId: string) {
   try {
@@ -187,8 +188,23 @@ export async function syncClan(clanId: string) {
       .eq('status', 'left')
       .lt('last_synced_at', cleanupDate.toISOString());
 
+    // Never purge an account while it still carries an ACTIVE (within-90-day) strike. Enforcement is
+    // account-scoped, so a departed member with an in-force strike must survive the cleanup window —
+    // otherwise leave-and-rejoin would wipe a live strike. Once every strike on the account has aged
+    // past the window it's history only; the account may go and its strikes detach via the FK's ON
+    // DELETE SET NULL (migration 023), staying anchored to the person for the record.
+    const strikeCutoff = new Date();
+    strikeCutoff.setDate(strikeCutoff.getDate() - STRIKE_WINDOW_DAYS);
+    const { data: activeStrikeRows } = await supabase
+      .from('strikes')
+      .select('player_account_tag')
+      .not('player_account_tag', 'is', null)
+      .gte('issued_at', strikeCutoff.toISOString());
+    const activeStrikeTags = new Set((activeStrikeRows || []).map((s) => s.player_account_tag));
+
     const deletableTags = (staleAccounts || [])
       .filter((a) => !a.person_id || !accessIds.has(a.person_id))
+      .filter((a) => !activeStrikeTags.has(a.player_tag))
       .map((a) => a.player_tag);
 
     if (deletableTags.length > 0) {
