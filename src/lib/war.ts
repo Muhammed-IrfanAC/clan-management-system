@@ -126,5 +126,25 @@ export async function syncWarState(): Promise<{ clansPolled: number; warsUpserte
     }
   }
 
+  // Sweep any past-due wars that we missed transitioning to 'warEnded' (e.g. because a new war
+  // was immediately declared and fetchCurrentWar now only returns the new one).
+  try {
+    const now = new Date().toISOString();
+    const { data: pastDue, error: sweepErr } = await supabase
+      .from('war_rounds')
+      .update({ state: 'warEnded' })
+      .in('state', ['preparation', 'inWar'])
+      .lt('end_time', now)
+      .select('id');
+    if (sweepErr) {
+      console.error('Failed to sweep past-due war rounds:', sweepErr);
+    } else if (pastDue && pastDue.length > 0) {
+      console.log(`Swept ${pastDue.length} past-due war rounds to warEnded state.`);
+    }
+  } catch (err) {
+    console.error('Error sweeping past-due war rounds:', err);
+  }
+
   return { clansPolled, warsUpserted };
 }
+
