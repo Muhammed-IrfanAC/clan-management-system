@@ -296,6 +296,20 @@ export interface StrikeSuggestion {
   strike_id: string | null;
 }
 
+// A one-time, non-punitive notification sent by an automated rule. This records delivery deduping
+// only; it is intentionally not a strike or a rule violation.
+export interface RuleReminder {
+  id: string;
+  rule_id: string | null;
+  person_id: string;
+  player_account_tag: string;
+  clan_id: string | null;
+  war_source: 'regular' | 'cwl';
+  war_round_id: string;
+  reminder_key: string;
+  sent_at: string;
+}
+
 // One of our members' lineup slot + attack result within a regular war. attacks_used is 0..2.
 // person_id is null for unlinked or guest tags.
 export interface WarMember {

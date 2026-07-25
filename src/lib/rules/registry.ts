@@ -65,12 +65,14 @@ export const DETECTOR_REGISTRY: DetectorMeta[] = [
       'Flags an elder-or-lower member who attacked in the war’s final hours — catching members who ' +
       'wait until the end to snipe loot off already-cleared bases, in regular clan wars and CWL. ' +
       'Leaders and co-leaders are exempt (by dashboard access role, so their alts are covered too). ' +
+      'Members with unused attacks receive a one-time Better Late Than Never reminder at the cutoff; ' +
+      'only a late attack is struck, while a completely unused attack is handled by the missed-attack rule. ' +
       'Attack timing is inferred from the sync polls. Auto-strikes ' +
       'on detection; it folds into that war’s single strike alongside any other break.',
     mode: 'auto',
     configFields: [
       { key: 'window_hours', label: 'Final window (hours)', type: 'number', default: 6,
-        help: 'An attack this many hours or less before war end counts as "late".' },
+        help: 'An attack this many hours or less before war end counts as "late". A 15-minute safety margin is applied for API and cron delay.' },
     ],
   },
 ];

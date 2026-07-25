@@ -173,8 +173,8 @@ export async function notifyWarningLogged(params: {
  *
  * The embed is scoped to the fielded ACCOUNT's live strike standing (`loadStrikeNotifyContext`):
  * the title names the strike NUMBER (Strike 1/2/3…), the embed colour follows the green/orange/red
- * LEVEL, and an "Active strikes" field spells out every strike still counting against the account —
- * so the member sees exactly where this puts them without opening the dashboard.
+ * LEVEL, and an "Active record" field spells out the new strike number. The prior active strikes
+ * are listed separately, so the current offence is never duplicated in the history field.
  */
 export async function notifyStrikeLogged(params: {
   memberName?: string | null;
@@ -198,31 +198,44 @@ export async function notifyStrikeLogged(params: {
     { name: 'Member', value: `${memberName || 'Unknown'} (${playerTag})`, inline: true },
   ];
   if (warLabel) fields.push({ name: 'War', value: warLabel, inline: true });
-  if (ruleName) fields.push({ name: 'Rule', value: ruleName, inline: false });
 
-  // The full active-strike list so this ping is self-contained. Numbered oldest-first; capped so we
-  // never blow Discord's 1024-char field limit. Each line shows when the strike EXPIRES (issue + 90d,
+  const currentStrike = [
+    ruleName ? `**${ruleName}**` : null,
+    reasons.length ? reasons.map((r) => `• ${r}`).join('\n') : 'A war rule was broken.',
+  ].filter(Boolean).join('\n');
+  fields.push({ name: 'Current strike', value: currentStrike, inline: false });
+  fields.push({
+    name: 'Active record',
+    value: `This is **Strike ${strikeNumber}** of **${activeStrikes.length} active strike${activeStrikes.length === 1 ? '' : 's'}**.`,
+    inline: false,
+  });
+  fields.push({
+    name: 'Consequence',
+    value: 'War-ineligible until you contact leadership, acknowledge the rule break, and confirm you understand the timing rule.',
+    inline: false,
+  });
+
+  // This notification is sent only when a new strike is created. The newest list item is therefore
+  // the current strike above; show only older active strikes here. Lines are oldest-first and capped
+  // so we never blow Discord's 1024-char field limit. Each line shows when the strike EXPIRES (issue + 90d,
   // the moment it stops counting) rather than when it was logged — that's the date the member cares
   // about. The expiry is emitted as a Discord timestamp token so every reader sees it in their own
   // local timezone (long date + a relative "in N days" hint). Trust-restored strikes lead with a bold
   // "Restored" tag so their status reads first and stays visually distinct from live, unresolved ones.
-  if (activeStrikes.length) {
-    const lines = activeStrikes.map((s, i) => {
+  const previousActiveStrikes = activeStrikes.slice(0, -1);
+  if (previousActiveStrikes.length) {
+    const lines = previousActiveStrikes.map((s, i) => {
       const expiry = expiryOf(s.issuedAt);
       const expires = `${discordTs(expiry, 'D')} (${discordTs(expiry, 'R')})`;
       const tag = s.leadershipApproved ? '**[Restored]** ' : '';
       return `\`${i + 1}.\` ${tag}${s.label} — expires ${expires}`;
     });
     fields.push({
-      name: `Active strikes (${activeStrikes.length})`,
+      name: `Previous active strike${previousActiveStrikes.length === 1 ? '' : 's'}`,
       value: truncateField(lines.join('\n')),
       inline: false,
     });
   }
-
-  const description = reasons.length
-    ? reasons.map((r) => `• ${r}`).join('\n')
-    : 'A war rule was broken.';
 
   const removalNote = level === 'red' ? ' — removal threshold reached' : '';
   const title = `${LEVEL_EMOJI[level]} Strike ${strikeNumber} Issued${removalNote}`;
@@ -234,12 +247,65 @@ export async function notifyStrikeLogged(params: {
       embeds: [
         {
           title,
-          description,
           color: LEVEL_COLOR[level],
           fields,
           footer: { text: 'ClanOps · trust restoration required before Elder/war eligibility returns' },
         },
       ],
+    },
+    webhookUrl,
+  );
+}
+
+/** A one-time, non-punitive prompt for a member who still has an unused war attack at the cutoff. */
+export async function notifyBetterLateThanNever(params: {
+  memberName?: string | null;
+  playerTag: string;
+  warLabel?: string | null;
+  attacksRemaining: number;
+  activeStrikeCount: number;
+  webhookUrl?: string | null;
+  mentionDiscordId?: string | null;
+}): Promise<void> {
+  const {
+    memberName, playerTag, warLabel, attacksRemaining, activeStrikeCount, webhookUrl, mentionDiscordId,
+  } = params;
+  const plural = attacksRemaining === 1 ? '' : 's';
+  const nextStrike = activeStrikeCount + 1;
+  const currentRecord = activeStrikeCount
+    ? `You currently have **${activeStrikeCount} active strike${activeStrikeCount === 1 ? '' : 's'}**.`
+    : 'You currently have **no active strikes**.';
+
+  await sendDiscordMessage(
+    {
+      content: mentionDiscordId ? `<@${mentionDiscordId}>` : undefined,
+      allowed_mentions: mentionDiscordId ? { users: [mentionDiscordId] } : { parse: [] },
+      embeds: [{
+        title: '⏳ Better Late Than Never — Action Needed',
+        color: COLOR_WARNING,
+        fields: [
+          { name: 'Member', value: `${memberName || 'Unknown'} (${playerTag})`, inline: true },
+          ...(warLabel ? [{ name: 'War', value: warLabel, inline: true }] : []),
+          {
+            name: 'Action required',
+            value: `You still have **${attacksRemaining} war attack${plural}** available. Use it now. ` +
+              'An attack from this point may be recorded as a late-snipe rule break; no attack by war end will be recorded as a missed attack.',
+          },
+          {
+            name: 'Strike impact',
+            value: `${currentRecord} A rule break in this war would become **Strike ${nextStrike}**.`,
+          },
+          {
+            name: 'Consequence if struck',
+            value: 'War-ineligible until you contact leadership, acknowledge the rule break, and confirm you understand the timing rule.',
+          },
+          {
+            name: 'Why early attacks matter',
+            value: 'Early attacks show awareness, keep pressure on the enemy, and reduce pressure on leadership. Even in a perfect war, Elders should still loot or hit any base to show they are active and aligned.',
+          },
+        ],
+        footer: { text: 'ClanOps · this is a reminder, not a strike' },
+      }],
     },
     webhookUrl,
   );

@@ -3,6 +3,7 @@ import { DETECTORS } from './detectors';
 import { detectorMeta } from './registry';
 import { filterViolationsByClanMode, normalizeMode } from './automationScope';
 import { commitStrikes } from '@/lib/strikes/commit';
+import { sendLateSnipeReminders } from './lateSnipeReminders';
 import type { RuleAutomationMode } from '@/types/database';
 import type { DetectedViolation } from './types';
 
@@ -29,7 +30,7 @@ type AutomatedRule = {
   automation_config: Record<string, unknown> | null;
 };
 
-export async function scanRuleViolations(): Promise<{ detected: number; logged: number; queued: number }> {
+export async function scanRuleViolations(): Promise<{ detected: number; logged: number; queued: number; reminded: number }> {
   const { data: rules } = await supabase
     .from('rules')
     .select('id, name, automation_key, automation_config')
@@ -49,11 +50,23 @@ export async function scanRuleViolations(): Promise<{ detected: number; logged: 
   let detected = 0;
   let logged = 0;
   let queued = 0;
+  let reminded = 0;
 
   for (const rule of (rules as AutomatedRule[] | null) || []) {
     const detector = DETECTORS[rule.automation_key];
     const meta = detectorMeta(rule.automation_key);
     if (!detector || !meta) continue; // enabled rule pointing at an unknown detector — skip safely
+
+    // Better Late Than Never is a one-time prompt for members who still have an attack available
+    // at the late-snipe cutoff. It remains separate from the actual late-snipe/missed-attack strike
+    // paths, so no provisional strike needs to be overwritten at war end.
+    if (rule.automation_key === 'war_late_snipe') {
+      try {
+        reminded += await sendLateSnipeReminders(rule, modeByClan);
+      } catch (err) {
+        console.error('Better Late Than Never reminder scan failed:', err);
+      }
+    }
 
     let violations;
     try {
@@ -75,7 +88,7 @@ export async function scanRuleViolations(): Promise<{ detected: number; logged: 
     }
   }
 
-  return { detected, logged, queued };
+  return { detected, logged, queued, reminded };
 }
 
 /**

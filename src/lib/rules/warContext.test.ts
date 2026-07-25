@@ -3,6 +3,7 @@ import {
   openBasesBefore,
   findHitUps,
   findLateSnipes,
+  isLateSnipeReminderDue,
   type WarContext,
   type WarAttackRec,
 } from './warContext';
@@ -202,6 +203,27 @@ describe('findLateSnipes', () => {
       attacks: [attack({ order: 1, attackerRank: 'member', attackerTh: 14, defenderTag: '#hit', stars: 2, firstSeenAt: beforeEnd(10) })],
     });
     expect(findLateSnipes(c, { window_hours: 6 })).toHaveLength(0);
+  });
+
+  it('keeps a 15-minute safety margin inside the configured final window', () => {
+    const c = ctx({
+      lineup,
+      attacks: [
+        // First observed 5h 50m before end: within the configured 6h window, but still inside
+        // the 15-minute API/cron-delay buffer.
+        attack({ order: 1, firstSeenAt: beforeEnd(5 + 50 / 60) }),
+        // First observed exactly 5h 45m before end: it is safe to classify as late.
+        attack({ order: 2, firstSeenAt: beforeEnd(5.75) }),
+      ],
+    });
+    const v = findLateSnipes(c, { window_hours: 6 });
+    expect(v).toHaveLength(1);
+    expect(v[0].playerTag).toBe('#A2');
+  });
+
+  it('starts Better Late Than Never reminders at the same buffered cutoff', () => {
+    expect(isLateSnipeReminderDue(END, { window_hours: 6 }, new Date(beforeEnd(5 + 50 / 60)))).toBe(false);
+    expect(isLateSnipeReminderDue(END, { window_hours: 6 }, new Date(beforeEnd(5.75)))).toBe(true);
   });
 
   it('skips attacks whose timing is untrustworthy (first seen at warEnded)', () => {

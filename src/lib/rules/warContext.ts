@@ -120,13 +120,38 @@ export type LateSnipeConfig = {
   exemptPersonIds?: Set<string>;
 };
 
+// Attack times are inferred from the first sync poll that sees them, rather than supplied by the
+// CoC API. Keep a small margin inside the configured window so an attack made just before the
+// boundary cannot be falsely classified as late because the API or cron reported it a few minutes
+// later.
+export const LATE_SNIPE_SAFETY_BUFFER_MINUTES = 15;
+
+/** The effective final-window duration after allowing for API and cron delay. */
+export function lateSnipeWindowMs(windowHours: unknown = 6): number {
+  const configuredWindowMs = Math.max(0, Number(windowHours)) * 3600 * 1000;
+  return Math.max(0, configuredWindowMs - LATE_SNIPE_SAFETY_BUFFER_MINUTES * 60 * 1000);
+}
+
+/** Whether a live war has reached its buffered late-snipe/reminder cutoff. */
+export function isLateSnipeReminderDue(
+  endTime: string | null,
+  config: Pick<LateSnipeConfig, 'window_hours'> = {},
+  now: Date = new Date(),
+): boolean {
+  if (!endTime) return false;
+  const endMs = new Date(endTime).getTime();
+  if (Number.isNaN(endMs)) return false;
+  const remainingMs = endMs - now.getTime();
+  return remainingMs >= 0 && remainingMs <= lateSnipeWindowMs(config.window_hours ?? 6);
+}
+
 /**
- * Late snipe: a member attacked within the war's final `window_hours`. Any such late attack is
- * flagged — this catches members who deliberately wait until the end to snipe loot off already-cleared
- * higher bases, not just those who left an equal-or-lower base open. Leadership (leaders/co-leaders, by
- * persons.access_role, and all their alts) is exempt. Timing is only trusted when the attack was first
- * observed while state was 'inWar' (an attack first seen only at 'warEnded' has no reliable timestamp
- * and is skipped).
+ * Late snipe: a member attacked within the war's final `window_hours`, less a 15-minute safety
+ * margin for API/cron delay. Any such late attack is flagged — this catches members who deliberately
+ * wait until the end to snipe loot off already-cleared higher bases, not just those who left an
+ * equal-or-lower base open. Leadership (leaders/co-leaders, by persons.access_role, and all their
+ * alts) is exempt. Timing is only trusted when the attack was first observed while state was 'inWar'
+ * (an attack first seen only at 'warEnded' has no reliable timestamp and is skipped).
  *
  * At most one violation per member per war: a member who snipes on BOTH of their attacks is flagged
  * once, with both late hits CONCATENATED into a single description/evidence entry. Keying the dedup_key
@@ -134,7 +159,7 @@ export type LateSnipeConfig = {
  * collapse findHitUps does.
  */
 export function findLateSnipes(ctx: WarContext, config: LateSnipeConfig = {}): DetectedViolation[] {
-  const windowMs = Math.max(0, Number(config.window_hours ?? 6)) * 3600 * 1000;
+  const windowMs = lateSnipeWindowMs(config.window_hours ?? 6);
   const exempt = config.exemptPersonIds ?? new Set<string>();
   if (!ctx.endTime) return [];
   const endMs = new Date(ctx.endTime).getTime();

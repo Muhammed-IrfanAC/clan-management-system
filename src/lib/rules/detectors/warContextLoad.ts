@@ -97,6 +97,44 @@ export async function loadWarContexts(since: string): Promise<WarContext[]> {
 }
 
 /**
+ * Assemble the contexts for wars that are currently live. Late snipes are detected while the war
+ * is still in progress so the member is struck at the configured cutoff, rather than only after
+ * war end. Deliberately do not include ended rounds here: the live scan has already recorded the
+ * violation, and avoiding an end-of-war pass keeps this rule's lifecycle distinct from the
+ * end-only missed-attack and hit-up rules.
+ */
+export async function loadLiveWarContexts(): Promise<WarContext[]> {
+  const [regular, cwl] = await Promise.all([
+    supabase
+      .from('war_rounds')
+      .select('id, clan_id, opponent_name, end_time, opponent_lineup, attacks:war_attacks(attack_order, attacker_tag, attacker_name, attacker_person_id, attacker_th, attacker_rank, defender_tag, defender_th, stars, first_seen_at, first_seen_state)')
+      .eq('state', 'inWar'),
+    supabase
+      .from('cwl_rounds')
+      .select('id, clan_id, opponent_name, end_time, opponent_lineup, attacks:cwl_war_attacks(attack_order, attacker_tag, attacker_name, attacker_person_id, attacker_th, attacker_rank, defender_tag, defender_th, stars, first_seen_at, first_seen_state)')
+      .eq('state', 'inWar'),
+  ]);
+
+  if (regular.error) console.error('loadLiveWarContexts (regular) failed:', regular.error);
+  if (cwl.error) console.error('loadLiveWarContexts (cwl) failed:', cwl.error);
+
+  const contexts: WarContext[] = [];
+  for (const r of (regular.data as unknown as RoundRow[]) || []) {
+    contexts.push({
+      source: 'regular', roundId: r.id, clanId: r.clan_id, opponentName: r.opponent_name,
+      endTime: r.end_time, lineup: toLineup(r.opponent_lineup), attacks: toAttacks(r.attacks),
+    });
+  }
+  for (const r of (cwl.data as unknown as RoundRow[]) || []) {
+    contexts.push({
+      source: 'cwl', roundId: r.id, clanId: r.clan_id, opponentName: r.opponent_name,
+      endTime: r.end_time, lineup: toLineup(r.opponent_lineup), attacks: toAttacks(r.attacks),
+    });
+  }
+  return contexts;
+}
+
+/**
  * The set of person IDs exempt from the war-conduct rules: everyone the org has designated leadership
  * via `persons.access_role` (co_leader / leader / super_admin). Deliberately NOT the in-game `db_role`,
  * which flips around as ranks are shuffled in-game — access_role is the stable, intentional "this
