@@ -14,7 +14,12 @@ import type { DetectedViolation } from '@/lib/rules/types';
 
 const SYSTEM_ACTOR = 'SYSTEM';
 
-type StrikeRule = { id: string; name: string };
+type StrikeRule = {
+  id: string;
+  name: string;
+  automation_key?: string | null;
+  automation_config?: Record<string, unknown> | null;
+};
 
 export async function commitStrikes(
   rule: StrikeRule,
@@ -213,6 +218,9 @@ async function notifyNewStrikes(rule: StrikeRule, newStrikes: PlannedStrike[]): 
         ruleName: rule.name,
         warLabel: p.warLabel,
         reasons: p.violations.map((v) => v.description),
+        lateSnipe: rule.automation_key === 'war_late_snipe'
+          ? { windowHours: Number(rule.automation_config?.window_hours ?? 6), violations: p.violations }
+          : undefined,
         strikeNumber: ctx.strikeNumber,
         level: ctx.level,
         activeStrikes: ctx.activeStrikes,

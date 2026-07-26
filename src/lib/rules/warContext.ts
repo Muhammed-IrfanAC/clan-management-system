@@ -132,7 +132,7 @@ export function lateSnipeWindowMs(windowHours: unknown = 6): number {
   return Math.max(0, configuredWindowMs - LATE_SNIPE_SAFETY_BUFFER_MINUTES * 60 * 1000);
 }
 
-/** Whether a live war has reached its buffered late-snipe/reminder cutoff. */
+/** Whether a live war has reached its buffered late-snipe cutoff. */
 export function isLateSnipeReminderDue(
   endTime: string | null,
   config: Pick<LateSnipeConfig, 'window_hours'> = {},
@@ -206,7 +206,7 @@ export function findLateSnipes(ctx: WarContext, config: LateSnipeConfig = {}): D
       clanId: ctx.clanId,
       source: ctx.source,
       memberName: g.attackerName,
-      description: `Possible late snipe — ${g.attackerName || g.playerTag} (${g.attackerRank}) ${lateHitsPhrase(g.hits)}${vs}.`,
+      description: `Late snipe — ${g.attackerName || g.playerTag} (${g.attackerRank}) ${lateHitsPhrase(g.hits)}${vs}.`,
       // Per-person (not per-attack) so both late hits by the same member collapse into one violation.
       dedupKey: `war_late_snipe:${ctx.source}:${ctx.roundId}:${g.personId}`,
       occurredAt: ctx.endTime,

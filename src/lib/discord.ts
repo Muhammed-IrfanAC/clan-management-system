@@ -14,6 +14,7 @@
 
 import { supabase } from './supabase';
 import { expiryOf, type StrikeLevel } from './strikes/status';
+import type { DetectedViolation } from './rules/types';
 
 // Discord embed colors (decimal). Amber for warnings; strikes take the member's live strike LEVEL
 // colour (green/orange/red) so the embed mirrors the dashboard badge — see LEVEL_COLOR below.
@@ -182,6 +183,8 @@ export async function notifyStrikeLogged(params: {
   ruleName?: string | null;
   warLabel?: string | null;
   reasons: string[];        // one line per folded violation
+  // Present only for Better Late Than Never. It drives the evidence-first late-snipe layout.
+  lateSnipe?: { windowHours: number; violations: DetectedViolation[] };
   strikeNumber: number;     // this account's active strike count after this strike (1, 2, 3…)
   level: StrikeLevel;       // drives the embed colour + title emoji
   // full active list on the account, oldest-first; leadershipApproved marks trust-restored strikes
@@ -190,30 +193,13 @@ export async function notifyStrikeLogged(params: {
   mentionDiscordId?: string | null;
 }): Promise<void> {
   const {
-    memberName, playerTag, ruleName, warLabel, reasons,
+    memberName, playerTag, ruleName, warLabel, reasons, lateSnipe,
     strikeNumber, level, activeStrikes, webhookUrl, mentionDiscordId,
   } = params;
 
-  const fields: DiscordEmbedField[] = [
-    { name: 'Member', value: `${memberName || 'Unknown'} (${playerTag})`, inline: true },
-  ];
-  if (warLabel) fields.push({ name: 'War', value: warLabel, inline: true });
-
-  const currentStrike = [
-    ruleName ? `**${ruleName}**` : null,
-    reasons.length ? reasons.map((r) => `• ${r}`).join('\n') : 'A war rule was broken.',
-  ].filter(Boolean).join('\n');
-  fields.push({ name: 'Current strike', value: currentStrike, inline: false });
-  fields.push({
-    name: 'Active record',
-    value: `This is **Strike ${strikeNumber}** of **${activeStrikes.length} active strike${activeStrikes.length === 1 ? '' : 's'}**.`,
-    inline: false,
-  });
-  fields.push({
-    name: 'Consequence',
-    value: 'War-ineligible until you contact leadership, acknowledge the rule break, and confirm you understand the timing rule.',
-    inline: false,
-  });
+  const fields: DiscordEmbedField[] = lateSnipe
+    ? lateSnipeFields({ memberName, playerTag, warLabel, strikeNumber, activeStrikes, lateSnipe })
+    : standardStrikeFields({ memberName, playerTag, ruleName, warLabel, reasons, strikeNumber, activeStrikes });
 
   // This notification is sent only when a new strike is created. The newest list item is therefore
   // the current strike above; show only older active strikes here. Lines are oldest-first and capped
@@ -238,7 +224,9 @@ export async function notifyStrikeLogged(params: {
   }
 
   const removalNote = level === 'red' ? ' — removal threshold reached' : '';
-  const title = `${LEVEL_EMOJI[level]} Strike ${strikeNumber} Issued${removalNote}`;
+  const title = lateSnipe
+    ? `${LEVEL_EMOJI[level]} Strike ${strikeNumber} of 3 Issued — Better Late Than Never${removalNote}`
+    : `${LEVEL_EMOJI[level]} Strike ${strikeNumber} Issued${removalNote}`;
 
   await sendDiscordMessage(
     {
@@ -257,58 +245,82 @@ export async function notifyStrikeLogged(params: {
   );
 }
 
-/** A one-time, non-punitive prompt for a member who still has an unused war attack at the cutoff. */
-export async function notifyBetterLateThanNever(params: {
+function standardStrikeFields(params: Pick<Parameters<typeof notifyStrikeLogged>[0],
+  'memberName' | 'playerTag' | 'ruleName' | 'warLabel' | 'reasons' | 'strikeNumber' | 'activeStrikes'>): DiscordEmbedField[] {
+  const { memberName, playerTag, ruleName, warLabel, reasons, strikeNumber, activeStrikes } = params;
+  const fields: DiscordEmbedField[] = [
+    { name: 'Member', value: `${memberName || 'Unknown'} (${playerTag})`, inline: true },
+  ];
+  if (warLabel) fields.push({ name: 'War', value: warLabel, inline: true });
+  const currentStrike = [
+    ruleName ? `**${ruleName}**` : null,
+    reasons.length ? reasons.map((r) => `• ${r}`).join('\n') : 'A war rule was broken.',
+  ].filter(Boolean).join('\n');
+  fields.push({ name: 'Current strike', value: currentStrike, inline: false });
+  fields.push({
+    name: 'Active record',
+    value: `This is **Strike ${strikeNumber}** of **${activeStrikes.length} active strike${activeStrikes.length === 1 ? '' : 's'}**.`,
+    inline: false,
+  });
+  fields.push({
+    name: 'Consequence',
+    value: 'War-ineligible until you contact leadership, acknowledge the rule break, and confirm you understand the timing rule.',
+    inline: false,
+  });
+  return fields;
+}
+
+function lateSnipeFields(params: {
   memberName?: string | null;
   playerTag: string;
   warLabel?: string | null;
-  attacksRemaining: number;
-  activeStrikeCount: number;
-  webhookUrl?: string | null;
-  mentionDiscordId?: string | null;
-}): Promise<void> {
-  const {
-    memberName, playerTag, warLabel, attacksRemaining, activeStrikeCount, webhookUrl, mentionDiscordId,
-  } = params;
-  const plural = attacksRemaining === 1 ? '' : 's';
-  const nextStrike = activeStrikeCount + 1;
-  const currentRecord = activeStrikeCount
-    ? `You currently have **${activeStrikeCount} active strike${activeStrikeCount === 1 ? '' : 's'}**.`
-    : 'You currently have **no active strikes**.';
+  strikeNumber: number;
+  activeStrikes: { issuedAt: string; label: string; leadershipApproved: boolean }[];
+  lateSnipe: { windowHours: number; violations: DetectedViolation[] };
+}): DiscordEmbedField[] {
+  const { memberName, playerTag, warLabel, strikeNumber, activeStrikes, lateSnipe } = params;
+  const windowHours = Number.isFinite(lateSnipe.windowHours) && lateSnipe.windowHours > 0
+    ? lateSnipe.windowHours
+    : 6;
+  const remaining = lateSnipe.violations
+    .flatMap((v) => {
+      const hits = v.evidence?.late_attacks;
+      return Array.isArray(hits)
+        ? hits.map((hit) => Number((hit as { hours_left?: unknown }).hours_left)).filter(Number.isFinite)
+        : [Number(v.evidence?.hours_left)].filter(Number.isFinite);
+    })
+    .map(formatRemainingTime);
+  const attackEvidence = remaining.length
+    ? remaining.map((time, index) => `• **Attack ${index + 1}:** ${time} remaining in war`).join('\n')
+    : '• **Attack detected** during the late-snipe window.';
 
-  await sendDiscordMessage(
-    {
-      content: mentionDiscordId ? `<@${mentionDiscordId}>` : undefined,
-      allowed_mentions: mentionDiscordId ? { users: [mentionDiscordId] } : { parse: [] },
-      embeds: [{
-        title: '⏳ Better Late Than Never — Action Needed',
-        color: COLOR_WARNING,
-        fields: [
-          { name: 'Member', value: `${memberName || 'Unknown'} (${playerTag})`, inline: true },
-          ...(warLabel ? [{ name: 'War', value: warLabel, inline: true }] : []),
-          {
-            name: 'Action required',
-            value: `You still have **${attacksRemaining} war attack${plural}** available. Use it now. ` +
-              'An attack from this point may be recorded as a late-snipe rule break; no attack by war end will be recorded as a missed attack.',
-          },
-          {
-            name: 'Strike impact',
-            value: `${currentRecord} A rule break in this war would become **Strike ${nextStrike}**.`,
-          },
-          {
-            name: 'Consequence if struck',
-            value: 'War-ineligible until you contact leadership, acknowledge the rule break, and confirm you understand the timing rule.',
-          },
-          {
-            name: 'Why early attacks matter',
-            value: 'Early attacks show awareness, keep pressure on the enemy, and reduce pressure on leadership. Even in a perfect war, Elders should still loot or hit any base to show they are active and aligned.',
-          },
-        ],
-        footer: { text: 'ClanOps · this is a reminder, not a strike' },
-      }],
-    },
-    webhookUrl,
+  const fields: DiscordEmbedField[] = [
+    { name: 'Evidence of violation', value: `${attackEvidence}\n• **Rule deadline:** before the final **${formatHours(windowHours)}** of war\n• **Result:** **Attack was late.**` },
+    { name: 'Member', value: `${memberName || 'Unknown'} (${playerTag})`, inline: true },
+    ...(warLabel ? [{ name: 'War', value: warLabel, inline: true }] : []),
+    { name: 'Strike record', value: `This is **Strike ${strikeNumber} of 3** active strikes.` },
+  ];
+  const currentStrike = activeStrikes.at(-1);
+  if (currentStrike) {
+    const expiry = expiryOf(currentStrike.issuedAt);
+    fields.push({ name: 'Strike expires', value: `${discordTs(expiry, 'D')} (${discordTs(expiry, 'R')})` });
+  }
+  fields.push(
+    { name: 'Why early attacks matter', value: 'Early attacks show awareness, keep pressure on the enemy, and reduce pressure on leadership. Even in a perfect war, Elders should still loot or hit any base to show they are active and aligned.' },
+    { name: 'Consequence', value: 'War-ineligible until the player contacts leadership, owns the rule break, and confirms they understand the timing rule.' },
   );
+  return fields;
+}
+
+function formatRemainingTime(hours: number): string {
+  const totalMinutes = Math.max(0, Math.round(hours * 60));
+  const wholeHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${wholeHours}h ${String(minutes).padStart(2, '0')}m`;
+}
+
+function formatHours(hours: number): string {
+  return Number.isInteger(hours) ? `${hours}h` : `${hours} hours`;
 }
 
 /** Keep an embed field within Discord's 1024-char limit, trimming whole lines from the tail. */
