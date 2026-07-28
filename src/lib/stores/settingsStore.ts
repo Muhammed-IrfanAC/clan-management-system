@@ -23,6 +23,10 @@ export type PersonOption = {
   player_tag: string;
 };
 
+// The Discord routing override as the client is allowed to see it: whether the redirect is on, and a
+// masked fingerprint of the destination. The full URL is write-only from here.
+export type DiscordRoute = { enabled: boolean; maskedUrl: string | null; configured: boolean };
+
 export type NewClan = { tag: string; name: string; type: string };
 export type NewRule = { name: string; description: string; guidance: string };
 
@@ -53,8 +57,16 @@ function byPerson(accts: AcctRow[]): Map<string, LeaderRow> {
 
 // Read every server slice the Settings screen needs in one shot. Kept separate from the actions so
 // both the initial load (with a loading flash) and post-mutation refreshes (silent) can reuse it.
+// The Discord routing override is configured through its own masked API route, not the generic
+// settings blob: the webhook URL is a secret (holding it is enough to post as the bot), so it must
+// never reach the browser. Both of its keys are filtered out here and rendered by their own control.
+export const DISCORD_ROUTE_KEYS = ['discord_override_enabled', 'discord_override_webhook_url'];
+
 async function loadAll() {
-  const { data: s } = await supabase.from('settings').select('*');
+  const { data: s } = await supabase
+    .from('settings')
+    .select('*')
+    .not('key', 'in', `(${DISCORD_ROUTE_KEYS.join(',')})`);
   const { data: c } = await supabase.from('clans').select('*').order('display_order');
   const { data: r } = await supabase.from('rules').select('*');
 
@@ -107,6 +119,11 @@ type SettingsState = {
 
   updateSetting: (key: string, value: unknown) => Promise<void>;
 
+  discordRoute: DiscordRoute | null;
+  savingDiscordRoute: boolean;
+  fetchDiscordRoute: () => Promise<void>;
+  saveDiscordRoute: (patch: { webhookUrl?: string; enabled?: boolean }) => Promise<boolean>;
+
   addClan: (form: NewClan) => Promise<boolean>;
   removeClan: (id: string) => Promise<void>;
   updateClanAutomation: (id: string, mode: RuleAutomationMode) => Promise<void>;
@@ -133,6 +150,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   coLeaderCaps: {},
   permsLoading: true,
   savingCap: null,
+
+  discordRoute: null,
+  savingDiscordRoute: false,
 
   setToast: (toast) => set({ toast }),
 
@@ -164,6 +184,47 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       if (error) throw error;
     } catch {
       set({ appSettings: prev, toast: { message: 'Error updating setting.', type: 'error' } });
+    }
+  },
+
+  // Routed through /api/settings/discord-route rather than PostgREST — the webhook URL is a secret
+  // and the route is what masks it. A non-leader simply gets no control (the GET 403s).
+  async fetchDiscordRoute() {
+    try {
+      const res = await fetch('/api/settings/discord-route');
+      if (!res.ok) return;
+      set({ discordRoute: (await res.json()) as DiscordRoute });
+    } catch (err) {
+      console.error('Error loading Discord routing:', err);
+    }
+  },
+
+  async saveDiscordRoute(patch) {
+    if (get().savingDiscordRoute) return false;
+    set({ savingDiscordRoute: true });
+    try {
+      const res = await fetch('/api/settings/discord-route', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || 'Error updating notification routing');
+      set({
+        discordRoute: body as DiscordRoute,
+        toast: {
+          message: (body as DiscordRoute).enabled
+            ? 'All notifications are going to the override channel.'
+            : 'Notifications are routed to the normal clan channels.',
+          type: 'success',
+        },
+      });
+      return true;
+    } catch (err) {
+      set({ toast: { message: err instanceof Error ? err.message : 'Error updating notification routing', type: 'error' } });
+      return false;
+    } finally {
+      set({ savingDiscordRoute: false });
     }
   },
 

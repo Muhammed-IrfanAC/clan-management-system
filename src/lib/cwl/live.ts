@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 import { pollLeagueState, type TaggedLeagueWar } from './api';
 import { UNREVEALED_WAR_TAG, type CoCLeagueWarClan } from '@/lib/coc-api';
 import { buildLineup, persistWarAttacks } from '@/lib/warAttacks';
+import { notifyLineupIfRevealed } from './lineupNotify';
 
 /**
  * Phase 2 live-state ingestion. Polls every participating family clan's current CWL league group
@@ -127,6 +128,19 @@ async function ingestClan(seasonId: string, clanId: string, clanTag: string): Pr
       opponentMembers: side.them.members,
       personByTag,
       rankByTag,
+    });
+
+    // Announce the revealed lineup and how it differs from the formed roster. Runs after the member
+    // rows are written so it reads the lineup this poll just landed; it no-ops for any round that is
+    // not freshly revealed, and swallows its own failures (see notifyLineupIfRevealed).
+    await notifyLineupIfRevealed({
+      seasonId,
+      clanId,
+      roundId: roundRow.id,
+      roundNumber,
+      state: war.state,
+      opponentName: side.them.name,
+      startTime: war.startTime || null,
     });
   }
 

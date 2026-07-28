@@ -10,11 +10,18 @@
  * Routing: each clan may have its own webhook (`clans.discord_webhook_url`) so events post to a
  * clan-specific channel; when a clan has none, we fall back to the global DISCORD_WEBHOOK_URL env
  * var. Resolve the URL with `webhookUrlForClan()` and pass it to the send helpers.
+ *
+ * ROUTING OVERRIDE (migration 027): while `discord_override_enabled` is on, every message is
+ * redirected to `discord_override_webhook_url` regardless of which channel the caller resolved — the
+ * testing-phase mode where the whole family's traffic lands in one private channel. The redirect is
+ * applied inside `sendDiscordMessage`, the single choke point every notification passes through, so
+ * it cannot be bypassed by a caller that forgets about it (including one written later).
  */
 
 import { supabase } from './supabase';
 import { expiryOf, type StrikeLevel } from './strikes/status';
 import type { DetectedViolation } from './rules/types';
+import type { LineupDiff } from './cwl/lineup';
 
 // Discord embed colors (decimal). Amber for warnings; strikes take the member's live strike LEVEL
 // colour (green/orange/red) so the embed mirrors the dashboard badge — see LEVEL_COLOR below.
@@ -54,8 +61,56 @@ type DiscordEmbed = {
 };
 
 /**
+ * The routing override, cached in-process for a short TTL.
+ *
+ * Two settings rows (migration 027) rather than one: the switch and the destination are separate so
+ * the channel can stay configured while the redirect is flipped off, which is what makes turning the
+ * testing phase on and off a one-click action. Both must be present for the override to apply.
+ *
+ * Cached because EVERY notification consults it and a sync can fire dozens in one pass. The TTL is
+ * the same 15s the capability loader uses — a settings flip takes effect within a sync or two, which
+ * is the right granularity for a channel-routing switch. Fail-safe: any DB error resolves to "no
+ * override", so a settings-table problem degrades to normal per-clan routing rather than silence.
+ */
+let overrideCache: { url: string | null; at: number } | null = null;
+const OVERRIDE_TTL_MS = 15_000;
+
+async function overrideWebhookUrl(): Promise<string | null> {
+  const now = Date.now();
+  if (overrideCache && now - overrideCache.at < OVERRIDE_TTL_MS) return overrideCache.url;
+
+  let url: string | null = null;
+  try {
+    const { data } = await supabase
+      .from('settings')
+      .select('key, value')
+      .in('key', ['discord_override_enabled', 'discord_override_webhook_url']);
+    const rows = new Map((data || []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
+    const enabled = rows.get('discord_override_enabled') === true;
+    const configured = typeof rows.get('discord_override_webhook_url') === 'string'
+      ? (rows.get('discord_override_webhook_url') as string).trim()
+      : '';
+    url = enabled && configured ? configured : null;
+  } catch (err) {
+    console.error('Discord routing override lookup failed (falling back to normal routing):', err);
+    url = null;
+  }
+
+  overrideCache = { url, at: now };
+  return url;
+}
+
+/** Drop the cached override so the next send re-reads the settings rows. Called after a config write. */
+export function invalidateDiscordRouteCache(): void {
+  overrideCache = null;
+}
+
+/**
  * Resolve which webhook a clan's notifications go to: the clan's own channel if configured,
  * otherwise the global DISCORD_WEBHOOK_URL. Returns null when neither is set (feature disabled).
+ *
+ * This resolves the clan's NORMAL destination and deliberately ignores the routing override — the
+ * redirect is applied at send time so it covers every path, not only the ones that call this.
  */
 export async function webhookUrlForClan(clanId?: string | null): Promise<string | null> {
   if (clanId) {
@@ -100,7 +155,11 @@ export async function sendDiscordMessage(
   },
   webhookUrl?: string | null,
 ): Promise<boolean> {
-  const url = webhookUrl || process.env.DISCORD_WEBHOOK_URL;
+  // The override wins over whatever the caller resolved: during the testing phase EVERY notification
+  // belongs in the one private channel. Mentions are left live — the point of a rehearsal channel is
+  // to see exactly what the real message would look like, pings included.
+  const override = await overrideWebhookUrl();
+  const url = override || webhookUrl || process.env.DISCORD_WEBHOOK_URL;
   if (!url) return false; // Feature disabled in this environment — no-op.
 
   try {
@@ -111,6 +170,9 @@ export async function sendDiscordMessage(
         username: 'ClanOps',
         allowed_mentions: { parse: [] },
         ...payload,
+        // Applied AFTER the payload so it cannot be overridden: a message in the test channel must
+        // never be mistaken for one the family actually received.
+        ...(override ? { username: 'ClanOps · test routing' } : {}),
       }),
     });
     if (!res.ok) {
@@ -310,6 +372,94 @@ function lateSnipeFields(params: {
     { name: 'Consequence', value: 'War-ineligible until the player contacts leadership, owns the rule break, and confirms they understand the timing rule.' },
   );
   return fields;
+}
+
+/**
+ * Announce a CWL round's lineup at reveal, calling out how it differs from the formed roster.
+ *
+ * Posted once per round, the moment the war is revealed and still in preparation — the window where
+ * a swap is still actionable. The asymmetry in mentions is deliberate and is the whole point of the
+ * message: someone SWAPPED IN has to know they are playing today, so they get a real @ping. Someone
+ * swapped out is named without a ping — they need the information, not a notification telling them
+ * they lost their slot. `allowed_mentions.users` is restricted to exactly the swapped-in ids, so a
+ * name appearing in the swapped-out list can never resolve into a ping.
+ *
+ * Best-effort like every send here. Returns whether Discord accepted it, because the caller only
+ * stamps `lineup_notified_at` on success — a failed post is retried on the next sync rather than
+ * silently costing the round its notice.
+ */
+export async function notifyRoundLineup(params: {
+  clanName: string;
+  roundNumber: number;
+  opponentName?: string | null;
+  startTime?: string | null;
+  diff: LineupDiff;
+  // Discord ids for the swapped-IN accounts only, in the same order; null where the person has no
+  // linked Discord (or the account has no person at all — a guest roster).
+  swappedInMentions: (string | null)[];
+  webhookUrl?: string | null;
+}): Promise<boolean> {
+  const { clanName, roundNumber, opponentName, startTime, diff, swappedInMentions, webhookUrl } = params;
+
+  const mentionIds = swappedInMentions.filter((id): id is string => !!id);
+
+  const fields: DiscordEmbedField[] = [];
+
+  if (diff.swappedIn.length) {
+    fields.push({
+      name: `⬆️ Swapped in (${diff.swappedIn.length})`,
+      value: truncateField(
+        diff.swappedIn
+          .map((p, i) => {
+            const who = swappedInMentions[i] ? `<@${swappedInMentions[i]}>` : `**${p.name}**`;
+            // Name the reason: a bench call-up is the roster working as designed, while an account
+            // the season never assigned here is a lineup the plan does not describe.
+            const why = p.reason === 'from_bench' ? 'from the bench' : 'not on this clan’s roster';
+            return `• ${who} (${p.playerTag}) — ${why}`;
+          })
+          .join('\n'),
+      ),
+    });
+  }
+
+  if (diff.swappedOut.length) {
+    fields.push({
+      name: `⬇️ Swapped out (${diff.swappedOut.length})`,
+      // Plain names, never mentions — see the doc block.
+      value: truncateField(diff.swappedOut.map((p) => `• ${p.name} (${p.playerTag})`).join('\n')),
+    });
+  }
+
+  fields.push({
+    name: 'Lineup',
+    value: `**${diff.actualSize}** in the war · **${diff.asPlanned}** of **${diff.plannedSize}** planned starters fielded`,
+    inline: false,
+  });
+
+  if (startTime) {
+    fields.push({ name: 'Battle day starts', value: `${discordTs(startTime, 'f')} (${discordTs(startTime, 'R')})`, inline: false });
+  }
+
+  const title = diff.matchesPlan
+    ? `⚔️ Round ${roundNumber} — lineup matches the roster`
+    : `🔄 Round ${roundNumber} — lineup changed`;
+
+  return sendDiscordMessage(
+    {
+      content: mentionIds.length ? mentionIds.map((id) => `<@${id}>`).join(' ') : undefined,
+      allowed_mentions: { users: mentionIds },
+      embeds: [
+        {
+          title,
+          description: `**${clanName}**${opponentName ? ` vs ${opponentName}` : ''}`,
+          color: diff.matchesPlan ? 0x22c55e : COLOR_WARNING,
+          fields,
+          footer: { text: 'ClanOps · CWL' },
+        },
+      ],
+    },
+    webhookUrl,
+  );
 }
 
 function formatRemainingTime(hours: number): string {

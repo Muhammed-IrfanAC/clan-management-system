@@ -432,6 +432,9 @@ export interface CWLRound {
   start_time: string | null;
   end_time: string | null;
   polled_at: string;
+  // When the round-reveal lineup notice was posted to Discord (migration 027). Null = not sent yet;
+  // set once, on a successful send, so a failed post retries on the next sync.
+  lineup_notified_at: string | null;
 }
 
 // One of our members' lineup slot + attack result within a round. attacks_used is 0 or 1 (CWL

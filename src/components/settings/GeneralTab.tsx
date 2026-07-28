@@ -1,10 +1,15 @@
 'use client';
 
 import { useSettingsStore } from '@/lib/stores/settingsStore';
+import DiscordRoutingCard from './DiscordRoutingCard';
 
 // System defaults tab. Renders whatever settings rows exist in the DB generically — booleans as a
 // toggle, everything else as a number input — so pruning or seeding a key in a migration is all it
 // takes to change what shows here.
+//
+// The one exception is the Discord routing override, which gets a hand-built card: its value is a
+// secret that never reaches this component (the store filters it out), so it cannot be rendered by
+// the generic loop at all.
 export default function GeneralTab() {
   const appSettings = useSettingsStore((s) => s.appSettings);
   const updateSetting = useSettingsStore((s) => s.updateSetting);
@@ -43,6 +48,7 @@ export default function GeneralTab() {
             </div>
           </div>
         ))}
+        <DiscordRoutingCard />
       </div>
     </div>
   );
