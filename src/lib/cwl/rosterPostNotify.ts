@@ -180,6 +180,11 @@ export interface PostResult {
  * Safe to call repeatedly: each message is edited in place, so this is also the "refresh after a
  * transfer landed" action. A clan with no webhook and no global fallback simply fails and is
  * reported; the rest still go out.
+ *
+ * The rosters route as ANNOUNCEMENTS (migration 029) — a standing, edited-in-place post nobody has to
+ * act on, which is a different kind of thing from the transfer call that pings the people who must
+ * move. With no announcement channel configured they fall through to the clan channel, i.e. where
+ * they went before. The transfer call keeps its per-clan routing either way.
  */
 export async function postSeasonRoster(seasonId: string): Promise<PostResult> {
   const posts = await renderSeasonPosts(seasonId);
@@ -187,7 +192,7 @@ export async function postSeasonRoster(seasonId: string): Promise<PostResult> {
 
   for (const clan of posts.clans) {
     const messageId = await postOrEditDiscordMessage(clan.message, {
-      webhookUrl: await webhookUrlForClan(clan.clanId),
+      webhookUrl: await webhookUrlForClan(clan.clanId, 'announcement'),
       messageId: clan.messageId,
     });
     if (!messageId) {
@@ -206,7 +211,9 @@ export async function postSeasonRoster(seasonId: string): Promise<PostResult> {
   }
 
   // The digest has no clan of its own, so it goes to the global DISCORD_WEBHOOK_URL — the family-wide
-  // channel. (While the routing override is on, so does everything else.)
+  // channel. (While the routing override is on, so does everything else.) Deliberately NOT routed as
+  // an announcement: it reports shortfalls and unassigned accounts, which is leadership's read on how
+  // the roster went, not something to publish to the family.
   const digestId = await postOrEditDiscordMessage(posts.digest, {
     webhookUrl: null,
     messageId: posts.digestMessageId,

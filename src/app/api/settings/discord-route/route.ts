@@ -4,20 +4,24 @@ import { requireAuth, requireCapability, authErrorResponse } from '@/lib/auth-se
 import { invalidateDiscordRouteCache } from '@/lib/discord';
 
 /**
- * Configure the Discord NOTIFICATION ROUTING OVERRIDE (migration 027) — the testing-phase switch
- * that sends every notification to one private channel instead of the per-clan channels.
+ * Configure Discord channel routing: the NOTIFICATION ROUTING OVERRIDE (migration 027) — the
+ * testing-phase switch that sends every notification to one private channel instead of the per-clan
+ * channels — and the ANNOUNCEMENT channel (migration 029) that CWL roster posts go to.
  *
  * Why this exists as a route at all, when the General settings tab writes every other settings row
  * straight to PostgREST from the browser: a webhook URL is a SECRET. Anyone holding it can post into
- * the channel as the bot. So it is never included in the settings blob the dashboard fetches — the
- * store filters the key out, and this route serves a MASKED form of it for display. The full value
- * is write-only from the client's perspective.
+ * the channel as the bot. So neither is ever included in the settings blob the dashboard fetches —
+ * the store filters the keys out, and this route serves a MASKED form of them for display. The full
+ * values are write-only from the client's perspective.
  *
  * Gated on `leader.manage`, the same capability that governs the rest of system configuration.
  */
 
 const ENABLED_KEY = 'discord_override_enabled';
 const URL_KEY = 'discord_override_webhook_url';
+const ANNOUNCE_KEY = 'discord_announcement_webhook_url';
+
+const WEBHOOK_RE = /^https:\/\/(canary\.|ptb\.)?discord\.com\/api\/webhooks\//;
 
 /** Show enough of the URL to recognise WHICH webhook is set, never enough to use it. */
 function maskWebhook(url: string): string | null {
@@ -32,13 +36,18 @@ function maskWebhook(url: string): string | null {
 }
 
 async function readState() {
-  const { data } = await supabase.from('settings').select('key, value').in('key', [ENABLED_KEY, URL_KEY]);
+  const { data } = await supabase.from('settings').select('key, value').in('key', [ENABLED_KEY, URL_KEY, ANNOUNCE_KEY]);
   const rows = new Map((data || []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
-  const url = typeof rows.get(URL_KEY) === 'string' ? (rows.get(URL_KEY) as string) : '';
+  const str = (key: string) => (typeof rows.get(key) === 'string' ? (rows.get(key) as string) : '');
+  const url = str(URL_KEY);
+  const announce = str(ANNOUNCE_KEY);
   return {
     enabled: rows.get(ENABLED_KEY) === true,
     maskedUrl: maskWebhook(url),
     configured: !!url.trim(),
+    maskedAnnouncementUrl: maskWebhook(announce),
+    // False is a meaningful state, not an error: announcements then inherit the clan channel.
+    announcementConfigured: !!announce.trim(),
   };
 }
 
@@ -63,10 +72,21 @@ export async function PATCH(request: NextRequest) {
     // stay distinguishable — only a present string is written.
     if (typeof body?.webhookUrl === 'string') {
       const url = body.webhookUrl.trim();
-      if (url && !/^https:\/\/(canary\.|ptb\.)?discord\.com\/api\/webhooks\//.test(url)) {
+      if (url && !WEBHOOK_RE.test(url)) {
         return NextResponse.json({ error: 'That is not a Discord webhook URL' }, { status: 400 });
       }
       const { error } = await supabase.from('settings').update({ value: url }).eq('key', URL_KEY);
+      if (error) throw error;
+    }
+
+    // Empty string is a legitimate value here, unlike the override URL: clearing it hands
+    // announcements back to the clan channels rather than turning them off.
+    if (typeof body?.announcementWebhookUrl === 'string') {
+      const url = body.announcementWebhookUrl.trim();
+      if (url && !WEBHOOK_RE.test(url)) {
+        return NextResponse.json({ error: 'That is not a Discord webhook URL' }, { status: 400 });
+      }
+      const { error } = await supabase.from('settings').update({ value: url }).eq('key', ANNOUNCE_KEY);
       if (error) throw error;
     }
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Radio, AlertTriangle } from 'lucide-react';
+import { Radio, AlertTriangle, Megaphone } from 'lucide-react';
 import { useSettingsStore } from '@/lib/stores/settingsStore';
 
 /**
@@ -12,7 +12,11 @@ import { useSettingsStore } from '@/lib/stores/settingsStore';
  * testing-phase posture: watch the whole system talk in a private channel before it talks to the
  * family.
  *
- * The URL field is WRITE-ONLY. What comes back from the API is a masked fingerprint, because a
+ * It also holds the ANNOUNCEMENT channel (migration 029) — where the CWL roster posts go, separately
+ * from the clan channels that carry everything addressed to specific people. Leaving it unset is a
+ * real choice, not an omission: announcements then post to each clan's own channel exactly as before.
+ *
+ * The URL fields are WRITE-ONLY. What comes back from the API is a masked fingerprint, because a
  * webhook URL is a credential — see the route's doc block. Typing a new value replaces it; leaving
  * the field blank leaves the stored one alone.
  */
@@ -23,6 +27,7 @@ export default function DiscordRoutingCard() {
   const saveDiscordRoute = useSettingsStore((s) => s.saveDiscordRoute);
 
   const [url, setUrl] = useState('');
+  const [announceUrl, setAnnounceUrl] = useState('');
 
   useEffect(() => {
     fetchDiscordRoute();
@@ -105,6 +110,64 @@ export default function DiscordRoutingCard() {
             </span>
           )}
         </div>
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--color-border)', margin: 'var(--space-lg) 0 var(--space-md)' }} />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: '4px' }}>
+        <Megaphone size={16} style={{ color: 'var(--color-cta)' }} />
+        <p style={{ fontWeight: 700, margin: 0, fontSize: '0.9rem' }}>ANNOUNCEMENT CHANNEL</p>
+      </div>
+      <p className="text-muted" style={{ fontSize: '0.8rem', margin: '0 0 var(--space-md)' }}>
+        {route.announcementConfigured
+          ? 'CWL roster posts go here. Transfer calls, strikes and lineup notices still go to each clan’s own channel — they are aimed at specific people.'
+          : 'Not set — CWL roster posts go to each clan’s own channel. Set a webhook to keep the standing roster out of the channels people watch for things aimed at them.'}
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+          Announcement webhook URL
+          {route.announcementConfigured && (
+            <span style={{ marginLeft: 6, fontVariantNumeric: 'tabular-nums' }}>
+              · currently <code style={{ fontSize: '0.7rem' }}>{route.maskedAnnouncementUrl}</code>
+            </span>
+          )}
+        </label>
+        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+          <input
+            type="password"
+            className="input"
+            style={{ flex: '1 1 320px' }}
+            autoComplete="off"
+            placeholder={route.announcementConfigured ? 'Enter a new URL to replace the stored one' : 'https://discord.com/api/webhooks/…'}
+            value={announceUrl}
+            onChange={(e) => setAnnounceUrl(e.target.value)}
+          />
+          <button
+            className="btn btn-outline"
+            disabled={saving || !announceUrl.trim()}
+            onClick={async () => {
+              if (await saveDiscordRoute({ announcementWebhookUrl: announceUrl.trim() })) setAnnounceUrl('');
+            }}
+          >
+            Save URL
+          </button>
+          {/* Clearing is a supported end state, not an undo — it hands announcements back to the clan
+              channels, so it gets its own control rather than being reachable only by saving blank. */}
+          {route.announcementConfigured && (
+            <button
+              className="btn btn-outline"
+              disabled={saving}
+              onClick={() => saveDiscordRoute({ announcementWebhookUrl: '' })}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <p className="text-muted" style={{ fontSize: '0.7rem', margin: 0 }}>
+          Changing this re-posts each clan’s roster into the new channel on the next roster post. The
+          old ones stay where they are — delete them manually so nobody reads a stale roster.
+        </p>
       </div>
     </div>
   );

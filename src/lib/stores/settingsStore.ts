@@ -25,7 +25,14 @@ export type PersonOption = {
 
 // The Discord routing override as the client is allowed to see it: whether the redirect is on, and a
 // masked fingerprint of the destination. The full URL is write-only from here.
-export type DiscordRoute = { enabled: boolean; maskedUrl: string | null; configured: boolean };
+export type DiscordRoute = {
+  enabled: boolean;
+  maskedUrl: string | null;
+  configured: boolean;
+  // The announcement channel (migration 029). Not configured = announcements inherit the clan channel.
+  maskedAnnouncementUrl: string | null;
+  announcementConfigured: boolean;
+};
 
 export type NewClan = { tag: string; name: string; type: string };
 export type NewRule = { name: string; description: string; guidance: string };
@@ -57,10 +64,14 @@ function byPerson(accts: AcctRow[]): Map<string, LeaderRow> {
 
 // Read every server slice the Settings screen needs in one shot. Kept separate from the actions so
 // both the initial load (with a loading flash) and post-mutation refreshes (silent) can reuse it.
-// The Discord routing override is configured through its own masked API route, not the generic
-// settings blob: the webhook URL is a secret (holding it is enough to post as the bot), so it must
-// never reach the browser. Both of its keys are filtered out here and rendered by their own control.
-export const DISCORD_ROUTE_KEYS = ['discord_override_enabled', 'discord_override_webhook_url'];
+// Discord channel routing is configured through its own masked API route, not the generic settings
+// blob: a webhook URL is a secret (holding it is enough to post as the bot), so it must never reach
+// the browser. Every one of these keys is filtered out here and rendered by their own control.
+export const DISCORD_ROUTE_KEYS = [
+  'discord_override_enabled',
+  'discord_override_webhook_url',
+  'discord_announcement_webhook_url',
+];
 
 async function loadAll() {
   const { data: s } = await supabase
@@ -122,7 +133,11 @@ type SettingsState = {
   discordRoute: DiscordRoute | null;
   savingDiscordRoute: boolean;
   fetchDiscordRoute: () => Promise<void>;
-  saveDiscordRoute: (patch: { webhookUrl?: string; enabled?: boolean }) => Promise<boolean>;
+  saveDiscordRoute: (patch: {
+    webhookUrl?: string;
+    enabled?: boolean;
+    announcementWebhookUrl?: string;
+  }) => Promise<boolean>;
 
   addClan: (form: NewClan) => Promise<boolean>;
   removeClan: (id: string) => Promise<void>;
@@ -210,15 +225,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.error || 'Error updating notification routing');
-      set({
-        discordRoute: body as DiscordRoute,
-        toast: {
-          message: (body as DiscordRoute).enabled
-            ? 'All notifications are going to the override channel.'
-            : 'Notifications are routed to the normal clan channels.',
-          type: 'success',
-        },
-      });
+      const next = body as DiscordRoute;
+      // Report what the leader just changed, not the whole routing posture: saving an announcement
+      // channel while the override happens to be on must not read as "the override was saved".
+      const message = patch.announcementWebhookUrl !== undefined
+        ? next.announcementConfigured
+          ? 'Announcements will post to the announcement channel.'
+          : 'Announcement channel cleared — announcements go to each clan’s channel.'
+        : next.enabled
+          ? 'All notifications are going to the override channel.'
+          : 'Notifications are routed to the normal clan channels.';
+      set({ discordRoute: next, toast: { message, type: 'success' } });
       return true;
     } catch (err) {
       set({ toast: { message: err instanceof Error ? err.message : 'Error updating notification routing', type: 'error' } });
