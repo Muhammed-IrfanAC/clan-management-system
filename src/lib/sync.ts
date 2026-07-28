@@ -4,6 +4,7 @@ import { PlayerAccount, DatabaseRole } from '@/types/database';
 import { promoteBaby, logBabyAction, recruiterTagForPerson, expireDepartedBabies } from './babies';
 import { addOnboardingEvent } from './onboarding';
 import { syncCwlLiveState } from './cwl/live';
+import { detectCompletedTransfers } from './cwl/roster';
 import { syncWarState } from './war';
 import { scanRuleViolations } from './rules/scan';
 import { STRIKE_WINDOW_DAYS } from './strikes/status';
@@ -254,6 +255,21 @@ async function safeWarSync() {
 }
 
 /**
+ * Confirm CWL transfers that have actually happened in game (and reopen ones that came undone).
+ * Runs AFTER every clan is reconciled, because a move is only visible once the DESTINATION clan has
+ * been polled — running it per clan would flip a mover to 'done' or back depending on sync order.
+ * Fail-safe like the other post-roster steps. Returns null on any error.
+ */
+async function safeDetectTransfers() {
+  try {
+    return await detectCompletedTransfers();
+  } catch (err) {
+    console.error('CWL transfer detection error (non-fatal):', err);
+    return null;
+  }
+}
+
+/**
  * Scan enabled automated rules for violations and auto-log any new ones. Runs AFTER the war syncs so
  * it sees fresh round/attack state. Fail-safe like the CWL step — a detector or notification error
  * must never fail the roster sync. Returns null on any error.
@@ -276,10 +292,11 @@ async function safeScanViolations() {
 export async function runFullSync(clanId?: string) {
   if (clanId) {
     const result = await syncClan(clanId);
+    const transfers = await safeDetectTransfers();
     const cwl = await safeCwlSync();
     const war = await safeWarSync();
     const violations = await safeScanViolations();
-    return { ...result, cwl, war, violations };
+    return { ...result, transfers, cwl, war, violations };
   }
 
   const { data: clans } = await supabase.from('clans').select('id').eq('active', true);
@@ -291,6 +308,7 @@ export async function runFullSync(clanId?: string) {
   // anywhere has genuinely left the family (not just moved between clans). Drop those personas
   // immediately rather than waiting out the trial.
   const { expired: departedBabies } = await expireDepartedBabies();
+  const transfers = await safeDetectTransfers();
   const cwl = await safeCwlSync();
   const war = await safeWarSync();
   const violations = await safeScanViolations();
@@ -300,6 +318,7 @@ export async function runFullSync(clanId?: string) {
     clansSynced: results.length,
     totalUpdated: results.reduce((acc, r) => acc + r.count, 0),
     departedBabies,
+    transfers,
     cwl,
     war,
     violations,

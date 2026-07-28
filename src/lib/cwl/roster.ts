@@ -1,7 +1,9 @@
 import { supabase } from '@/lib/supabase';
 import type { EligiblePlayer } from './allocation';
 import { normalizeLeagueTier } from './leagues';
+import { detectTransferOutcomes, type TransferObservation } from './transferDetect';
 import { STRIKE_WINDOW_DAYS } from '@/lib/strikes/status';
+import type { CWLSeasonStatus } from '@/types/database';
 
 /**
  * Server-side CWL roster helpers shared by the API routes: loading the eligible account pool and
@@ -126,4 +128,91 @@ export async function resyncTransfer(
     ]);
     if (insErr) throw insErr;
   }
+}
+
+/**
+ * Seasons whose transfers are still in play. Once a season is in progress the rosters are locked in
+ * game, so a player wandering between clans afterwards says nothing about whether they made the move
+ * in time — recording it then would rewrite history.
+ */
+const OPEN_SEASON_STATUSES: CWLSeasonStatus[] = ['planning', 'transfers_pending', 'signed_up'];
+
+/**
+ * Reconcile every open season's required transfers against where the roster sync last saw each
+ * account, confirming moves that landed and reopening ones that came undone.
+ *
+ * Runs as a step of the full sync, so a leader normally never has to tick the box at all — see
+ * `transferDetect.ts` for the two rules that keep it from overruling a human on data it cannot see.
+ * Returns what changed so the sync result can report it.
+ */
+export async function detectCompletedTransfers(): Promise<{ confirmed: number; reverted: number }> {
+  const { data: seasons, error: seasonErr } = await supabase
+    .from('cwl_seasons')
+    .select('id')
+    .in('status', OPEN_SEASON_STATUSES);
+  if (seasonErr) throw seasonErr;
+
+  const seasonIds = (seasons || []).map((s) => s.id);
+  if (seasonIds.length === 0) return { confirmed: 0, reverted: 0 };
+
+  // Only clans we actually poll can be observed. An inactive clan's member rows are frozen at their
+  // last sync, so a transfer into one must stay the leader's call.
+  const { data: activeClans, error: clanErr } = await supabase
+    .from('clans')
+    .select('id')
+    .eq('active', true);
+  if (clanErr) throw clanErr;
+  const syncedClanIds = new Set((activeClans || []).map((c) => c.id));
+
+  const { data: rows, error: transferErr } = await supabase
+    .from('cwl_transfers')
+    .select('id, status, to_clan_id, allocation:cwl_allocations!inner(id, season_id, account:player_accounts(clan_id, status))')
+    .in('allocation.season_id', seasonIds)
+    .in('status', ['pending', 'done']);
+  if (transferErr) throw transferErr;
+
+  type Row = {
+    id: string;
+    status: string;
+    to_clan_id: string | null;
+    allocation: { id: string; account: { clan_id: string | null; status: string | null } | null } | null;
+  };
+
+  const observations: TransferObservation[] = ((rows as unknown as Row[]) || [])
+    .filter((r) => r.allocation)
+    .map((r) => ({
+      transferId: r.id,
+      allocationId: r.allocation!.id,
+      status: r.status,
+      toClanId: r.to_clan_id,
+      actualClanId: r.allocation!.account?.clan_id ?? null,
+      accountStatus: r.allocation!.account?.status ?? null,
+    }));
+
+  const outcomes = detectTransferOutcomes(observations, syncedClanIds);
+  if (outcomes.length === 0) return { confirmed: 0, reverted: 0 };
+
+  // Two writes per direction rather than one per transfer — this runs on every sync, and the pure
+  // pass above has already reduced it to only the rows that genuinely changed.
+  for (const arrived of [true, false]) {
+    const group = outcomes.filter((o) => o.arrived === arrived);
+    if (group.length === 0) continue;
+
+    const { error: tErr } = await supabase
+      .from('cwl_transfers')
+      .update({ status: arrived ? 'done' : 'pending' })
+      .in('id', group.map((o) => o.transferId));
+    if (tErr) throw tErr;
+
+    const { error: aErr } = await supabase
+      .from('cwl_allocations')
+      .update({ status: arrived ? 'transferred' : 'transfer_required' })
+      .in('id', group.map((o) => o.allocationId));
+    if (aErr) throw aErr;
+  }
+
+  return {
+    confirmed: outcomes.filter((o) => o.arrived).length,
+    reverted: outcomes.filter((o) => !o.arrived).length,
+  };
 }

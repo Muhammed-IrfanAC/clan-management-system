@@ -5,8 +5,10 @@ import { useCWLStore } from '@/lib/stores/cwlStore';
 import { useClanName } from './useClanName';
 
 /**
- * Required in-game transfers with a confirm checkbox. The move itself is manual (in-game); ticking
- * records that a leader completed it. This is deliberately the "your turn to act in-game" surface.
+ * Required in-game transfers. The move itself is manual (in-game), but the roster sync watches every
+ * family clan, so a completed move ticks itself off within a sync cycle and a player who moves back
+ * out re-opens (see `cwl/transferDetect.ts`). The checkbox stays as the manual override — for the
+ * gap before the next sync, and for a destination the sync cannot observe.
  *
  * Reads the store directly: ticking one row splices that row (and its roster card) rather than
  * reloading the season, so the list no longer flashes on every checkbox.
@@ -29,7 +31,8 @@ export default function TransfersPanel() {
         )}
       </div>
       <p className="text-muted" style={{ fontSize: '0.75rem', margin: '0 0 var(--space-md)' }}>
-        Move each account in-game, then tick it off. Nothing here changes the game — it only tracks your manual moves.
+        Ticks itself off once the sync sees the account in its new clan. Tick manually to record a move early —
+        nothing here changes the game.
       </p>
 
       {transfers.length === 0 ? (
