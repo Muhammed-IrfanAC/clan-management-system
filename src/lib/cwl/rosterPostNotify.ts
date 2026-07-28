@@ -5,12 +5,12 @@ import {
   webhookUrlForClan,
   type DiscordMessage,
 } from '@/lib/discord';
-import { normalizeLeagueTier } from './leagues';
 import {
   renderClanRoster,
   renderLeadershipDigest,
-  renderTransferCall,
+  renderTransferCalls,
   type RosterEntry,
+  type TransferCallGroup,
   type TransferMove,
 } from './rosterPost';
 
@@ -38,7 +38,7 @@ type AllocationRow = {
   recommended_clan_id: string | null;
   is_bench: boolean;
   rank: number | null;
-  account: { in_game_name: string | null; th_level: number | null; league: string | null; league_tier_id: number | null } | null;
+  account: { in_game_name: string | null; th_level: number | null } | null;
 };
 
 type TransferRow = {
@@ -55,7 +55,8 @@ export interface SeasonPosts {
   clans: { clanId: string; clanName: string; message: DiscordMessage; messageId: string | null }[];
   digest: DiscordMessage;
   digestMessageId: string | null;
-  transferCall: DiscordMessage;
+  /** One per source clan (plus a trailing family-wide group), empty when nothing has to move. */
+  transferCalls: TransferCallGroup[];
   pendingMoves: number;
   transferCallPostedAt: string | null;
 }
@@ -80,7 +81,7 @@ export async function renderSeasonPosts(seasonId: string): Promise<SeasonPosts> 
         .eq('season_id', seasonId),
       supabase
         .from('cwl_allocations')
-        .select('player_account_tag, recommended_clan_id, is_bench, rank, account:player_accounts(in_game_name, th_level, league, league_tier_id)')
+        .select('player_account_tag, recommended_clan_id, is_bench, rank, account:player_accounts(in_game_name, th_level)')
         .eq('season_id', seasonId)
         .neq('status', 'removed'),
       supabase
@@ -117,7 +118,6 @@ export async function renderSeasonPosts(seasonId: string): Promise<SeasonPosts> 
       playerTag: a.player_account_tag,
       name: a.account?.in_game_name || a.player_account_tag,
       thLevel: a.account?.th_level ?? 0,
-      leagueTier: normalizeLeagueTier(a.account?.league ?? null, a.account?.league_tier_id ?? null),
       isBench: !!a.is_bench,
       rank: a.rank,
     });
@@ -162,7 +162,7 @@ export async function renderSeasonPosts(seasonId: string): Promise<SeasonPosts> 
     clans,
     digest,
     digestMessageId: season.digest_message_id,
-    transferCall: renderTransferCall({ seasonLabel: season.label, moves }),
+    transferCalls: renderTransferCalls({ seasonLabel: season.label, moves }),
     pendingMoves: moves.length,
     transferCallPostedAt: season.transfer_call_posted_at,
   };
@@ -224,7 +224,8 @@ export async function postSeasonRoster(seasonId: string): Promise<PostResult> {
 }
 
 /**
- * Post the "these accounts must move" call-to-action, family-wide.
+ * Post the "these accounts must move" call-to-action — one message per source clan, into that clan's
+ * own channel, so a member is told to move in the channel they already read.
  *
  * `auto` marks the call made by the season entering `transfers_pending`: that one is skipped if it
  * has already been sent, because a status flip made for an unrelated reason must not re-ping the
@@ -233,17 +234,30 @@ export async function postSeasonRoster(seasonId: string): Promise<PostResult> {
 export async function postTransferCall(seasonId: string, opts: { auto?: boolean } = {}): Promise<PostResult> {
   const posts = await renderSeasonPosts(seasonId);
   if (opts.auto && posts.transferCallPostedAt) return { posted: 0, failed: [] };
+  // Nothing to move: send nothing, and leave the season UNSTAMPED so the auto-call still fires if
+  // a later reallocation does create moves.
+  if (posts.transferCalls.length === 0) return { posted: 0, failed: [] };
 
-  // Sent fresh, never edited: editing a message does not re-notify anyone, and the whole purpose of
-  // this message is the notification.
-  const messageId = await postOrEditDiscordMessage(posts.transferCall, { webhookUrl: null });
-  if (!messageId) return { posted: 0, failed: ['transfer call'] };
+  const result: PostResult = { posted: 0, failed: [] };
+  for (const group of posts.transferCalls) {
+    // Sent fresh, never edited: editing a message does not re-notify anyone, and the whole purpose
+    // of this message is the notification. A group with no source clan goes family-wide.
+    const messageId = await postOrEditDiscordMessage(group.message, {
+      webhookUrl: group.fromClanId ? await webhookUrlForClan(group.fromClanId) : null,
+    });
+    if (messageId) result.posted += 1;
+    else result.failed.push(group.fromClanName || 'family-wide transfer call');
+  }
 
-  await supabase
-    .from('cwl_seasons')
-    .update({ transfer_call_posted_at: new Date().toISOString() })
-    .eq('id', seasonId);
-  return { posted: 1, failed: [] };
+  // Stamped once any group landed — the guard exists to stop a repeat ping, and a partial send has
+  // already pinged people.
+  if (result.posted) {
+    await supabase
+      .from('cwl_seasons')
+      .update({ transfer_call_posted_at: new Date().toISOString() })
+      .eq('id', seasonId);
+  }
+  return result;
 }
 
 /** Clan id → display name, for the ids in this season only. */
@@ -264,6 +278,8 @@ async function buildMoves(rows: TransferRow[], clanNames: Map<string, string>): 
     name: r.allocation!.account?.in_game_name || r.allocation!.player_account_tag,
     playerTag: r.allocation!.player_account_tag,
     mentionId: mentions[i],
+    // Only route to a clan we can actually name — an id with no matching row cannot address a channel.
+    fromClanId: r.from_clan_id && clanNames.has(r.from_clan_id) ? r.from_clan_id : null,
     fromClanName: r.from_clan_id ? clanNames.get(r.from_clan_id) || null : null,
     toClanName: clanNames.get(r.to_clan_id!) || 'the assigned clan',
   }));

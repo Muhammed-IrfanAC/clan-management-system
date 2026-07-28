@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   renderClanRoster,
-  renderTransferCall,
+  renderTransferCalls,
   renderLeadershipDigest,
   type RosterEntry,
+  type TransferMove,
 } from './rosterPost';
 
 function entry(over: Partial<RosterEntry> = {}): RosterEntry {
@@ -11,7 +12,6 @@ function entry(over: Partial<RosterEntry> = {}): RosterEntry {
     playerTag: '#AAA',
     name: 'Player',
     thLevel: 16,
-    leagueTier: null,
     isBench: false,
     rank: 1,
     ...over,
@@ -36,10 +36,35 @@ describe('renderClanRoster', () => {
     });
 
     const fields = msg.embeds![0].fields!;
-    expect(fields[0].name).toBe('Lineup (2)');
+    expect(fields[0].name).toBe('Lineup — 2/2');
     expect(fields[0].value.indexOf('First')).toBeLessThan(fields[0].value.indexOf('Second'));
-    expect(fields[1].name).toBe('Bench (1)');
+    expect(fields[1].name).toBe('Bench — 1');
     expect(fields[1].value).toContain('Benched');
+  });
+
+  it('carries name and town hall only — league per line is what made it a wall', () => {
+    const msg = renderClanRoster({
+      seasonLabel: 'S', clanName: 'W', warSize: 1,
+      entries: [entry({ name: 'Solo', thLevel: 15 })],
+    });
+    const value = msg.embeds![0].fields![0].value;
+    expect(value).toContain('Solo');
+    expect(value).toContain('TH15');
+    expect(value).not.toContain('·');
+    expect(value).not.toContain('—');
+  });
+
+  it('aligns the town hall column across lineup and bench', () => {
+    const msg = renderClanRoster({
+      seasonLabel: 'S', clanName: 'W', warSize: 1,
+      entries: [
+        entry({ name: 'Short', rank: 1 }),
+        entry({ name: 'A Much Longer Name', rank: 2, isBench: true }),
+      ],
+    });
+    const [lineup, bench] = msg.embeds![0].fields!;
+    // Same width in both blocks, so the two code blocks read as one continuous table.
+    expect(lineup.value.split('\n')[1].indexOf('TH16')).toBe(bench.value.split('\n')[1].indexOf('TH16'));
   });
 
   it('flags a clan that is short of a full lineup', () => {
@@ -48,6 +73,7 @@ describe('renderClanRoster', () => {
       entries: [entry({ name: 'Only' })],
     });
     expect(msg.embeds![0].description).toContain('14 short');
+    expect(msg.embeds![0].fields![0].name).toBe('Lineup — 1/15');
     expect(msg.embeds![0].color).toBe(0xf59e0b);
   });
 
@@ -56,7 +82,7 @@ describe('renderClanRoster', () => {
       seasonLabel: 'S', clanName: 'Warriors', warSize: 1,
       entries: [entry({ name: 'Only' })],
     });
-    expect(msg.embeds![0].description).not.toContain('short');
+    expect(msg.embeds![0].description).toBeUndefined();
     expect(msg.embeds![0].color).toBe(0x22c55e);
   });
 
@@ -70,7 +96,19 @@ describe('renderClanRoster', () => {
     // Every name survives the split — the point of splitting rather than truncating.
     const all = fields.map((f) => f.value).join('\n');
     for (const e of entries) expect(all).toContain(e.name);
-    expect(fieldNames(msg)).toContain('Lineup (30) (cont.)');
+    expect(fieldNames(msg)).toContain('Lineup — 30/30 (cont.)');
+    // Each chunk is independently fenced, or the second one renders as prose.
+    for (const f of fields) expect(f.value.startsWith('```\n')).toBe(true);
+  });
+
+  it('neutralises a backtick in a name so it cannot break out of the code block', () => {
+    const msg = renderClanRoster({
+      seasonLabel: 'S', clanName: 'W', warSize: 1,
+      entries: [entry({ name: 'Ba`ck' })],
+    });
+    const value = msg.embeds![0].fields![0].value;
+    expect(value).toContain("Ba'ck");
+    expect(value.match(/```/g)).toHaveLength(2); // opening and closing fence only
   });
 
   it('never pings — a roster list is information, not a call to action', () => {
@@ -85,31 +123,58 @@ describe('renderClanRoster', () => {
   });
 });
 
-describe('renderTransferCall', () => {
-  const moves = [
-    { name: 'Mover', playerTag: '#M', mentionId: '111', fromClanName: 'Reborn', toClanName: 'Warriors' },
-    { name: 'NoDiscord', playerTag: '#N', mentionId: null, fromClanName: null, toClanName: 'Academy' },
+describe('renderTransferCalls', () => {
+  const moves: TransferMove[] = [
+    { name: 'Mover', playerTag: '#M', mentionId: '111', fromClanId: 'c1', fromClanName: 'Reborn', toClanName: 'Warriors' },
+    { name: 'Second', playerTag: '#S', mentionId: '222', fromClanId: 'c1', fromClanName: 'Reborn', toClanName: 'Academy' },
+    { name: 'Elsewhere', playerTag: '#E', mentionId: '333', fromClanId: 'c2', fromClanName: 'Academy', toClanName: 'Warriors' },
+    { name: 'NoDiscord', playerTag: '#N', mentionId: null, fromClanId: null, fromClanName: null, toClanName: 'Academy' },
   ];
 
-  it('pings exactly the accounts being asked to move, and nobody else', () => {
-    const msg = renderTransferCall({ seasonLabel: 'S', moves });
-    expect(msg.allowed_mentions).toEqual({ users: ['111'] });
-    expect(msg.content).toBe('<@111>');
+  it('splits into one message per source clan, unrouted movers last', () => {
+    const groups = renderTransferCalls({ seasonLabel: 'S', moves });
+    expect(groups.map((g) => g.fromClanId)).toEqual(['c1', 'c2', null]);
+    expect(groups[0].message.content).toContain('moving out of **Reborn**');
+    expect(groups[0].message.content).toContain('2 accounts');
+  });
+
+  it('pings only the movers in that clan — a message never mentions another clan’s people', () => {
+    const [reborn, academy] = renderTransferCalls({ seasonLabel: 'S', moves });
+    expect(reborn.message.allowed_mentions).toEqual({ users: ['111', '222'] });
+    expect(reborn.message.content).not.toContain('333');
+    expect(academy.message.allowed_mentions).toEqual({ users: ['333'] });
+  });
+
+  it('puts the mentions in content and uses no embed — an embedded mention never notifies', () => {
+    const [first] = renderTransferCalls({ seasonLabel: 'S', moves });
+    expect(first.message.embeds).toBeUndefined();
+    expect(first.message.content).toContain('<@111> **Mover** → **Warriors**');
   });
 
   it('names an account with no linked Discord instead of dropping it', () => {
-    const msg = renderTransferCall({ seasonLabel: 'S', moves });
-    const value = msg.embeds![0].fields![0].value;
-    expect(value).toContain('<@111>');
-    expect(value).toContain('**NoDiscord**');
-    expect(value).toContain('Reborn → **Warriors**');
+    const groups = renderTransferCalls({ seasonLabel: 'S', moves });
+    const last = groups[groups.length - 1].message;
+    expect(last.content).toContain('**NoDiscord** → **Academy**');
+    expect(last.content).toContain('needs to join a clan');
+    expect(last.allowed_mentions).toEqual({ users: [] });
   });
 
-  it('says so plainly when nothing needs to move, and pings nobody', () => {
-    const msg = renderTransferCall({ seasonLabel: 'S', moves: [] });
-    expect(msg.embeds![0].title).toContain('no moves needed');
-    expect(msg.allowed_mentions).toEqual({ parse: [] });
-    expect(msg.content).toBeUndefined();
+  it('sends nothing at all when nothing has to move', () => {
+    expect(renderTransferCalls({ seasonLabel: 'S', moves: [] })).toEqual([]);
+  });
+
+  it('stays inside Discord’s 2000-char content limit and says how many it dropped', () => {
+    const many: TransferMove[] = Array.from({ length: 120 }, (_, i) => ({
+      name: `A Realistically Long Player Name ${i}`,
+      playerTag: `#T${i}`,
+      mentionId: `${100000000000000000 + i}`,
+      fromClanId: 'c1',
+      fromClanName: 'Some Feeder Clan',
+      toClanName: 'The Flagship Clan',
+    }));
+    const [group] = renderTransferCalls({ seasonLabel: 'S', moves: many });
+    expect(group.message.content!.length).toBeLessThanOrEqual(2000);
+    expect(group.message.content).toContain('more — see the roster board');
   });
 });
 

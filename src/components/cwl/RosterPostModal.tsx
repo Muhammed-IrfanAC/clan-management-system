@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { X, Activity, Send, Megaphone, AlertTriangle } from 'lucide-react';
 import { useCWLStore } from '@/lib/stores/cwlStore';
 import type { DiscordMessage } from '@/lib/discord';
@@ -79,8 +79,10 @@ export default function RosterPostModal({ onClose }: { onClose: () => void }) {
           ) : (
             <>
               <p className="text-muted" style={{ fontSize: '0.78rem', margin: '0 0 var(--space-md)' }}>
-                Sent to the family-wide channel. This message <strong>@-mentions</strong> every account that still has to
-                move, and is sent fresh each time — pressing it twice pings them twice.
+                One message per clan people are moving <em>out of</em>, sent to that clan&apos;s own channel. Plain
+                messages, not embeds — a mention inside an embed never notifies. Each one{' '}
+                <strong>@-mentions</strong> the accounts that still have to move, and is sent fresh every time:
+                pressing this twice pings them twice.
               </p>
               {posts.transferCallPostedAt && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--color-warning)', marginBottom: 'var(--space-md)' }}>
@@ -88,7 +90,19 @@ export default function RosterPostModal({ onClose }: { onClose: () => void }) {
                   Already sent {new Date(posts.transferCallPostedAt).toLocaleString()}.
                 </div>
               )}
-              <MessagePreview label="Transfer call" message={posts.transferCall} />
+              {posts.transferCalls.length === 0 ? (
+                <p className="text-muted" style={{ fontSize: '0.8rem' }}>
+                  Nothing to send — everyone is already in the clan they are rostered for.
+                </p>
+              ) : (
+                posts.transferCalls.map((g) => (
+                  <MessagePreview
+                    key={g.fromClanId || 'family'}
+                    label={g.fromClanName ? `${g.fromClanName} — clan channel` : 'Not in a family clan — family-wide channel'}
+                    message={g.message}
+                  />
+                ))
+              )}
             </>
           )}
         </div>
@@ -97,7 +111,7 @@ export default function RosterPostModal({ onClose }: { onClose: () => void }) {
           <button className="btn btn-outline" style={{ border: 'none' }} onClick={onClose}>Close</button>
           <button
             className="btn btn-primary"
-            disabled={!posts || !!posting}
+            disabled={!posts || !!posting || (tab === 'transfers' && posts.transferCalls.length === 0)}
             onClick={() => publish(tab)}
           >
             <Send size={15} />
@@ -128,23 +142,48 @@ function MessagePreview({ label, message }: { label: string; message: DiscordMes
           borderLeft: `3px solid ${embed?.color ? `#${embed.color.toString(16).padStart(6, '0')}` : 'var(--color-border)'}`,
         }}
       >
+        {/* Plain content, not an embed field — the transfer call lives entirely here, because a
+            mention inside an embed renders but never notifies. */}
         {message.content && (
-          <div style={{ fontSize: '0.8rem', marginBottom: 'var(--space-sm)', color: 'var(--color-cta)' }}>{message.content}</div>
+          <div style={{ fontSize: '0.8rem', whiteSpace: 'pre-wrap', lineHeight: 1.6, marginBottom: embed ? 'var(--space-sm)' : 0 }}>
+            {message.content}
+          </div>
         )}
         {embed?.title && <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{embed.title}</div>}
-        {embed?.description && (
-          <div style={{ fontSize: '0.8rem', whiteSpace: 'pre-wrap', margin: '4px 0 0' }}>{embed.description}</div>
-        )}
+        {embed?.description && <Body text={embed.description} style={{ margin: '4px 0 0' }} />}
         {embed?.fields?.map((f, i) => (
           <div key={i} style={{ marginTop: 'var(--space-sm)' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 700 }}>{f.name}</div>
-            <div className="text-muted" style={{ fontSize: '0.75rem', whiteSpace: 'pre-wrap' }}>{f.value}</div>
+            <Body text={f.value} />
           </div>
         ))}
         {embed?.footer && (
           <div className="text-muted" style={{ fontSize: '0.65rem', marginTop: 'var(--space-sm)' }}>{embed.footer.text}</div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Embed text as Discord draws it. Rosters are ```-fenced tables, so the fence markers are stripped
+ * and the block rendered monospace — otherwise the preview shows backticks the real message never has,
+ * and the column alignment the whole format depends on is invisible in a proportional font.
+ */
+function Body({ text, style }: { text: string; style?: CSSProperties }) {
+  const fenced = text.startsWith('```\n') && text.endsWith('\n```');
+  return (
+    <div
+      className={fenced ? undefined : 'text-muted'}
+      style={{
+        fontSize: fenced ? '0.72rem' : '0.78rem',
+        whiteSpace: 'pre',
+        overflowX: 'auto',
+        fontFamily: fenced ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
+        ...style,
+      }}
+    >
+      {fenced ? text.slice(4, -4) : text}
     </div>
   );
 }
