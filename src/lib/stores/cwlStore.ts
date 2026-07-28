@@ -26,6 +26,7 @@ import type {
   CWLWarMember,
 } from '@/types/database';
 import { normalizeLeagueTier } from '@/lib/cwl/leagues';
+import type { SeasonPosts } from '@/lib/cwl/rosterPostNotify';
 import type { RosterPlayer, TransferItem, SeasonClan, MoveAction } from '@/components/cwl/types';
 
 type ToastType = 'success' | 'error';
@@ -113,6 +114,12 @@ type CWLState = {
   savingPriority: boolean;
   toast: CWLToast;
 
+  // Discord roster publishing. The preview is the exact set of messages the API would send, so what
+  // a leader approves is what the family receives.
+  rosterPost: SeasonPosts | null;
+  loadingRosterPost: boolean;
+  postingRoster: 'roster' | 'transfers' | null;
+
   setToast: (toast: CWLToast) => void;
   selectSeason: (id: string) => void;
   loadSeasons: (selectAfter?: string) => Promise<void>;
@@ -129,6 +136,9 @@ type CWLState = {
   setWarSize: (clanId: string, warSize: number) => Promise<void>;
   reallocate: () => Promise<void>;
   deleteSeason: () => Promise<boolean>;
+  loadRosterPost: () => Promise<void>;
+  clearRosterPost: () => void;
+  publishRosterPost: (target: 'roster' | 'transfers') => Promise<void>;
 };
 
 /** POST/PATCH helper that surfaces the API's error message rather than a generic failure. */
@@ -157,6 +167,9 @@ export const useCWLStore = create<CWLState>((set, get) => ({
   savingSeason: false,
   savingPriority: false,
   toast: null,
+  rosterPost: null,
+  loadingRosterPost: false,
+  postingRoster: null,
 
   setToast: (toast) => set({ toast }),
   selectSeason: (id) => set({ selectedSeasonId: id }),
@@ -368,6 +381,49 @@ export const useCWLStore = create<CWLState>((set, get) => ({
       return false;
     } finally {
       set({ savingSeason: false });
+    }
+  },
+  loadRosterPost: async () => {
+    const seasonId = get().selectedSeasonId;
+    if (!seasonId) return;
+    set({ loadingRosterPost: true, rosterPost: null });
+    try {
+      const res = await fetch(`/api/cwl/seasons/${seasonId}/post-roster`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Preview failed');
+      set({ rosterPost: data.posts as SeasonPosts });
+    } catch (err: any) {
+      set({ toast: { message: err.message || 'Could not build the preview', type: 'error' } });
+    } finally {
+      set({ loadingRosterPost: false });
+    }
+  },
+
+  clearRosterPost: () => set({ rosterPost: null }),
+
+  publishRosterPost: async (target) => {
+    const seasonId = get().selectedSeasonId;
+    if (!seasonId) return;
+    set({ postingRoster: target });
+    try {
+      const { posted, failed } = await send(`/api/cwl/seasons/${seasonId}/post-roster`, 'POST', { target });
+      // A partial success is reported as one: the leader needs to know WHICH channels missed out, not
+      // just that "something" went wrong.
+      set({
+        toast: failed.length
+          ? { message: `Posted ${posted} — failed: ${failed.join(', ')}`, type: 'error' }
+          : {
+              message: target === 'transfers' ? 'Transfer call sent' : `Roster posted to ${posted} channel${posted === 1 ? '' : 's'}`,
+              type: 'success',
+            },
+      });
+      // The stored message ids and the transfer-call stamp both moved — re-read so a second press
+      // edits rather than re-posts.
+      await get().loadRosterPost();
+    } catch (err: any) {
+      set({ toast: { message: err.message || 'Posting failed', type: 'error' } });
+    } finally {
+      set({ postingRoster: null });
     }
   },
 }));

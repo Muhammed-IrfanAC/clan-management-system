@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Trash2, Activity } from 'lucide-react';
+import { Trash2, Activity, Megaphone } from 'lucide-react';
 import type { CWLSeason, CWLSeasonStatus } from '@/types/database';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { useCWLStore } from '@/lib/stores/cwlStore';
@@ -13,6 +13,7 @@ import TransfersPanel from './TransfersPanel';
 import LiveRoundsPanel from './LiveRoundsPanel';
 import RotationPanel from './RotationPanel';
 import PerformancePanel from './PerformancePanel';
+import RosterPostModal from './RosterPostModal';
 import { useClanName } from './useClanName';
 
 const STATUS_FLOW: CWLSeasonStatus[] = ['planning', 'transfers_pending', 'signed_up', 'in_progress', 'completed'];
@@ -33,6 +34,7 @@ export default function SeasonView({ season }: { season: CWLSeason }) {
   const clanName = useClanName();
 
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [posting, setPosting] = useState(false);
 
   useEffect(() => {
     loadSeason(season.id);
@@ -56,6 +58,11 @@ export default function SeasonView({ season }: { season: CWLSeason }) {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+          {/* Advancing the status to Transfers Pending / Signed Up posts to Discord on its own; this
+              button is the manual path — preview it first, or refresh it after a late roster change. */}
+          <button className="btn btn-outline" onClick={() => setPosting(true)}>
+            <Megaphone size={15} /> Post to Discord
+          </button>
           <select className="input" style={{ width: 'auto', padding: '6px 10px' }} value={season.status} disabled={savingSeason} onChange={(e) => setSeasonStatus(e.target.value as CWLSeasonStatus)}>
             {STATUS_FLOW.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
           </select>
@@ -103,6 +110,8 @@ export default function SeasonView({ season }: { season: CWLSeason }) {
           <PerformancePanel />
         </>
       )}
+
+      {posting && <RosterPostModal onClose={() => setPosting(false)} />}
 
       <ConfirmationModal
         isOpen={confirmDelete}

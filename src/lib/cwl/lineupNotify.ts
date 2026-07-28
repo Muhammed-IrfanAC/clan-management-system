@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { diffLineup, type PlannedSlot, type ActualSlot } from './lineup';
-import { notifyRoundLineup, webhookUrlForClan } from '@/lib/discord';
+import { discordIdsForAccountTags, notifyRoundLineup, webhookUrlForClan } from '@/lib/discord';
 
 /**
  * The DB/notify half of the planned-vs-actual lineup check — `lineup.ts` is the pure diff.
@@ -82,7 +82,7 @@ export async function notifyLineupIfRevealed(params: {
 
     // Discord ids for the swapped-IN accounts only. Resolved account -> person -> discord_user_id in
     // one round trip; a null anywhere in that chain just means "name them, don't ping them".
-    const swappedInMentions = await mentionsForTags(diff.swappedIn.map((s) => s.playerTag));
+    const swappedInMentions = await discordIdsForAccountTags(diff.swappedIn.map((s) => s.playerTag));
 
     const { data: clan } = await supabase
       .from('clans')
@@ -109,19 +109,4 @@ export async function notifyLineupIfRevealed(params: {
   } catch (err) {
     console.error(`CWL lineup notice failed for round ${roundId} (non-fatal):`, err);
   }
-}
-
-/** Account tags -> their person's Discord id, positionally, with null where there is no link. */
-async function mentionsForTags(tags: string[]): Promise<(string | null)[]> {
-  if (tags.length === 0) return [];
-  const { data } = await supabase
-    .from('player_accounts')
-    .select('player_tag, person:persons(discord_user_id)')
-    .in('player_tag', tags);
-
-  const byTag = new Map<string, string | null>();
-  for (const row of (data as unknown as { player_tag: string; person: { discord_user_id: string | null } | null }[]) || []) {
-    byTag.set(row.player_tag, row.person?.discord_user_id?.trim() || null);
-  }
-  return tags.map((t) => byTag.get(t) ?? null);
 }

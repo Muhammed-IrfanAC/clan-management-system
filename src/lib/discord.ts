@@ -16,6 +16,10 @@
  * testing-phase mode where the whole family's traffic lands in one private channel. The redirect is
  * applied inside `sendDiscordMessage`, the single choke point every notification passes through, so
  * it cannot be bypassed by a caller that forgets about it (including one written later).
+ *
+ * Two send primitives: `sendDiscordMessage` for one-shot announcements (a strike, a lineup notice),
+ * and `postOrEditDiscordMessage` for a LIVING message that is edited in place as the underlying data
+ * changes — the CWL roster post. Both resolve their destination the same way, override included.
  */
 
 import { supabase } from './supabase';
@@ -49,15 +53,25 @@ function discordTs(iso: string, style: 'd' | 'D' | 'f' | 'F' | 'R' = 'D'): strin
   return `<t:${Math.floor(new Date(iso).getTime() / 1000)}:${style}>`;
 }
 
-type DiscordEmbedField = { name: string; value: string; inline?: boolean };
+export type DiscordEmbedField = { name: string; value: string; inline?: boolean };
 
-type DiscordEmbed = {
+export type DiscordEmbed = {
   title?: string;
   description?: string;
   color?: number;
   fields?: DiscordEmbedField[];
   timestamp?: string;
   footer?: { text: string };
+};
+
+/** The editable part of a webhook message — what a pure renderer produces. Deliberately excludes
+ * `username`: Discord's message-EDIT endpoint accepts only content/embeds/allowed_mentions, so a
+ * payload that carries a username cannot be replayed as an edit. */
+export type DiscordMessage = {
+  content?: string;
+  embeds?: DiscordEmbed[];
+  // Restrict which mentions actually ping. Defaults to none so stray text can't mass-ping.
+  allowed_mentions?: { parse?: Array<'users' | 'roles' | 'everyone'>; users?: string[] };
 };
 
 /**
@@ -141,18 +155,32 @@ export async function discordUserIdForPerson(personId?: string | null): Promise<
 }
 
 /**
+ * Resolve player-account tags to their person's Discord id, POSITIONALLY — same length, same order,
+ * null wherever the chain (account → person → discord_user_id) breaks. Null means "name them, don't
+ * ping them", which every caller here treats as a normal outcome rather than an error: a guest
+ * account with no person, or a member who never linked Discord, still belongs in the message.
+ */
+export async function discordIdsForAccountTags(tags: string[]): Promise<(string | null)[]> {
+  if (tags.length === 0) return [];
+  const { data } = await supabase
+    .from('player_accounts')
+    .select('player_tag, person:persons(discord_user_id)')
+    .in('player_tag', tags);
+
+  const byTag = new Map<string, string | null>();
+  for (const row of (data as unknown as { player_tag: string; person: { discord_user_id: string | null } | null }[]) || []) {
+    byTag.set(row.player_tag, row.person?.discord_user_id?.trim() || null);
+  }
+  return tags.map((t) => byTag.get(t) ?? null);
+}
+
+/**
  * POST a message to a Discord webhook. Pass the target `webhookUrl` (from `webhookUrlForClan`); if
  * omitted, falls back to the global DISCORD_WEBHOOK_URL. Returns true if Discord accepted it, false
  * on any failure (including no webhook configured). Never throws.
  */
 export async function sendDiscordMessage(
-  payload: {
-    content?: string;
-    embeds?: DiscordEmbed[];
-    username?: string;
-    // Restrict which mentions actually ping. Defaults to none so stray text can't mass-ping.
-    allowed_mentions?: { parse?: Array<'users' | 'roles' | 'everyone'>; users?: string[] };
-  },
+  payload: DiscordMessage & { username?: string },
   webhookUrl?: string | null,
 ): Promise<boolean> {
   // The override wins over whatever the caller resolved: during the testing phase EVERY notification
@@ -183,6 +211,86 @@ export async function sendDiscordMessage(
   } catch (err) {
     console.error('Discord webhook send failed (non-fatal):', err);
     return false;
+  }
+}
+
+/**
+ * Post a message and keep a handle on it, or EDIT the one we posted before — the primitive behind a
+ * "living" message that stays correct instead of being superseded by a newer, contradicting post.
+ *
+ * Returns the message id to store (unchanged on a successful edit, new on a fresh post), or null if
+ * nothing could be sent. Never throws, like every send here.
+ *
+ * Two Discord details this hides from callers:
+ *   - a fresh post only returns the created message (and therefore its id) when `?wait=true` is set;
+ *   - the edit endpoint accepts ONLY content/embeds/allowed_mentions, so `username` is dropped —
+ *     which is also why an edited message keeps the name it was originally posted under.
+ *
+ * An edit that fails falls back to posting fresh. That is the self-healing path for a destination
+ * that moved underneath us: editing requires the same webhook that created the message, so a
+ * re-pointed clan channel or a flip of the routing override (migration 027) makes the stored id
+ * unresolvable and Discord answers 404. Posting fresh is the correct response — the old message is
+ * in a channel we are no longer writing to.
+ */
+export async function postOrEditDiscordMessage(
+  payload: DiscordMessage,
+  opts: { webhookUrl?: string | null; messageId?: string | null; username?: string } = {},
+): Promise<string | null> {
+  const override = await overrideWebhookUrl();
+  const base = override || opts.webhookUrl || process.env.DISCORD_WEBHOOK_URL;
+  if (!base) return null; // Feature disabled in this environment — no-op.
+
+  // `content` is sent even when empty so an edit can CLEAR a previous message's text (Discord treats
+  // an omitted field as "leave unchanged"); a roster that no longer has pending moves must not keep
+  // the old ping line.
+  const body = {
+    content: payload.content ?? '',
+    embeds: payload.embeds ?? [],
+    allowed_mentions: payload.allowed_mentions ?? { parse: [] },
+  };
+
+  if (opts.messageId) {
+    const edited = await request(editUrl(base, opts.messageId), 'PATCH', body);
+    if (edited) return opts.messageId;
+    // fall through and post fresh
+  }
+
+  const created = await request(postUrl(base), 'POST', {
+    username: override ? 'ClanOps · test routing' : opts.username || 'ClanOps',
+    ...body,
+  });
+  return (created as { id?: string } | null)?.id || null;
+}
+
+/** Webhook URL with `wait=true`, so Discord returns the created message (and its id). */
+function postUrl(base: string): string {
+  const u = new URL(base);
+  u.searchParams.set('wait', 'true');
+  return u.toString();
+}
+
+/** The edit endpoint for one message previously posted through this webhook. */
+function editUrl(base: string, messageId: string): string {
+  const u = new URL(base);
+  return `${u.origin}${u.pathname.replace(/\/$/, '')}/messages/${encodeURIComponent(messageId)}`;
+}
+
+/** One fetch, JSON in and out, every failure logged and swallowed. Null means "did not happen". */
+async function request(url: string, method: 'POST' | 'PATCH', body: unknown): Promise<unknown | null> {
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      console.error(`Discord webhook ${method} returned ${res.status}: ${await res.text().catch(() => '')}`);
+      return null;
+    }
+    return await res.json().catch(() => ({}));
+  } catch (err) {
+    console.error(`Discord webhook ${method} failed (non-fatal):`, err);
+    return null;
   }
 }
 

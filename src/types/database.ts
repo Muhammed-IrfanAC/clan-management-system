@@ -376,6 +376,11 @@ export interface CWLSeason {
   status: CWLSeasonStatus;
   constraints: CWLConstraints;
   last_polled_at: string | null;
+  // Discord roster publishing (migration 028). The digest is a LIVING message edited in place, so its
+  // id is kept; the transfer call is a one-shot ping and only its timestamp matters, as the guard
+  // that stops the automatic post repeating.
+  digest_message_id: string | null;
+  transfer_call_posted_at: string | null;
   created_at: string;
 }
 
@@ -385,6 +390,8 @@ export interface CWLSeasonClan {
   clan_id: string;
   war_size: number; // 15 | 30
   priority: number; // fill order, 0 = highest priority; see src/lib/cwl/allocation.ts
+  // The clan's roster post on Discord, edited in place as the roster changes (migration 028).
+  roster_message_id: string | null;
 }
 
 // One allocation per ACCOUNT (not per person): a player owns several accounts and each is signed
