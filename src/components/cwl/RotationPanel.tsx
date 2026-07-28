@@ -1,44 +1,36 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Repeat, Users } from 'lucide-react';
-import type { CWLRound, CWLWarMember } from '@/types/database';
-import { suggestClanRotation, roundsPlayedByPerson, type ClanRotation } from '@/lib/cwl/rotation';
-import type { RosterPlayer } from './types';
+import { Repeat } from 'lucide-react';
+import { useCWLStore } from '@/lib/stores/cwlStore';
+import { suggestClanRotation, roundsPlayedByAccount, type ClanRotation } from '@/lib/cwl/rotation';
+import { useClanName } from './useClanName';
 
 const th: React.CSSProperties = { textAlign: 'right', padding: '5px 8px', fontSize: '0.66rem', textTransform: 'uppercase', color: 'var(--color-muted)', whiteSpace: 'nowrap' };
 const td: React.CSSProperties = { textAlign: 'right', padding: '5px 8px', fontSize: '0.82rem', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 
 /**
  * Forward-looking bench rotation: for every not-yet-locked round it suggests who sits, distributing
- * bench days evenly using each person's rounds-played so far. Read-only planning aid — the leader
+ * bench days evenly using each ACCOUNT's rounds-played so far. Read-only planning aid — the leader
  * still sets lineups in-game.
  */
-export default function RotationPanel({
-  players,
-  seasonClans,
-  clans,
-  rounds,
-  members,
-}: {
-  players: RosterPlayer[];
-  seasonClans: { clanId: string; warSize: number }[];
-  clans: { id: string; display_name: string }[];
-  rounds: CWLRound[];
-  members: CWLWarMember[];
-}) {
-  const clanName = (id: string) => clans.find((c) => c.id === id)?.display_name ?? 'Unknown clan';
+export default function RotationPanel() {
+  const players = useCWLStore((s) => s.players);
+  const seasonClans = useCWLStore((s) => s.seasonClans);
+  const rounds = useCWLStore((s) => s.rounds);
+  const members = useCWLStore((s) => s.warMembers);
+  const clanName = useClanName();
 
   const rotations = useMemo<ClanRotation[]>(() => {
     return seasonClans.map((sc) => {
       // The signed roster for this clan (recommended there, not removed from the season).
       const roster = players
         .filter((p) => p.recommendedClanId === sc.clanId && p.status !== 'removed')
-        .map((p) => ({ personId: p.personId, name: p.name, thLevel: p.thLevel, league: p.league, playedSoFar: 0 }));
+        .map((p) => ({ playerTag: p.playerTag, name: p.name, thLevel: p.thLevel, leagueTier: p.leagueTier, playedSoFar: 0 }));
 
-      // Seed each person's rounds already fought, and treat those round numbers as locked.
-      const played = roundsPlayedByPerson(rounds, members, sc.clanId);
-      for (const r of roster) r.playedSoFar = played.get(r.personId) ?? 0;
+      // Seed each account's rounds already fought, and treat those round numbers as locked.
+      const played = roundsPlayedByAccount(rounds, members, sc.clanId);
+      for (const r of roster) r.playedSoFar = played.get(r.playerTag) ?? 0;
       const lockedRoundNumbers = rounds.filter((r) => r.clan_id === sc.clanId).map((r) => r.round_number);
 
       return suggestClanRotation(sc.clanId, roster, sc.warSize, lockedRoundNumbers);
@@ -51,7 +43,7 @@ export default function RotationPanel({
       <div className="card" style={{ padding: 'var(--space-lg)', textAlign: 'center' }}>
         <Repeat size={24} className="text-muted" style={{ marginBottom: 'var(--space-sm)' }} />
         <p className="text-muted" style={{ fontSize: '0.85rem', margin: 0 }}>
-          No roster yet — allocate players to suggest a bench rotation.
+          No roster yet — allocate accounts to suggest a bench rotation.
         </p>
       </div>
     );
@@ -69,7 +61,7 @@ export default function RotationPanel({
           </div>
 
           {rot.rosterSize === 0 ? (
-            <p className="text-muted" style={{ fontSize: '0.82rem', margin: 0 }}>No players allocated to this clan.</p>
+            <p className="text-muted" style={{ fontSize: '0.82rem', margin: 0 }}>No accounts allocated to this clan.</p>
           ) : rot.noBenchNeeded ? (
             <p className="text-muted" style={{ fontSize: '0.82rem', margin: 0 }}>
               Roster fits the war size — everyone plays every round, no benching needed.
@@ -90,7 +82,7 @@ export default function RotationPanel({
                     {rot.rounds[0].bench.length === 0
                       ? <span className="text-muted">nobody — everyone plays</span>
                       : rot.rounds[0].bench.map((s, i) => (
-                          <span key={s.personId}>
+                          <span key={s.playerTag}>
                             {i > 0 && <span className="text-muted">, </span>}
                             {s.name}<span className="text-muted" style={{ fontSize: '0.68rem' }}> TH{s.thLevel}</span>
                           </span>
@@ -114,7 +106,7 @@ export default function RotationPanel({
                   </thead>
                   <tbody>
                     {rot.summary.map((s) => (
-                      <tr key={s.personId} style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                      <tr key={s.playerTag} style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
                         <td style={{ ...td, textAlign: 'left', fontWeight: 500 }}>{s.name}</td>
                         <td style={td}>{s.playedSoFar}</td>
                         <td style={td}>{s.suggestedPlays}</td>

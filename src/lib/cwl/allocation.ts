@@ -1,32 +1,50 @@
-import type {
-  CWLConstraints,
-  CWLConstraintRule,
-  CWLAllocationStatus,
-  CWLLeague,
-} from '@/types/database';
-import { leagueOrder } from './leagues';
+import type { CWLConstraints, CWLAllocationStatus, CWLLeagueTierId } from '@/types/database';
+import { readAllocationRule, type ResolvedRule } from './constraints';
+import { tierOrder } from './leagues';
 
 /**
  * CWL allocation engine — the single-pass, whole-family roster recommendation.
  *
  * This is the highest-risk piece of the module, so it is a PURE, side-effect-free function:
- * no Supabase, no I/O, fully deterministic and unit-testable. The API route feeds it eligible
- * players + the participating clans + the season's frozen constraints and persists the result.
+ * no Supabase, no I/O, fully deterministic and unit-testable. The API route feeds it the eligible
+ * accounts + the participating clans + the season's frozen constraints and persists the result.
  *
- * Guarantees:
- *  - Never double-books: the input is one entry per person, the output is one allocation per
- *    person, so a person can land in at most one clan.
- *  - Eligibility (min TH level, min clan rank) is resolved per-clan (perClan override falls back
- *    to default).
- *  - Prefers a player's CURRENT clan when they are eligible there (minimises transfers); an
- *    eligible-nowhere player is left unrecommended ('removed') for a leader to handle.
- *  - Within a clan, players are ranked strongest-first; the top `warSize` are the fighting
- *    roster, the rest a ranked bench.
- *  - Caps each clan's roster at `warSize + maxBench` so no clan ever benches more than its bench
- *    limit. The limit is per-clan (constraints, falling back to DEFAULT_MAX_BENCH). Weakest
- *    over-the-cap players are relocated to a clan that still has room; a player who fits nowhere
- *    because the WHOLE family is full is surfaced as 'removed' (over the bench limit), never
- *    silently benched. A 15v15 clan with the default limit therefore benches at most 5.
+ * The unit is an ACCOUNT, not a person (migration 026). CWL sign-up is per account, so a leader's
+ * main and their two alts are three independent bodies that may each land in a different clan.
+ *
+ * PRIORITY WATERFALL
+ * ------------------
+ * Clans are filled in an explicit leader-controlled order (`priority`, 0 first), not by who has the
+ * most room. That is the difference between "spread everyone evenly" and how a clan family actually
+ * operates: the flagship clan is filled first and the feeders absorb what spills out of it.
+ *
+ * A clan's CAPACITY is `warSize + maxBench`, and the fill honours that capacity in one pass: walk the
+ * clans in priority order and give each its strongest remaining eligible accounts until it is full,
+ * bench included. Only then does the surplus spill to the next clan. So clan A is filled to a full
+ * lineup AND its bench, A's spill feeds B, B's spill feeds C, and so on down the list.
+ *
+ * The bench is deliberately part of that capacity rather than a second pass over the clans. A bench
+ * slot in clan A is a real, wanted position — the reserve for A's own war — so a player good enough
+ * to sit on A's bench must not be pushed down into B's lineup to keep B full. Bench size is the
+ * leader's lever here: a clan that should not hoard reserves is given a smaller `maxBench`, which is
+ * a direct statement of intent, whereas filling every lineup before any bench silently overrode it
+ * and left the bottom clan holding every reserve in the family.
+ *
+ * The cost is explicit and visible: if the family is short of bodies, a low-priority clan can end up
+ * under its war size while a higher one holds a bench. That is the ordering doing exactly what it
+ * was asked to do, and the roster board flags the short clan.
+ *
+ * Other guarantees:
+ *  - Never double-books: the input is one entry per account, the output is one allocation per
+ *    account, so an account can land in at most one clan.
+ *  - Eligibility (min TH level, min Ranked tier) is resolved per-clan (perClan override falls back
+ *    to the season default) at SUB-DIVISION granularity — 'Dragon 29+', not just 'Dragon+'.
+ *  - Priority decides placement; a player's CURRENT clan is only a tie-break between equally strong
+ *    candidates, so the top clan gets the strongest available lineup at the cost of more transfers.
+ *  - Within a clan, accounts are ranked strongest-first; the top `warSize` are the fighting roster,
+ *    the rest a ranked bench, capped so no clan ever benches more than its bench limit.
+ *  - An account that fits nowhere is surfaced as 'removed' with an explaining note — eligible
+ *    nowhere, or the whole family being full — never silently dropped.
  */
 
 /** Default per-clan bench limit when a clan's rule leaves maxBench null. */
@@ -34,28 +52,31 @@ export const DEFAULT_MAX_BENCH = 5;
 
 /** The effective bench limit for a clan: its rule's maxBench, else DEFAULT_MAX_BENCH. */
 export function benchLimitForClan(constraints: CWLConstraints, clanId: string): number {
-  return Math.max(0, ruleForClan(constraints, clanId).maxBench ?? DEFAULT_MAX_BENCH);
+  return Math.max(0, readAllocationRule(constraints, clanId).maxBench ?? DEFAULT_MAX_BENCH);
 }
 
-// One eligible player, keyed to a PERSON (their chosen CWL account's live stats).
+// One eligible ACCOUNT and its live stats. personId is carried through for the profile link only —
+// it is never used to group or de-duplicate, since a person's alts each get their own allocation.
 export interface EligiblePlayer {
-  personId: string;
   playerTag: string;
-  name: string;
+  personId: string;
+  name: string; // display name for this account (person name + alt marker, resolved by the loader)
   thLevel: number;
-  league: CWLLeague | null; // current Ranked league (null = unranked / unknown)
+  leagueTier: CWLLeagueTierId | null; // Ranked sub-division ordinal 0–36 (null = unknown)
   currentClanId: string | null; // the account's current in-game clan (may be outside the pool)
 }
 
 export interface PoolClan {
   clanId: string;
   warSize: number; // 15 | 30
-  // Tie-break for balancing/ranking determinism; lower sorts first. Optional (defaults to 0).
-  displayOrder?: number;
+  // Fill order — 0 is filled first and absorbs the strongest players; later clans take the spill.
+  // Ties (and clans left at the default 0) fall back to clanId for determinism.
+  priority: number;
 }
 
-// A recommendation for one person — mirrors the persisted cwl_allocations shape (minus id/season).
+// A recommendation for one account — mirrors the persisted cwl_allocations shape (minus id/season).
 export interface AllocationDraft {
+  playerTag: string;
   personId: string;
   recommendedClanId: string | null;
   actualClanId: string | null;
@@ -66,162 +87,148 @@ export interface AllocationDraft {
 }
 
 /** The effective constraint rule for a clan: its per-clan override, else the season default. */
-export function ruleForClan(constraints: CWLConstraints, clanId: string): CWLConstraintRule {
-  return constraints.perClan[clanId] ?? constraints.default;
+export function ruleForClan(constraints: CWLConstraints, clanId: string): ResolvedRule {
+  return readAllocationRule(constraints, clanId);
 }
 
-/** Does a player clear a clan's hard eligibility gates (min TH level, min Ranked league)? */
-export function isEligible(player: EligiblePlayer, rule: CWLConstraintRule): boolean {
+/** Does an account clear a clan's hard eligibility gates (min TH level, min Ranked tier)? */
+export function isEligible(player: EligiblePlayer, rule: ResolvedRule): boolean {
   if (rule.minThLevel != null && player.thLevel < rule.minThLevel) return false;
-  if (rule.minLeague != null && leagueOrder(player.league) < leagueOrder(rule.minLeague)) return false;
+  if (rule.minLeagueTier != null && tierOrder(player.leagueTier) < rule.minLeagueTier) return false;
   return true;
 }
 
-// Strongest-first comparator: higher TH, then higher league, then name (stable, deterministic).
-function byStrength(a: EligiblePlayer, b: EligiblePlayer): number {
+// Raw fighting power, strongest first: higher TH, then higher Ranked sub-division. Returns 0 for
+// two genuinely equivalent accounts, which is what lets a caller slot its own tie-break in below.
+function byPower(a: EligiblePlayer, b: EligiblePlayer): number {
   if (b.thLevel !== a.thLevel) return b.thLevel - a.thLevel;
-  const la = leagueOrder(a.league);
-  const lb = leagueOrder(b.league);
-  if (lb !== la) return lb - la;
-  return a.name.localeCompare(b.name);
+  return tierOrder(b.leagueTier) - tierOrder(a.leagueTier);
+}
+
+// Last-resort ordering so equal accounts never sort arbitrarily (allocation must be deterministic).
+function byIdentity(a: EligiblePlayer, b: EligiblePlayer): number {
+  return a.name.localeCompare(b.name) || a.playerTag.localeCompare(b.playerTag);
+}
+
+/** Strongest-first, used to rank a clan's final roster into fighting slots and bench. */
+function byStrength(a: EligiblePlayer, b: EligiblePlayer): number {
+  return byPower(a, b) || byIdentity(a, b);
 }
 
 /**
- * Produce a recommended allocation for every eligible player across the whole clan pool.
+ * Strongest-first FOR A GIVEN CLAN: power decides, and only between EQUALLY powerful candidates does
+ * the one already sitting in that clan win. Priority order still drives placement — the stay-put
+ * preference sits below power, so it removes pointless transfers without ever costing a
+ * higher-priority clan a stronger player.
+ */
+function byStrengthFor(clanId: string) {
+  const stay = (p: EligiblePlayer) => (p.currentClanId === clanId ? 0 : 1);
+  return (a: EligiblePlayer, b: EligiblePlayer): number =>
+    byPower(a, b) || stay(a) - stay(b) || byIdentity(a, b);
+}
+
+/** Clans in fill order: priority ascending, ties broken by clanId so the result is deterministic. */
+function inPriorityOrder(clans: PoolClan[]): PoolClan[] {
+  return clans
+    .slice()
+    .sort((a, b) => a.priority - b.priority || a.clanId.localeCompare(b.clanId));
+}
+
+/**
+ * Produce a recommended allocation for every eligible account across the whole clan pool.
  *
- * @param players  one entry per person (the account they'd play in CWL).
- * @param clans    the participating clans with their chosen war size.
+ * @param players  one entry per ACCOUNT signed into the season pool.
+ * @param clans    the participating clans with their war size and fill priority.
  * @param constraints  the season's frozen rule set (default + per-clan overrides), including each
- *                     clan's minThLevel / minLeague gates and its maxBench limit.
+ *                     clan's minThLevel / minLeagueTier gates and its maxBench limit.
+ * @param warIneligibleAccountTags  accounts pulled from CWL because they hold an active, unresolved
+ *                     strike (war eligibility removed by the Strike system). Strikes are per-account,
+ *                     so a struck alt never holds out its owner's other accounts. Struck accounts are
+ *                     surfaced as 'removed' with an explaining note rather than silently dropped, so
+ *                     a leader can override in the rare case they want to field one.
  */
 export function allocate(
   players: EligiblePlayer[],
   clans: PoolClan[],
   constraints: CWLConstraints,
-  // Accounts pulled from CWL because they hold an active, unresolved strike (war eligibility removed
-  // by the Strike system). Strikes are per-account, so a person is only excluded when the account
-  // they'd field is struck — a struck alt doesn't hold them out. Struck players are surfaced as
-  // 'removed' with an explaining note rather than silently dropped, so a leader can override in the
-  // rare case they want to field a struck account.
   warIneligibleAccountTags: ReadonlySet<string> = new Set(),
 ): AllocationDraft[] {
-  const poolById = new Map(clans.map((c) => [c.clanId, c]));
-  const orderOf = (clanId: string) => poolById.get(clanId)?.displayOrder ?? 0;
-  const rosterCap = (clanId: string) =>
-    poolById.get(clanId)!.warSize + benchLimitForClan(constraints, clanId);
+  const order = inPriorityOrder(clans);
+  const ruleOf = new Map(order.map((c) => [c.clanId, ruleForClan(constraints, c.clanId)]));
+  const capOf = new Map(
+    order.map((c) => [c.clanId, c.warSize + benchLimitForClan(constraints, c.clanId)]),
+  );
 
-  const membersByClan = new Map<string, EligiblePlayer[]>();
-  for (const c of clans) membersByClan.set(c.clanId, []);
-  const roomInRoster = (clanId: string) => rosterCap(clanId) - membersByClan.get(clanId)!.length;
-  const place = (player: EligiblePlayer, clanId: string) => membersByClan.get(clanId)!.push(player);
+  const membersByClan = new Map<string, EligiblePlayer[]>(order.map((c) => [c.clanId, []]));
 
-  // Pass 1 — retain players in their current clan (in pool + eligible there), but only up to the
-  // roster cap. Rank each clan's stayers strongest-first and let the weakest over-the-cap players
-  // spill into `displaced` so they can be relocated to a clan that still has room.
-  const displaced: EligiblePlayer[] = [];
-  const stayersByClan = new Map<string, EligiblePlayer[]>();
-  for (const c of clans) stayersByClan.set(c.clanId, []);
-  // Pull war-ineligible (actively struck) accounts out of the pool up front — they are never placed.
+  // Pull war-ineligible (actively struck) accounts out of the pool up front — never placed.
   const warIneligible = players.filter((p) => warIneligibleAccountTags.has(p.playerTag));
-  const eligiblePool = players.filter((p) => !warIneligibleAccountTags.has(p.playerTag));
-  for (const player of eligiblePool) {
-    const cur = player.currentClanId;
-    if (cur && poolById.has(cur) && isEligible(player, ruleForClan(constraints, cur))) {
-      stayersByClan.get(cur)!.push(player);
-    } else {
-      displaced.push(player);
-    }
-  }
-  for (const c of clans) {
-    const stayers = stayersByClan.get(c.clanId)!;
-    stayers.sort(byStrength);
-    const cap = rosterCap(c.clanId);
-    stayers.forEach((player, i) => (i < cap ? place(player, c.clanId) : displaced.push(player)));
-  }
+  const remaining = players.filter((p) => !warIneligibleAccountTags.has(p.playerTag));
 
-  // Pass 2 — place displaced players (strongest first) into the eligible pool clan with the most
-  // remaining roster room, spreading bodies toward clans that still need them. A player eligible
-  // somewhere but with no room left anywhere is 'over_capacity'; one eligible nowhere is 'removed'.
-  const overCapacity: EligiblePlayer[] = [];
-  const eligibleNowhere: EligiblePlayer[] = [];
-  displaced.sort(byStrength);
-  for (const player of displaced) {
-    let best: string | null = null;
-    let bestRoom = 0;
-    let eligibleSomewhere = false;
-    for (const c of clans) {
-      if (!isEligible(player, ruleForClan(constraints, c.clanId))) continue;
-      eligibleSomewhere = true;
-      const room = roomInRoster(c.clanId);
-      if (
-        room > 0 &&
-        (best === null || room > bestRoom || (room === bestRoom && orderOf(c.clanId) < orderOf(best)))
-      ) {
-        best = c.clanId;
-        bestRoom = room;
-      }
+  const placed = new Set<string>();
+  /** Give `clan` its strongest still-unplaced eligible accounts until it holds `upTo` players. */
+  const fill = (clan: PoolClan, upTo: number) => {
+    const roster = membersByClan.get(clan.clanId)!;
+    const rule = ruleOf.get(clan.clanId)!;
+    const candidates = remaining
+      .filter((p) => !placed.has(p.playerTag) && isEligible(p, rule))
+      .sort(byStrengthFor(clan.clanId));
+    for (const player of candidates) {
+      if (roster.length >= upTo) break;
+      roster.push(player);
+      placed.add(player.playerTag);
     }
-    if (best) place(player, best);
-    else if (eligibleSomewhere) overCapacity.push(player);
-    else eligibleNowhere.push(player);
-  }
+  };
 
-  // Pass 3 — rank each clan strongest-first; top `warSize` fight, the rest are the ranked bench.
-  // The roster cap guarantees this bench is at most `maxBench`.
+  // One pass down the priority order, each clan filled to lineup + bench before anything spills on.
+  for (const clan of order) fill(clan, capOf.get(clan.clanId)!);
+
+  // Rank each clan strongest-first; top `warSize` fight, the rest are the ranked bench. The cap
+  // applied above guarantees that bench is at most `maxBench`.
   const drafts: AllocationDraft[] = [];
-  for (const c of clans) {
-    const members = membersByClan.get(c.clanId)!;
+  for (const clan of order) {
+    const members = membersByClan.get(clan.clanId)!;
     members.sort(byStrength);
     members.forEach((player, index) => {
-      const recommendedClanId = c.clanId;
-      const status: CWLAllocationStatus =
-        recommendedClanId === player.currentClanId ? 'matches' : 'transfer_required';
       drafts.push({
+        playerTag: player.playerTag,
         personId: player.personId,
-        recommendedClanId,
+        recommendedClanId: clan.clanId,
         actualClanId: player.currentClanId,
-        status,
-        isBench: index >= c.warSize,
+        status: clan.clanId === player.currentClanId ? 'matches' : 'transfer_required',
+        isBench: index >= clan.warSize,
         rank: index,
         note: null,
       });
     });
   }
 
-  // Unplaceable players — surfaced as 'removed' so a leader can override rather than silently drop.
-  for (const player of eligibleNowhere) {
-    drafts.push({
-      personId: player.personId,
-      recommendedClanId: null,
-      actualClanId: player.currentClanId,
-      status: 'removed',
-      isBench: false,
-      rank: null,
-      note: 'No eligible clan in the season pool',
-    });
+  // Unplaceable accounts — surfaced as 'removed' so a leader can override rather than silently drop.
+  const unplaced = (player: EligiblePlayer, note: string): AllocationDraft => ({
+    playerTag: player.playerTag,
+    personId: player.personId,
+    recommendedClanId: null,
+    actualClanId: player.currentClanId,
+    status: 'removed',
+    isBench: false,
+    rank: null,
+    note,
+  });
+
+  for (const player of remaining) {
+    if (placed.has(player.playerTag)) continue;
+    const eligibleSomewhere = order.some((c) => isEligible(player, ruleOf.get(c.clanId)!));
+    drafts.push(
+      unplaced(
+        player,
+        eligibleSomewhere
+          ? 'Family roster full — every eligible clan is at its bench limit'
+          : 'No eligible clan in the season pool',
+      ),
+    );
   }
-  for (const player of overCapacity) {
-    drafts.push({
-      personId: player.personId,
-      recommendedClanId: null,
-      actualClanId: player.currentClanId,
-      status: 'removed',
-      isBench: false,
-      rank: null,
-      note: 'Family roster full — every eligible clan is at its bench limit',
-    });
-  }
-  // War-ineligible (struck) players — recorded as 'removed' so the reason is visible to leaders.
   for (const player of warIneligible) {
-    drafts.push({
-      personId: player.personId,
-      recommendedClanId: null,
-      actualClanId: player.currentClanId,
-      status: 'removed',
-      isBench: false,
-      rank: null,
-      note: 'War-ineligible — active strike (trust restoration required)',
-    });
+    drafts.push(unplaced(player, 'War-ineligible — active strike (trust restoration required)'));
   }
 
   return drafts;

@@ -85,7 +85,11 @@ export async function syncClan(clanId: string) {
         in_game_name: member.name,
         th_level: member.townHallLevel,
         trophies: member.trophies,
-        league: member.leagueTier?.name ?? null, // NEW Ranked tier (not legacy trophy league); normalized in the CWL layer
+        // NEW Ranked tier (not the legacy trophy league). Both halves are stored: the id pins the
+        // exact sub-division (Dragon 28 vs 30) that CWL eligibility gates on, the name stays for
+        // display and as the fallback when a row predates the id column. See cwl/leagues.ts.
+        league: member.leagueTier?.name ?? null,
+        league_tier_id: member.leagueTier?.id ?? null,
         donations: member.donations,
         donations_received: member.donationsReceived,
         db_role: role,

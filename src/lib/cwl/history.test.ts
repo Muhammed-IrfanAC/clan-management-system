@@ -4,7 +4,7 @@ import type { CWLSeason, CWLRound, CWLWarMember } from '@/types/database';
 
 // Minimal factories — only the fields the roll-up reads.
 function season(id: string, label: string, created_at: string): CWLSeason {
-  return { id, label, status: 'completed', constraints: { default: { minThLevel: null, minLeague: null, maxBench: null }, perClan: {} }, last_polled_at: null, created_at };
+  return { id, label, status: 'completed', constraints: { default: { minThLevel: null, minLeagueTier: null, maxBench: null }, perClan: {} }, last_polled_at: null, created_at };
 }
 function round(id: string, season_id: string, state: string): CWLRound {
   return {

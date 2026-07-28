@@ -43,7 +43,8 @@ export interface PlayerAccount {
   in_game_name: string;
   th_level: number;
   trophies: number;
-  league: string | null; // raw CoC Ranked-league name (e.g. 'Electro Dragon League III'); null if none
+  league: string | null; // raw CoC Ranked-tier name (e.g. 'Dragon League 29'); null if none
+  league_tier_id: number | null; // official `leagueTier.id` (105000000–105000036); the exact sub-division
   donations: number;
   donations_received: number;
   last_synced_at: string;
@@ -328,9 +329,11 @@ export type CWLAllocationStatus =
 
 export type CWLTransferStatus = 'pending' | 'done' | 'missed';
 
-// Clash of Clans Ranked-Battle league tiers (Oct 2025 revamp; the API `leagueTier` field, NOT the
-// legacy trophy `league`), major tiers only, lowest → highest. See src/lib/cwl/leagues.ts for
-// ordering, labels and API-name normalization.
+// The 12 MAJOR Clash of Clans Ranked-Battle league tiers (Oct 2025 revamp; the API `leagueTier`
+// field, NOT the legacy trophy `league`), lowest → highest. Each major tier has three in-game
+// sub-divisions; this union is only the GROUPING label used by pickers and by legacy constraint
+// snapshots. The value the engine actually compares is a 0–36 tier ORDINAL (`CWLLeagueTierId`).
+// See src/lib/cwl/leagues.ts for the full official table, ordering and API normalization.
 export type CWLLeague =
   | 'skeleton'
   | 'barbarian'
@@ -345,14 +348,22 @@ export type CWLLeague =
   | 'electro'
   | 'legend';
 
-// Frozen, versioned per-season rule set. minLeague is a Ranked-league floor (skeleton is the
-// lowest, legend the highest). maxBench caps how many players a clan may bench (null = use the
-// engine default of 5), so a 15v15 clan holds at most warSize + maxBench. perClan[clanId]
-// overrides the default for that clan.
+// A Ranked tier ORDINAL: 0 = Unranked, 1 = Skeleton League 1, … 36 = Legend I. Equal to the
+// official leagueTier id minus 105000000, so it is both the persisted value and the sort key.
+export type CWLLeagueTierId = number;
+
+// Frozen, versioned per-season rule set. minLeagueTier is a Ranked-tier floor at SUB-DIVISION
+// granularity (e.g. 29 = 'Dragon 29+'), null = no league gate. maxBench caps how many players a
+// clan may bench (null = use the engine default of 5), so a 15v15 clan holds at most
+// warSize + maxBench. perClan[clanId] overrides the default for that clan.
 export interface CWLConstraintRule {
   minThLevel: number | null;
-  minLeague: CWLLeague | null;
+  minLeagueTier: CWLLeagueTierId | null;
   maxBench: number | null;
+  // LEGACY (pre-026 snapshots): a major-tier-only floor, e.g. 'dragon' meaning "Dragon and up".
+  // Seasons frozen before sub-division support still carry it; readAllocationRule() in
+  // src/lib/cwl/constraints.ts folds it into minLeagueTier. Never written by new code.
+  minLeague?: CWLLeague | null;
 }
 export interface CWLConstraints {
   default: CWLConstraintRule;
@@ -373,11 +384,16 @@ export interface CWLSeasonClan {
   season_id: string;
   clan_id: string;
   war_size: number; // 15 | 30
+  priority: number; // fill order, 0 = highest priority; see src/lib/cwl/allocation.ts
 }
 
+// One allocation per ACCOUNT (not per person): a player owns several accounts and each is signed
+// into CWL independently, so alts can legitimately land in different clans. person_id stays for the
+// profile/display link. See migration 026.
 export interface CWLAllocation {
   id: string;
   season_id: string;
+  player_account_tag: string;
   person_id: string;
   recommended_clan_id: string | null;
   actual_clan_id: string | null;

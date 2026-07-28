@@ -1,306 +1,497 @@
 import { describe, it, expect } from 'vitest';
 import {
   allocate,
+  benchLimitForClan,
   isEligible,
   ruleForClan,
   type EligiblePlayer,
   type PoolClan,
 } from './allocation';
-import { leagueOrder, normalizeLeague } from './leagues';
-import type { CWLConstraints } from '@/types/database';
+import {
+  tierOrder,
+  tierLabel,
+  tierFloorLabel,
+  normalizeLeagueTier,
+  majorFloorTier,
+  CWL_LEAGUE_TIERS,
+  CWL_LEAGUE_MAJORS,
+} from './leagues';
+import { readRule } from './constraints';
+import type { CWLConstraints, CWLConstraintRule } from '@/types/database';
 
 const NO_CONSTRAINTS: CWLConstraints = {
-  default: { minThLevel: null, minLeague: null, maxBench: null },
+  default: { minThLevel: null, minLeagueTier: null, maxBench: null },
   perClan: {},
 };
 
 // A constraint set that only overrides the family-wide bench limit.
 function benchCap(maxBench: number): CWLConstraints {
-  return { default: { minThLevel: null, minLeague: null, maxBench }, perClan: {} };
+  return { default: { minThLevel: null, minLeagueTier: null, maxBench }, perClan: {} };
 }
 
-function player(
-  personId: string,
-  opts: Partial<Omit<EligiblePlayer, 'personId'>> = {},
-): EligiblePlayer {
+// An account in the pool. `tag` doubles as the identity and the readable label in assertions.
+function acct(tag: string, opts: Partial<Omit<EligiblePlayer, 'playerTag'>> = {}): EligiblePlayer {
   return {
-    personId,
-    playerTag: `#${personId}`,
-    name: opts.name ?? personId,
+    playerTag: `#${tag}`,
+    personId: opts.personId ?? `person-${tag}`,
+    name: opts.name ?? tag,
     thLevel: opts.thLevel ?? 15,
-    league: opts.league ?? null,
+    leagueTier: opts.leagueTier ?? null,
     currentClanId: opts.currentClanId ?? null,
   };
 }
 
-const CLAN_A: PoolClan = { clanId: 'A', warSize: 2, displayOrder: 0 };
-const CLAN_B: PoolClan = { clanId: 'B', warSize: 2, displayOrder: 1 };
+/** Ordinals used across the tests, from the official table. */
+const DRAGON_28 = 28;
+const DRAGON_29 = 29;
+const DRAGON_30 = 30;
+const LEGEND_III = 34;
 
-describe('league helpers', () => {
-  it('orders Ranked tiers lowest → highest', () => {
-    expect(leagueOrder('skeleton')).toBeLessThan(leagueOrder('titan'));
-    expect(leagueOrder('titan')).toBeLessThan(leagueOrder('dragon'));
-    expect(leagueOrder('dragon')).toBeLessThan(leagueOrder('electro'));
-    expect(leagueOrder('electro')).toBeLessThan(leagueOrder('legend'));
-    expect(leagueOrder(null)).toBeLessThan(leagueOrder('skeleton')); // unknown sorts below all
+const CLAN_A: PoolClan = { clanId: 'A', warSize: 2, priority: 0 };
+const CLAN_B: PoolClan = { clanId: 'B', warSize: 2, priority: 1 };
+
+const placedIn = (drafts: ReturnType<typeof allocate>, clanId: string) =>
+  drafts.filter((d) => d.recommendedClanId === clanId);
+const byTag = (drafts: ReturnType<typeof allocate>) =>
+  Object.fromEntries(drafts.map((d) => [d.playerTag, d]));
+
+describe('Ranked league tier table', () => {
+  it('transcribes all 37 official tiers with contiguous ids', () => {
+    expect(CWL_LEAGUE_TIERS).toHaveLength(37);
+    CWL_LEAGUE_TIERS.forEach((tier, i) => {
+      expect(tier.ordinal).toBe(i);
+      expect(tier.id).toBe(105000000 + i);
+    });
+    expect(CWL_LEAGUE_TIERS[0].name).toBe('Unranked');
+    expect(CWL_LEAGUE_TIERS[36].name).toBe('Legend I');
   });
 
-  it('normalizes raw CoC leagueTier names to major tiers', () => {
-    expect(normalizeLeague('Titan League 25')).toBe('titan');
-    expect(normalizeLeague('Dragon League 28')).toBe('dragon');
-    expect(normalizeLeague('Electro League 31')).toBe('electro');
-    expect(normalizeLeague('P.E.K.K.A League 22')).toBe('pekka');
-    expect(normalizeLeague('Legend III')).toBe('legend');
-    expect(normalizeLeague('Unranked')).toBeNull();
-    expect(normalizeLeague('Crystal League II')).toBeNull(); // legacy trophy league — not this scale
-    expect(normalizeLeague(null)).toBeNull();
+  it('groups the 12 major tiers into three sub-divisions each', () => {
+    expect(CWL_LEAGUE_MAJORS).toHaveLength(12);
+    for (const group of CWL_LEAGUE_MAJORS) expect(group.tiers).toHaveLength(3);
+    expect(CWL_LEAGUE_MAJORS.map((g) => g.key)).toEqual([
+      'skeleton', 'barbarian', 'archer', 'wizard', 'valkyrie', 'witch',
+      'golem', 'pekka', 'titan', 'dragon', 'electro', 'legend',
+    ]);
   });
 
-  it('gates on min TH level and min league', () => {
-    const p = player('p', { thLevel: 12, league: 'dragon' });
-    expect(isEligible(p, { minThLevel: 13, minLeague: null, maxBench: null })).toBe(false);
-    expect(isEligible(p, { minThLevel: 12, minLeague: null, maxBench: null })).toBe(true);
-    expect(isEligible(p, { minThLevel: null, minLeague: 'electro', maxBench: null })).toBe(false);
-    expect(isEligible(p, { minThLevel: null, minLeague: 'dragon', maxBench: null })).toBe(true);
-    // An unranked/unknown player fails any league floor.
-    expect(isEligible(player('u', { league: null }), { minThLevel: null, minLeague: 'skeleton', maxBench: null })).toBe(false);
+  it('orders sub-divisions within a major tier, not just across majors', () => {
+    expect(tierOrder(DRAGON_28)).toBeLessThan(tierOrder(DRAGON_30));
+    expect(tierOrder(DRAGON_30)).toBeLessThan(tierOrder(LEGEND_III));
+    expect(tierOrder(null)).toBeLessThan(tierOrder(0)); // unknown sorts below even Unranked
+  });
+
+  it('labels a tier and an eligibility floor', () => {
+    expect(tierLabel(DRAGON_29)).toBe('Dragon 29');
+    expect(tierLabel(LEGEND_III)).toBe('Legend III');
+    expect(tierLabel(null)).toBe('—');
+    expect(tierFloorLabel(DRAGON_29)).toBe('Dragon 29+');
+    expect(tierFloorLabel(null)).toBe('any league');
+  });
+
+  it('normalizes by official id first', () => {
+    // The id wins even if the stored display name disagrees (a rename survives this).
+    expect(normalizeLeagueTier('whatever', 105000029)).toBe(29);
+    expect(normalizeLeagueTier(null, 105000036)).toBe(36);
+  });
+
+  it('normalizes exact API names to their sub-division', () => {
+    expect(normalizeLeagueTier('Titan League 25')).toBe(25);
+    expect(normalizeLeagueTier('Dragon League 30')).toBe(30);
+    expect(normalizeLeagueTier('P.E.K.K.A League 22')).toBe(22);
+    expect(normalizeLeagueTier('Legend I')).toBe(36);
+    expect(normalizeLeagueTier('Unranked')).toBe(0);
+  });
+
+  it('degrades an unrecognised name to its major tier floor, never above it', () => {
+    expect(normalizeLeagueTier('Dragon League')).toBe(majorFloorTier('dragon'));
+    expect(normalizeLeagueTier('Dragon League')).toBe(DRAGON_28);
+  });
+
+  it('rejects the legacy trophy scale and unknown input', () => {
+    expect(normalizeLeagueTier('Crystal League II')).toBeNull();
+    expect(normalizeLeagueTier(null)).toBeNull();
+    expect(normalizeLeagueTier('')).toBeNull();
+  });
+});
+
+describe('frozen constraint snapshots', () => {
+  it('reads a pre-026 major-tier rule as that major\'s lowest sub-division', () => {
+    // 'dragon' meant "Dragon and up" when it was written — Dragon 28 is exactly that floor, so an
+    // old season re-read today admits the same players, not a stricter set. The casts model a row
+    // read back from a pre-026 snapshot, which has no minLeagueTier key at all.
+    const legacy = (minLeague: 'dragon' | 'legend') =>
+      ({ minThLevel: null, minLeague, maxBench: null }) as unknown as CWLConstraintRule;
+    expect(readRule(legacy('dragon')).minLeagueTier).toBe(DRAGON_28);
+    expect(readRule(legacy('legend')).minLeagueTier).toBe(LEGEND_III);
+  });
+
+  it('prefers an explicit sub-division over a legacy major tier', () => {
+    const rule = readRule({ minThLevel: null, minLeagueTier: DRAGON_30, minLeague: 'dragon', maxBench: null });
+    expect(rule.minLeagueTier).toBe(DRAGON_30);
+  });
+
+  it('treats an absent rule as no gates at all', () => {
+    expect(readRule(null)).toEqual({ minThLevel: null, minLeagueTier: null, maxBench: null });
+  });
+});
+
+describe('eligibility', () => {
+  it('gates on min TH level', () => {
+    const p = acct('p', { thLevel: 12 });
+    expect(isEligible(p, { minThLevel: 13, minLeagueTier: null, maxBench: null })).toBe(false);
+    expect(isEligible(p, { minThLevel: 12, minLeagueTier: null, maxBench: null })).toBe(true);
+  });
+
+  it('gates at SUB-DIVISION granularity, not just the major tier', () => {
+    // The whole point of item 4: 'Dragon 30+' must exclude a Dragon 28 player that 'Dragon+' let in.
+    const dragon28 = acct('d28', { leagueTier: DRAGON_28 });
+    expect(isEligible(dragon28, { minThLevel: null, minLeagueTier: DRAGON_28, maxBench: null })).toBe(true);
+    expect(isEligible(dragon28, { minThLevel: null, minLeagueTier: DRAGON_30, maxBench: null })).toBe(false);
+    const dragon30 = acct('d30', { leagueTier: DRAGON_30 });
+    expect(isEligible(dragon30, { minThLevel: null, minLeagueTier: DRAGON_30, maxBench: null })).toBe(true);
+  });
+
+  it('fails any league floor when the tier is unknown', () => {
+    expect(isEligible(acct('u', { leagueTier: null }), { minThLevel: null, minLeagueTier: 1, maxBench: null })).toBe(false);
   });
 
   it('resolves per-clan overrides, falling back to the default', () => {
     const constraints: CWLConstraints = {
-      default: { minThLevel: 10, minLeague: null, maxBench: null },
-      perClan: { A: { minThLevel: 14, minLeague: 'legend', maxBench: 3 } },
+      default: { minThLevel: 10, minLeagueTier: null, maxBench: null },
+      perClan: { A: { minThLevel: 14, minLeagueTier: LEGEND_III, maxBench: 3 } },
     };
-    expect(ruleForClan(constraints, 'A').minLeague).toBe('legend');
-    expect(ruleForClan(constraints, 'B').minLeague).toBeNull();
+    expect(ruleForClan(constraints, 'A').minLeagueTier).toBe(LEGEND_III);
+    expect(ruleForClan(constraints, 'B').minLeagueTier).toBeNull();
     expect(ruleForClan(constraints, 'A').maxBench).toBe(3);
+  });
+
+  it('layers a per-clan override FIELD BY FIELD over the default', () => {
+    // The override form labels every blank field "(inherit)", so an override that only names a
+    // bench limit must not wipe the season's TH and league gates for that clan — nor the reverse,
+    // which is what silently replaced an explicit season bench limit with the engine default.
+    const constraints: CWLConstraints = {
+      default: { minThLevel: 13, minLeagueTier: DRAGON_28, maxBench: 2 },
+      perClan: {
+        A: { minThLevel: null, minLeagueTier: null, maxBench: 0 },
+        B: { minThLevel: 15, minLeagueTier: null, maxBench: null },
+      },
+    };
+    const a = ruleForClan(constraints, 'A');
+    expect(a).toEqual({ minThLevel: 13, minLeagueTier: DRAGON_28, maxBench: 0 });
+    const b = ruleForClan(constraints, 'B');
+    expect(b).toEqual({ minThLevel: 15, minLeagueTier: DRAGON_28, maxBench: 2 });
+    expect(benchLimitForClan(constraints, 'B')).toBe(2); // not the built-in 5
   });
 });
 
-describe('allocate', () => {
-  it('never double-books a person', () => {
+describe('allocate — per account', () => {
+  it('never double-books an account', () => {
     const players = [
-      player('1', { currentClanId: 'A' }),
-      player('2', { currentClanId: 'A' }),
-      player('3', { currentClanId: 'B' }),
-      player('4', { currentClanId: null }),
+      acct('1', { currentClanId: 'A' }),
+      acct('2', { currentClanId: 'A' }),
+      acct('3', { currentClanId: 'B' }),
+      acct('4', { currentClanId: null }),
     ];
     const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS);
-    const ids = drafts.map((d) => d.personId);
-    expect(new Set(ids).size).toBe(ids.length);
-    expect(ids.sort()).toEqual(['1', '2', '3', '4']);
+    const tags = drafts.map((d) => d.playerTag);
+    expect(new Set(tags).size).toBe(tags.length);
+    expect(tags.sort()).toEqual(['#1', '#2', '#3', '#4']);
   });
 
-  it('keeps eligible players in their current clan (status matches)', () => {
-    const players = [player('1', { currentClanId: 'A' }), player('2', { currentClanId: 'B' })];
-    const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS);
-    const byId = Object.fromEntries(drafts.map((d) => [d.personId, d]));
-    expect(byId['1'].recommendedClanId).toBe('A');
-    expect(byId['1'].status).toBe('matches');
-    expect(byId['2'].recommendedClanId).toBe('B');
-    expect(byId['2'].status).toBe('matches');
-  });
-
-  it('ranks by strength: top warSize fight, remainder benched (league breaks TH ties)', () => {
+  it('allocates every alt of one person independently, possibly to different clans', () => {
+    // The core of item 2: three accounts owned by one human. The old person-keyed engine could
+    // field only one of them; all three are real CWL bodies and must each get a slot.
     const players = [
-      player('low', { currentClanId: 'A', thLevel: 12 }),
-      player('mid', { currentClanId: 'A', thLevel: 14 }),
-      player('high', { currentClanId: 'A', thLevel: 16 }),
+      acct('main', { personId: 'irfan', thLevel: 17, currentClanId: 'A' }),
+      acct('alt1', { personId: 'irfan', thLevel: 14, currentClanId: 'A' }),
+      acct('alt2', { personId: 'irfan', thLevel: 11, currentClanId: 'A' }),
     ];
-    const drafts = allocate(players, [{ clanId: 'A', warSize: 2 }], NO_CONSTRAINTS);
-    const byId = Object.fromEntries(drafts.map((d) => [d.personId, d]));
-    expect(byId['high'].rank).toBe(0);
-    expect(byId['high'].isBench).toBe(false);
-    expect(byId['mid'].rank).toBe(1);
-    expect(byId['low'].rank).toBe(2);
-    expect(byId['low'].isBench).toBe(true); // over the war size of 2 -> bench
+    const clans: PoolClan[] = [
+      { clanId: 'A', warSize: 1, priority: 0 },
+      { clanId: 'B', warSize: 1, priority: 1 },
+      { clanId: 'C', warSize: 1, priority: 2 },
+    ];
+    const drafts = allocate(players, clans, benchCap(0));
+    expect(drafts).toHaveLength(3);
+    expect(drafts.every((d) => d.personId === 'irfan')).toBe(true);
+    // One per clan, strongest into the highest-priority clan.
+    expect(byTag(drafts)['#main'].recommendedClanId).toBe('A');
+    expect(byTag(drafts)['#alt1'].recommendedClanId).toBe('B');
+    expect(byTag(drafts)['#alt2'].recommendedClanId).toBe('C');
   });
 
-  it('uses league as the tie-break when Town Hall is equal', () => {
+  it('carries the person link through for the profile/display join', () => {
+    const drafts = allocate([acct('x', { personId: 'p-1', currentClanId: 'A' })], [CLAN_A], NO_CONSTRAINTS);
+    expect(drafts[0].personId).toBe('p-1');
+    expect(drafts[0].playerTag).toBe('#x');
+  });
+});
+
+describe('allocate — priority waterfall', () => {
+  it('fills the highest-priority clan first and spills the rest downward', () => {
+    // 5 accounts of descending strength, three 1v1 clans with no bench. Strongest -> A, next -> B…
+    const players = Array.from({ length: 5 }, (_, i) => acct(`p${i}`, { thLevel: 17 - i, currentClanId: null }));
+    const clans: PoolClan[] = [
+      { clanId: 'A', warSize: 1, priority: 0 },
+      { clanId: 'B', warSize: 1, priority: 1 },
+      { clanId: 'C', warSize: 1, priority: 2 },
+    ];
+    const drafts = allocate(players, clans, benchCap(0));
+    const map = byTag(drafts);
+    expect(map['#p0'].recommendedClanId).toBe('A');
+    expect(map['#p1'].recommendedClanId).toBe('B');
+    expect(map['#p2'].recommendedClanId).toBe('C');
+    expect(map['#p3'].status).toBe('removed');
+    expect(map['#p4'].status).toBe('removed');
+  });
+
+  it('re-ordering priority re-orders the fill — the same pool, a different answer', () => {
+    const players = [acct('strong', { thLevel: 17 }), acct('weak', { thLevel: 12 })];
+    const base: PoolClan[] = [
+      { clanId: 'A', warSize: 1, priority: 0 },
+      { clanId: 'B', warSize: 1, priority: 1 },
+    ];
+    const first = byTag(allocate(players, base, benchCap(0)));
+    expect(first['#strong'].recommendedClanId).toBe('A');
+
+    // Swap the priorities: B is now the flagship and takes the strongest account.
+    const swapped: PoolClan[] = [
+      { clanId: 'A', warSize: 1, priority: 1 },
+      { clanId: 'B', warSize: 1, priority: 0 },
+    ];
+    const second = byTag(allocate(players, swapped, benchCap(0)));
+    expect(second['#strong'].recommendedClanId).toBe('B');
+    expect(second['#weak'].recommendedClanId).toBe('A');
+  });
+
+  it('fills each clan to lineup AND bench before spilling to the next', () => {
+    // 8 accounts, three 2v2 clans with maxBench 1 (cap 3). A takes 3 (2 fighting + 1 bench), B takes
+    // 3, and only the last 2 reach C. A bench slot in A is a wanted position, so the 3rd-strongest
+    // account benches at A rather than being pushed down into B's lineup.
+    const players = Array.from({ length: 8 }, (_, i) => acct(`p${i}`, { thLevel: 17 - i }));
+    const clans: PoolClan[] = [
+      { clanId: 'A', warSize: 2, priority: 0 },
+      { clanId: 'B', warSize: 2, priority: 1 },
+      { clanId: 'C', warSize: 2, priority: 2 },
+    ];
+    const drafts = allocate(players, clans, benchCap(1));
+    expect(drafts.filter((d) => d.status === 'removed')).toHaveLength(0);
+    expect(placedIn(drafts, 'A')).toHaveLength(3);
+    expect(placedIn(drafts, 'B')).toHaveLength(3);
+    expect(placedIn(drafts, 'C')).toHaveLength(2);
+    // The bench belongs to the clans that earned it by priority, not to the bottom of the order.
+    expect(placedIn(drafts, 'A').filter((d) => d.isBench)).toHaveLength(1);
+    expect(placedIn(drafts, 'B').filter((d) => d.isBench)).toHaveLength(1);
+    expect(placedIn(drafts, 'C').filter((d) => d.isBench)).toHaveLength(0);
+    // A's bench is the 3rd-strongest account overall — it did not spill into B's lineup.
+    expect(placedIn(drafts, 'A').find((d) => d.isBench)!.playerTag).toBe('#p2');
+  });
+
+  it('leaves a low-priority clan short rather than raiding a higher clan for its bench', () => {
+    // 5 accounts, two 2v2 clans with maxBench 1. A fills to capacity (3) and C gets only 2 — the
+    // deliberate cost of the ordering, and why the roster board flags a short lineup.
+    const players = Array.from({ length: 5 }, (_, i) => acct(`p${i}`, { thLevel: 17 - i }));
+    const clans: PoolClan[] = [
+      { clanId: 'A', warSize: 2, priority: 0 },
+      { clanId: 'B', warSize: 3, priority: 1 },
+    ];
+    const drafts = allocate(players, clans, benchCap(1));
+    expect(placedIn(drafts, 'A')).toHaveLength(3);
+    expect(placedIn(drafts, 'A').filter((d) => d.isBench)).toHaveLength(1);
+    expect(placedIn(drafts, 'B').filter((d) => !d.isBench)).toHaveLength(2); // one short of 3
+  });
+
+  it('breaks ties toward staying put, so equal players do not transfer for nothing', () => {
+    // Two identically-strong accounts compete for clan A's single slot; the one already in A wins.
     const players = [
-      player('weak', { currentClanId: 'A', thLevel: 16, league: 'dragon' }),
-      player('strong', { currentClanId: 'A', thLevel: 16, league: 'legend' }),
+      acct('outsider', { thLevel: 15, name: 'aaa', currentClanId: 'B' }),
+      acct('resident', { thLevel: 15, name: 'aaa', currentClanId: 'A' }),
     ];
-    const drafts = allocate(players, [{ clanId: 'A', warSize: 5 }], NO_CONSTRAINTS);
-    const byId = Object.fromEntries(drafts.map((d) => [d.personId, d]));
-    expect(byId['strong'].rank).toBe(0);
-    expect(byId['weak'].rank).toBe(1);
+    const clans: PoolClan[] = [
+      { clanId: 'A', warSize: 1, priority: 0 },
+      { clanId: 'B', warSize: 1, priority: 1 },
+    ];
+    const drafts = byTag(allocate(players, clans, benchCap(0)));
+    expect(drafts['#resident'].recommendedClanId).toBe('A');
+    expect(drafts['#resident'].status).toBe('matches');
+    expect(drafts['#outsider'].recommendedClanId).toBe('B');
+    expect(drafts['#outsider'].status).toBe('matches');
   });
 
-  it('flags a transfer when the current clan is not in the pool', () => {
-    const players = [player('x', { currentClanId: 'OUTSIDER' })];
-    const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS);
-    expect(drafts).toHaveLength(1);
-    expect(drafts[0].status).toBe('transfer_required');
-    expect(drafts[0].recommendedClanId).not.toBeNull();
-    expect(drafts[0].actualClanId).toBe('OUTSIDER');
+  it('lets priority beat staying put when the higher-priority clan wants the stronger account', () => {
+    // Deliberate contrast with the tie-break above: strength is NOT equal, so the flagship clan
+    // takes the stronger player even though that costs a transfer.
+    const players = [
+      acct('weak_resident', { thLevel: 13, currentClanId: 'A' }),
+      acct('strong_outsider', { thLevel: 17, currentClanId: 'B' }),
+    ];
+    const clans: PoolClan[] = [
+      { clanId: 'A', warSize: 1, priority: 0 },
+      { clanId: 'B', warSize: 1, priority: 1 },
+    ];
+    const drafts = byTag(allocate(players, clans, benchCap(0)));
+    expect(drafts['#strong_outsider'].recommendedClanId).toBe('A');
+    expect(drafts['#strong_outsider'].status).toBe('transfer_required');
+    expect(drafts['#weak_resident'].recommendedClanId).toBe('B');
+    expect(drafts['#weak_resident'].status).toBe('transfer_required');
   });
 
-  it('flags a transfer when a player is ineligible for their current clan', () => {
+  it('skips a clan an account is ineligible for and places it further down the order', () => {
     const constraints: CWLConstraints = {
-      default: { minThLevel: null, minLeague: null, maxBench: null },
-      perClan: { A: { minThLevel: null, minLeague: 'legend', maxBench: null } },
+      default: { minThLevel: null, minLeagueTier: null, maxBench: null },
+      perClan: { A: { minThLevel: null, minLeagueTier: LEGEND_III, maxBench: null } },
     };
-    // A Dragon-league player sits in clan A (now Legend-only) -> must move to B.
-    const players = [player('x', { currentClanId: 'A', league: 'dragon' })];
+    const players = [acct('x', { currentClanId: 'A', leagueTier: DRAGON_30 })];
     const drafts = allocate(players, [CLAN_A, CLAN_B], constraints);
     expect(drafts[0].recommendedClanId).toBe('B');
     expect(drafts[0].status).toBe('transfer_required');
   });
 
-  it('marks a player eligible nowhere as removed', () => {
+  it('resolves priority ties deterministically by clan id', () => {
+    const players = [acct('only', { thLevel: 16 })];
+    const clans: PoolClan[] = [
+      { clanId: 'zeta', warSize: 1, priority: 0 },
+      { clanId: 'alpha', warSize: 1, priority: 0 },
+    ];
+    expect(allocate(players, clans, benchCap(0))[0].recommendedClanId).toBe('alpha');
+  });
+});
+
+describe('allocate — ranking, capacity and removals', () => {
+  it('ranks by strength: top warSize fight, remainder benched', () => {
+    const players = [
+      acct('low', { currentClanId: 'A', thLevel: 12 }),
+      acct('mid', { currentClanId: 'A', thLevel: 14 }),
+      acct('high', { currentClanId: 'A', thLevel: 16 }),
+    ];
+    const drafts = byTag(allocate(players, [{ clanId: 'A', warSize: 2, priority: 0 }], NO_CONSTRAINTS));
+    expect(drafts['#high'].rank).toBe(0);
+    expect(drafts['#high'].isBench).toBe(false);
+    expect(drafts['#mid'].rank).toBe(1);
+    expect(drafts['#low'].rank).toBe(2);
+    expect(drafts['#low'].isBench).toBe(true);
+  });
+
+  it('uses the Ranked sub-division as the tie-break when Town Hall is equal', () => {
+    const players = [
+      acct('weak', { currentClanId: 'A', thLevel: 16, leagueTier: DRAGON_28 }),
+      acct('strong', { currentClanId: 'A', thLevel: 16, leagueTier: DRAGON_30 }),
+    ];
+    const drafts = byTag(allocate(players, [{ clanId: 'A', warSize: 5, priority: 0 }], NO_CONSTRAINTS));
+    expect(drafts['#strong'].rank).toBe(0);
+    expect(drafts['#weak'].rank).toBe(1);
+  });
+
+  it('flags a transfer when the current clan is not in the pool', () => {
+    const drafts = allocate([acct('x', { currentClanId: 'OUTSIDER' })], [CLAN_A, CLAN_B], NO_CONSTRAINTS);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].status).toBe('transfer_required');
+    expect(drafts[0].recommendedClanId).toBe('A');
+    expect(drafts[0].actualClanId).toBe('OUTSIDER');
+  });
+
+  it('marks an account eligible nowhere as removed', () => {
     const constraints: CWLConstraints = {
-      default: { minThLevel: null, minLeague: 'legend', maxBench: null },
+      default: { minThLevel: null, minLeagueTier: LEGEND_III, maxBench: null },
       perClan: {},
     };
-    const players = [player('x', { currentClanId: 'A', league: 'dragon' })];
-    const drafts = allocate(players, [CLAN_A, CLAN_B], constraints);
+    const drafts = allocate([acct('x', { currentClanId: 'A', leagueTier: DRAGON_30 })], [CLAN_A, CLAN_B], constraints);
     expect(drafts[0].status).toBe('removed');
     expect(drafts[0].recommendedClanId).toBeNull();
     expect(drafts[0].note).toMatch(/no eligible clan/i);
   });
 
-  it('caps a single over-full clan at warSize + maxBench benches, removing the surplus', () => {
-    // 22 players all sitting in one 15v15 clan. Old behaviour benched 7; with the default
-    // 5-bench cap the clan holds 20 (15 fighting + 5 bench) and 2 surplus fall out as removed.
-    const players = Array.from({ length: 22 }, (_, i) =>
-      player(`p${i}`, { currentClanId: 'A', thLevel: 16 - (i % 5) }),
-    );
-    const drafts = allocate(players, [{ clanId: 'A', warSize: 15 }], NO_CONSTRAINTS);
-    const inA = drafts.filter((d) => d.recommendedClanId === 'A');
-    const benched = inA.filter((d) => d.isBench);
+  it('caps a single over-full clan at warSize + maxBench, removing the surplus', () => {
+    // 22 accounts, one 15v15 clan: it holds 20 (15 fighting + the default 5 bench) and 2 fall out.
+    const players = Array.from({ length: 22 }, (_, i) => acct(`p${i}`, { currentClanId: 'A', thLevel: 16 - (i % 5) }));
+    const drafts = allocate(players, [{ clanId: 'A', warSize: 15, priority: 0 }], NO_CONSTRAINTS);
+    expect(placedIn(drafts, 'A')).toHaveLength(20);
+    expect(placedIn(drafts, 'A').filter((d) => d.isBench)).toHaveLength(5);
     const removed = drafts.filter((d) => d.status === 'removed');
-    expect(inA).toHaveLength(20);
-    expect(benched).toHaveLength(5); // never more than maxBench
     expect(removed).toHaveLength(2);
     expect(removed[0].note).toMatch(/roster full/i);
   });
 
-  it('relocates over-the-cap players into a clan that still has room', () => {
-    // 6 players all in clan A, warSize 2 each, maxBench 1 -> cap 3 per clan. A keeps its
-    // strongest 3, the other 3 spill into B (room 3). No one is removed; each clan benches ≤1.
-    const players = Array.from({ length: 6 }, (_, i) => player(`p${i}`, { currentClanId: 'A', thLevel: 16 - i }));
-    const clans: PoolClan[] = [
-      { clanId: 'A', warSize: 2, displayOrder: 0 },
-      { clanId: 'B', warSize: 2, displayOrder: 1 },
-    ];
-    const drafts = allocate(players, clans, benchCap(1));
-    expect(drafts.filter((d) => d.status === 'removed')).toHaveLength(0);
-    for (const clanId of ['A', 'B']) {
-      const inClan = drafts.filter((d) => d.recommendedClanId === clanId);
-      expect(inClan).toHaveLength(3);
-      expect(inClan.filter((d) => d.isBench)).toHaveLength(1);
-    }
-  });
-
-  it('surfaces genuinely surplus players as removed when the whole family is full', () => {
-    // 3 players, two 1v1 clans, maxBench 0 -> total capacity 2. The third has nowhere to go.
+  it('surfaces genuinely surplus accounts as removed when the whole family is full', () => {
     const players = [
-      player('a', { currentClanId: 'A', thLevel: 16 }),
-      player('b', { currentClanId: 'A', thLevel: 15 }),
-      player('c', { currentClanId: 'A', thLevel: 14 }),
+      acct('a', { currentClanId: 'A', thLevel: 16 }),
+      acct('b', { currentClanId: 'A', thLevel: 15 }),
+      acct('c', { currentClanId: 'A', thLevel: 14 }),
     ];
     const clans: PoolClan[] = [
-      { clanId: 'A', warSize: 1, displayOrder: 0 },
-      { clanId: 'B', warSize: 1, displayOrder: 1 },
+      { clanId: 'A', warSize: 1, priority: 0 },
+      { clanId: 'B', warSize: 1, priority: 1 },
     ];
     const drafts = allocate(players, clans, benchCap(0));
     const removed = drafts.filter((d) => d.status === 'removed');
     expect(removed).toHaveLength(1);
-    expect(removed[0].personId).toBe('c'); // the weakest
-    expect(drafts.filter((d) => d.isBench)).toHaveLength(0); // maxBench 0 -> no benches at all
+    expect(removed[0].playerTag).toBe('#c'); // the weakest
+    expect(drafts.filter((d) => d.isBench)).toHaveLength(0);
   });
 
   it('honours a per-clan bench limit override', () => {
-    // Clan A is capped at 0 bench (roster = warSize 2), clan B keeps the default. 6 players all
-    // start in A: A holds exactly 2 (no bench), the other 4 spill into B (2 fight + 2 bench ≤ 5).
     const constraints: CWLConstraints = {
-      default: { minThLevel: null, minLeague: null, maxBench: null },
-      perClan: { A: { minThLevel: null, minLeague: null, maxBench: 0 } },
+      default: { minThLevel: null, minLeagueTier: null, maxBench: null },
+      perClan: { A: { minThLevel: null, minLeagueTier: null, maxBench: 0 } },
     };
-    const players = Array.from({ length: 6 }, (_, i) => player(`p${i}`, { currentClanId: 'A', thLevel: 16 - i }));
-    const clans: PoolClan[] = [
-      { clanId: 'A', warSize: 2, displayOrder: 0 },
-      { clanId: 'B', warSize: 2, displayOrder: 1 },
-    ];
-    const drafts = allocate(players, clans, constraints);
-    const inA = drafts.filter((d) => d.recommendedClanId === 'A');
-    const inB = drafts.filter((d) => d.recommendedClanId === 'B');
-    expect(inA).toHaveLength(2);
-    expect(inA.filter((d) => d.isBench)).toHaveLength(0); // A's override forbids benching
-    expect(inB).toHaveLength(4);
-    expect(inB.filter((d) => d.isBench)).toHaveLength(2);
+    const players = Array.from({ length: 6 }, (_, i) => acct(`p${i}`, { currentClanId: 'A', thLevel: 16 - i }));
+    const drafts = allocate(players, [CLAN_A, CLAN_B], constraints);
+    expect(placedIn(drafts, 'A')).toHaveLength(2);
+    expect(placedIn(drafts, 'A').filter((d) => d.isBench)).toHaveLength(0); // A's override forbids benching
+    expect(placedIn(drafts, 'B')).toHaveLength(4);
+    expect(placedIn(drafts, 'B').filter((d) => d.isBench)).toHaveLength(2);
     expect(drafts.filter((d) => d.status === 'removed')).toHaveLength(0);
   });
+});
 
-  it('spreads displaced players toward the clan with more remaining capacity', () => {
+describe('war-ineligible (struck) exclusion — matched on the account tag', () => {
+  it('pulls a war-ineligible account from the pool and marks it removed with a reason', () => {
     const players = [
-      player('a1', { currentClanId: 'A', thLevel: 16 }),
-      player('a2', { currentClanId: 'A', thLevel: 16 }),
-      player('drifter', { currentClanId: 'OUTSIDER', thLevel: 15 }),
+      acct('clean', { currentClanId: 'A', thLevel: 16 }),
+      acct('struck', { currentClanId: 'A', thLevel: 15 }),
     ];
-    const clans: PoolClan[] = [
-      { clanId: 'A', warSize: 3, displayOrder: 0 },
-      { clanId: 'B', warSize: 3, displayOrder: 1 },
-    ];
-    const drafts = allocate(players, clans, NO_CONSTRAINTS);
-    const drifter = drafts.find((d) => d.personId === 'drifter')!;
-    expect(drifter.recommendedClanId).toBe('B');
+    const drafts = byTag(allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#struck'])));
+    expect(drafts['#struck'].status).toBe('removed');
+    expect(drafts['#struck'].recommendedClanId).toBeNull();
+    expect(drafts['#struck'].rank).toBeNull();
+    expect(drafts['#struck'].note).toMatch(/war-ineligible/i);
+    expect(drafts['#clean'].recommendedClanId).toBe('A');
   });
 
-  describe('war-ineligible (struck) exclusion — matched on the fielded account tag', () => {
-    it('pulls a war-ineligible account from the pool and marks it removed with a reason', () => {
-      const players = [
-        player('clean', { currentClanId: 'A', thLevel: 16 }),
-        player('struck', { currentClanId: 'A', thLevel: 15 }),
-      ];
-      // The set holds account tags (player_account_tag), not person ids.
-      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#struck']));
-      const struck = drafts.find((d) => d.personId === 'struck')!;
-      expect(struck.status).toBe('removed');
-      expect(struck.recommendedClanId).toBeNull();
-      expect(struck.rank).toBeNull();
-      expect(struck.note).toMatch(/war-ineligible/i);
-      // The clean player is still allocated normally.
-      expect(drafts.find((d) => d.personId === 'clean')!.recommendedClanId).toBe('A');
-    });
+  it('excludes only the struck alt, never its owner\'s other accounts', () => {
+    // Both accounts belong to one person; a strike is per account, so the clean main plays on.
+    const players = [
+      acct('main', { personId: 'irfan', currentClanId: 'A', thLevel: 16 }),
+      acct('alt', { personId: 'irfan', currentClanId: 'A', thLevel: 13 }),
+    ];
+    const drafts = byTag(allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#alt'])));
+    expect(drafts['#main'].status).not.toBe('removed');
+    expect(drafts['#main'].recommendedClanId).toBe('A');
+    expect(drafts['#alt'].status).toBe('removed');
+  });
 
-    it('does NOT exclude a person when only a benched alt (a different account) is struck', () => {
-      // The person fields their clean main #clean; their struck alt #alt is not in the pool. Because
-      // eligibility is per-account, the struck alt tag must not hold the fielded account out.
-      const players = [player('clean', { currentClanId: 'A', thLevel: 16 })];
-      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#alt']));
-      expect(drafts[0].status).not.toBe('removed');
-      expect(drafts[0].recommendedClanId).toBe('A');
-    });
+  it('never fills a struck account into a war slot even when the clan has room', () => {
+    const players = Array.from({ length: 3 }, (_, i) => acct(`p${i}`, { currentClanId: 'A', thLevel: 16 - i }));
+    const drafts = allocate(players, [{ clanId: 'A', warSize: 3, priority: 0 }], NO_CONSTRAINTS, new Set(['#p2']));
+    const placed = placedIn(drafts, 'A').map((d) => d.playerTag);
+    expect(placed).not.toContain('#p2');
+    expect(placed.sort()).toEqual(['#p0', '#p1']);
+    expect(byTag(drafts)['#p2'].status).toBe('removed');
+  });
 
-    it('never fills a struck account into a war slot even when the clan has room', () => {
-      const players = Array.from({ length: 3 }, (_, i) =>
-        player(`p${i}`, { currentClanId: 'A', thLevel: 16 - i }),
-      );
-      // #p2 is struck; warSize 3 has room for all three, but p2 must NOT be placed.
-      const drafts = allocate(players, [{ clanId: 'A', warSize: 3 }], NO_CONSTRAINTS, new Set(['#p2']));
-      const placed = drafts.filter((d) => d.recommendedClanId === 'A').map((d) => d.personId);
-      expect(placed).not.toContain('p2');
-      expect(placed.sort()).toEqual(['p0', 'p1']);
-      expect(drafts.find((d) => d.personId === 'p2')!.status).toBe('removed');
-    });
+  it('is a no-op when the ineligible set is empty (default arg)', () => {
+    const players = [acct('1', { currentClanId: 'A' }), acct('2', { currentClanId: 'B' })];
+    expect(allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS).filter((d) => d.status === 'removed')).toHaveLength(0);
+  });
 
-    it('is a no-op when the ineligible set is empty (default arg)', () => {
-      const players = [player('1', { currentClanId: 'A' }), player('2', { currentClanId: 'B' })];
-      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS);
-      expect(drafts.filter((d) => d.status === 'removed')).toHaveLength(0);
-    });
-
-    it('still keeps every person represented exactly once in the output', () => {
-      const players = [
-        player('a', { currentClanId: 'A' }),
-        player('b', { currentClanId: 'A' }),
-        player('c', { currentClanId: 'B' }),
-      ];
-      const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#a', '#c']));
-      const ids = drafts.map((d) => d.personId).sort();
-      expect(ids).toEqual(['a', 'b', 'c']);
-    });
+  it('still represents every account exactly once in the output', () => {
+    const players = [
+      acct('a', { currentClanId: 'A' }),
+      acct('b', { currentClanId: 'A' }),
+      acct('c', { currentClanId: 'B' }),
+    ];
+    const drafts = allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#a', '#c']));
+    expect(drafts.map((d) => d.playerTag).sort()).toEqual(['#a', '#b', '#c']);
   });
 });

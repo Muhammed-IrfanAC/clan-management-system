@@ -32,13 +32,21 @@ export async function POST(request: NextRequest) {
       .eq('id', transferId);
     if (tErr) throw tErr;
 
-    const { error: aErr } = await supabase
+    const { data: allocation, error: aErr } = await supabase
       .from('cwl_allocations')
       .update({ status: isDone ? 'transferred' : 'transfer_required' })
-      .eq('id', transfer.allocation_id);
+      .eq('id', transfer.allocation_id)
+      .select('id, status')
+      .single();
     if (aErr) throw aErr;
 
-    return NextResponse.json({ success: true });
+    // Both changed rows come back so the client can splice the transfer row AND the roster card it
+    // drives, keeping the two in step without a full reload.
+    return NextResponse.json({
+      success: true,
+      transfer: { id: transferId, status: isDone ? 'done' : 'pending' },
+      allocation,
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

@@ -3,21 +3,19 @@
 import { useState } from 'react';
 import { Swords, ChevronDown, ChevronRight, Star } from 'lucide-react';
 import type { CWLRound, CWLWarMember } from '@/types/database';
+import { useCWLStore } from '@/lib/stores/cwlStore';
+import { useClanName } from './useClanName';
 
 const STATE_LABEL: Record<string, string> = {
   preparation: 'Prep', inWar: 'Battle Day', warEnded: 'Ended',
 };
 
 /** Live per-round CWL lineups for the season, grouped by family clan. Read-only — filled by sync. */
-export default function LiveRoundsPanel({
-  rounds,
-  members,
-  clanName,
-}: {
-  rounds: CWLRound[];
-  members: CWLWarMember[];
-  clanName: (clanId: string) => string;
-}) {
+export default function LiveRoundsPanel() {
+  const rounds = useCWLStore((s) => s.rounds);
+  const members = useCWLStore((s) => s.warMembers);
+  const clanName = useClanName();
+
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
   if (rounds.length === 0) {

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { BarChart3 } from 'lucide-react';
-import type { CWLRound, CWLWarMember } from '@/types/database';
+import { useCWLStore } from '@/lib/stores/cwlStore';
 import { computeSeasonPerformance, type MemberPerf } from '@/lib/cwl/performance';
 
 type SortKey = 'totalStars' | 'attacksUsed' | 'avgDestruction' | 'missed' | 'name';
@@ -20,7 +20,10 @@ const td: React.CSSProperties = { textAlign: 'right', padding: '6px 10px', fontS
 const dash = (n: number | null, suffix = '') => (n === null ? '—' : `${n.toFixed(1)}${suffix}`);
 
 /** Season-wide per-member CWL performance recognition (not a ranking). Reads the stored round data. */
-export default function PerformancePanel({ rounds, members }: { rounds: CWLRound[]; members: CWLWarMember[] }) {
+export default function PerformancePanel() {
+  const rounds = useCWLStore((s) => s.rounds);
+  const members = useCWLStore((s) => s.warMembers);
+
   const [sort, setSort] = useState<SortKey>('totalStars');
   const { perMember, totals } = useMemo(() => computeSeasonPerformance(rounds, members), [rounds, members]);
 

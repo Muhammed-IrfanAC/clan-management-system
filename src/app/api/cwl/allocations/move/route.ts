@@ -11,7 +11,11 @@ import { resyncTransfer } from '@/lib/cwl/roster';
  *    actual clan (matches | transfer_required) and the pending transfer resynced.
  *  - bench / unbench:   toggle the player between bench and fighting roster within their clan.
  *  - remove:            pull the player from the season (status 'removed', pending transfer cleared).
+ *
+ * Returns the updated allocation row so the client can splice just that card into place instead of
+ * refetching (and re-rendering) the whole board.
  */
+const ALLOCATION_FIELDS = 'id, player_account_tag, person_id, recommended_clan_id, actual_clan_id, status, is_bench, rank, note';
 export async function POST(request: NextRequest) {
   try {
     const auth = await authorizeActive(request);
@@ -66,7 +70,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Unknown action '${action}'` }, { status: 400 });
     }
 
-    return NextResponse.json({ success: true });
+    const { data: updated, error: readErr } = await supabase
+      .from('cwl_allocations')
+      .select(ALLOCATION_FIELDS)
+      .eq('id', allocationId)
+      .single();
+    if (readErr) throw readErr;
+
+    return NextResponse.json({ success: true, allocation: updated });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

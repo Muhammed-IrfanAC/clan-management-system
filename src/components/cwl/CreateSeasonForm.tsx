@@ -1,26 +1,23 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Swords, ChevronDown, ChevronRight } from 'lucide-react';
-import type { Clan, CWLConstraints, CWLLeague } from '@/types/database';
-import { CWL_LEAGUES } from '@/lib/cwl/leagues';
-
-// League floors a leader can pick, lowest → highest (plus "Any" to disable the gate).
-const LEAGUE_OPTIONS: { value: '' | CWLLeague; label: string }[] = [
-  { value: '', label: 'Any league' },
-  ...CWL_LEAGUES.map((l) => ({ value: l.key, label: `${l.label}+` })),
-];
+import { Swords, ChevronDown, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react';
+import type { Clan, CWLConstraints, CWLConstraintRule } from '@/types/database';
+import { CWL_LEAGUE_MAJORS } from '@/lib/cwl/leagues';
+import { useCWLStore } from '@/lib/stores/cwlStore';
 
 interface RuleDraft {
-  th: string;     // '' = no minimum
-  league: '' | CWLLeague;
-  bench: string;  // '' = inherit engine default (5 for the season default row)
+  th: string; // '' = no minimum
+  tier: string; // '' = no league gate; otherwise the tier ordinal as a string
+  bench: string; // '' = inherit engine default (5 for the season default row)
 }
 
-function toRule(d: RuleDraft) {
+const EMPTY_RULE: RuleDraft = { th: '', tier: '', bench: '' };
+
+function toRule(d: RuleDraft): CWLConstraintRule {
   return {
     minThLevel: d.th.trim() ? parseInt(d.th, 10) : null,
-    minLeague: d.league || null,
+    minLeagueTier: d.tier === '' ? null : parseInt(d.tier, 10),
     maxBench: d.bench.trim() ? Math.max(0, parseInt(d.bench, 10)) : null,
   };
 }
@@ -30,59 +27,91 @@ function defaultLabel(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/**
+ * A minimum-league picker at SUB-DIVISION granularity. Each major tier is an <optgroup> holding its
+ * three in-game divisions, so "Dragon" is a heading and "Dragon 29" is the thing you actually pick —
+ * which is how the game presents it and how leaders talk about it.
+ */
+function LeagueFloorSelect({
+  value,
+  onChange,
+  anyLabel,
+  width = 190,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  anyLabel: string;
+  width?: number;
+}) {
+  return (
+    <select className="input" value={value} onChange={(e) => onChange(e.target.value)} style={{ width }}>
+      <option value="">{anyLabel}</option>
+      {CWL_LEAGUE_MAJORS.map((group) => (
+        <optgroup key={group.key} label={group.label}>
+          {group.tiers.map((tier) => (
+            <option key={tier.ordinal} value={String(tier.ordinal)}>{tier.label}+</option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
 export default function CreateSeasonForm({
   clans,
   onCreated,
   onCancel,
-  onToast,
 }: {
   clans: Clan[];
   onCreated: (seasonId: string) => void;
   onCancel: () => void;
-  onToast: (message: string, type: 'success' | 'error') => void;
 }) {
+  const createSeason = useCWLStore((s) => s.createSeason);
   const activeClans = useMemo(() => clans.filter((c) => c.active), [clans]);
 
   const [label, setLabel] = useState(defaultLabel());
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // `order` is the season's clan pool AS AN ORDERED LIST — position is the fill priority, so
+  // selecting a clan appends it and the arrows rearrange who gets filled first.
+  const [order, setOrder] = useState<string[]>([]);
   const [warSize, setWarSize] = useState<Record<string, number>>({});
-  const [def, setDef] = useState<RuleDraft>({ th: '', league: '', bench: '' });
+  const [def, setDef] = useState<RuleDraft>(EMPTY_RULE);
   const [overrides, setOverrides] = useState<Record<string, RuleDraft>>({});
   const [showOverrides, setShowOverrides] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  const selectedIds = activeClans.filter((c) => selected[c.id]).map((c) => c.id);
+  const clanName = (id: string) => activeClans.find((c) => c.id === id)?.display_name ?? 'Unknown clan';
 
   const toggleClan = (id: string) => {
-    setSelected((s) => ({ ...s, [id]: !s[id] }));
+    setOrder((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
     setWarSize((w) => (w[id] ? w : { ...w, [id]: 15 }));
   };
 
+  const movePriority = (index: number, delta: number) => {
+    setOrder((prev) => {
+      const target = index + delta;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = prev.slice();
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
   const submit = async () => {
-    if (!label.trim() || selectedIds.length === 0) return;
+    if (!label.trim() || order.length === 0) return;
     setSubmitting(true);
     try {
       const perClan: CWLConstraints['perClan'] = {};
-      for (const id of selectedIds) {
+      for (const id of order) {
         const o = overrides[id];
-        if (o && (o.th.trim() || o.league || o.bench.trim())) perClan[id] = toRule(o);
+        if (o && (o.th.trim() || o.tier || o.bench.trim())) perClan[id] = toRule(o);
       }
-      const constraints: CWLConstraints = { default: toRule(def), perClan };
-      const res = await fetch('/api/cwl/seasons', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          label: label.trim(),
-          clans: selectedIds.map((id) => ({ clanId: id, warSize: warSize[id] || 15 })),
-          constraints,
-        }),
+      const seasonId = await createSeason({
+        label: label.trim(),
+        // Index IS the priority — the list above is ordered by the leader for exactly this.
+        clans: order.map((id, priority) => ({ clanId: id, warSize: warSize[id] || 15, priority })),
+        constraints: { default: toRule(def), perClan },
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to create season');
-      onToast('CWL season created', 'success');
-      onCreated(data.seasonId);
-    } catch (err: any) {
-      onToast(err.message || 'Failed to create season', 'error');
+      if (seasonId) onCreated(seasonId);
     } finally {
       setSubmitting(false);
     }
@@ -103,31 +132,52 @@ export default function CreateSeasonForm({
         <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="2026-07" style={{ maxWidth: 220 }} />
       </div>
 
-      {/* Clan pool + war size */}
+      {/* Clan pool */}
       <div style={{ marginBottom: 'var(--space-lg)' }}>
         <label style={labelStyle}>Participating clans</label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
-          {activeClans.map((c) => {
-            const on = !!selected[c.id];
-            return (
-              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', padding: '6px 8px', borderRadius: 'var(--radius-md)', background: on ? 'rgba(34,197,94,0.06)' : 'transparent' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', cursor: 'pointer', flex: 1 }}>
-                  <input type="checkbox" checked={on} onChange={() => toggleClan(c.id)} />
-                  <span style={{ fontSize: '0.9rem', fontWeight: on ? 700 : 400 }}>{c.display_name}</span>
-                  <span className="text-muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>{c.clan_type}</span>
-                </label>
-                {on && (
-                  <select className="input" style={{ width: 'auto', padding: '4px 8px' }} value={warSize[c.id] || 15} onChange={(e) => setWarSize((w) => ({ ...w, [c.id]: parseInt(e.target.value, 10) }))}>
-                    <option value={15}>15v15</option>
-                    <option value={30}>30v30</option>
-                  </select>
-                )}
-              </div>
-            );
-          })}
+          {activeClans.map((c) => (
+            <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', padding: '6px 8px', borderRadius: 'var(--radius-md)', cursor: 'pointer', background: order.includes(c.id) ? 'rgba(34,197,94,0.06)' : 'transparent' }}>
+              <input type="checkbox" checked={order.includes(c.id)} onChange={() => toggleClan(c.id)} />
+              <span style={{ fontSize: '0.9rem', fontWeight: order.includes(c.id) ? 700 : 400 }}>{c.display_name}</span>
+              <span className="text-muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>{c.clan_type}</span>
+            </label>
+          ))}
           {activeClans.length === 0 && <p className="text-muted" style={{ fontSize: '0.85rem' }}>No active clans registered.</p>}
         </div>
       </div>
+
+      {/* Fill order — the priority the allocation engine waterfalls down. */}
+      {order.length > 0 && (
+        <div style={{ marginBottom: 'var(--space-lg)' }}>
+          <label style={labelStyle}>Fill order</label>
+          <p className="text-muted" style={{ fontSize: '0.7rem', margin: '0 0 var(--space-sm)' }}>
+            The first clan is filled first and takes the strongest accounts — lineup and bench — and
+            only what it can&apos;t hold spills to the next. Keep a clan&apos;s bench small if it should
+            not hold reserves the clans below it need.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+            {order.map((id, i) => (
+              <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', padding: '6px 8px', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.02)' }}>
+                <span className="text-muted" style={{ fontSize: '0.7rem', fontVariantNumeric: 'tabular-nums', width: 20 }}>#{i + 1}</span>
+                <span style={{ flex: 1, fontSize: '0.85rem', fontWeight: i === 0 ? 700 : 400 }}>{clanName(id)}</span>
+                <select className="input" aria-label={`War size for ${clanName(id)}`} style={{ width: 'auto', padding: '4px 8px', fontSize: '0.78rem' }} value={warSize[id] || 15} onChange={(e) => setWarSize((w) => ({ ...w, [id]: parseInt(e.target.value, 10) }))}>
+                  <option value={15}>15v15</option>
+                  <option value={30}>30v30</option>
+                </select>
+                <div style={{ display: 'flex', gap: 2 }}>
+                  <button type="button" aria-label={`Move ${clanName(id)} up`} disabled={i === 0} onClick={() => movePriority(i, -1)} style={{ background: 'transparent', border: 'none', color: 'var(--color-muted)', cursor: i === 0 ? 'default' : 'pointer', opacity: i === 0 ? 0.3 : 1, display: 'flex', padding: 3 }}>
+                    <ArrowUp size={15} />
+                  </button>
+                  <button type="button" aria-label={`Move ${clanName(id)} down`} disabled={i === order.length - 1} onClick={() => movePriority(i, 1)} style={{ background: 'transparent', border: 'none', color: 'var(--color-muted)', cursor: i === order.length - 1 ? 'default' : 'pointer', opacity: i === order.length - 1 ? 0.3 : 1, display: 'flex', padding: 3 }}>
+                    <ArrowDown size={15} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Default constraints */}
       <div style={{ marginBottom: 'var(--space-md)' }}>
@@ -139,9 +189,7 @@ export default function CreateSeasonForm({
           </div>
           <div>
             <span style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>Min league</span>
-            <select className="input" value={def.league} onChange={(e) => setDef((d) => ({ ...d, league: e.target.value as RuleDraft['league'] }))} style={{ width: 170 }}>
-              {LEAGUE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+            <LeagueFloorSelect value={def.tier} anyLabel="Any league" onChange={(tier) => setDef((d) => ({ ...d, tier }))} />
           </div>
           <div>
             <span style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>Max bench / clan</span>
@@ -149,30 +197,26 @@ export default function CreateSeasonForm({
           </div>
         </div>
         <p className="text-muted" style={{ fontSize: '0.7rem', marginTop: 4 }}>
-          A clan holds at most its war size + this many players; surplus spill to clans with room, then fall out as unassigned. Blank = 5.
+          A clan holds at most its war size + this many accounts; surplus spill down the fill order, then fall out as unassigned. Blank = 5.
         </p>
       </div>
 
       {/* Per-clan overrides */}
-      {selectedIds.length > 0 && (
+      {order.length > 0 && (
         <div style={{ marginBottom: 'var(--space-lg)' }}>
           <button onClick={() => setShowOverrides((v) => !v)} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'transparent', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', fontSize: '0.75rem', padding: 0 }}>
             {showOverrides ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Per-clan overrides (optional)
           </button>
           {showOverrides && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
-              {selectedIds.map((id) => {
-                const clan = activeClans.find((c) => c.id === id)!;
-                const o = overrides[id] || { th: '', league: '' as RuleDraft['league'], bench: '' };
+              {order.map((id) => {
+                const o = overrides[id] || EMPTY_RULE;
                 const set = (patch: Partial<RuleDraft>) => setOverrides((prev) => ({ ...prev, [id]: { ...o, ...patch } }));
                 return (
                   <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '0.8rem', minWidth: 120 }}>{clan.display_name}</span>
+                    <span style={{ fontSize: '0.8rem', minWidth: 120 }}>{clanName(id)}</span>
                     <input className="input" type="number" min={1} max={20} value={o.th} placeholder="Min TH (inherit)" onChange={(e) => set({ th: e.target.value })} style={{ width: 150 }} />
-                    <select className="input" value={o.league} onChange={(e) => set({ league: e.target.value as RuleDraft['league'] })} style={{ width: 170 }}>
-                      <option value="">League (inherit)</option>
-                      {LEAGUE_OPTIONS.filter((r) => r.value).map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                    </select>
+                    <LeagueFloorSelect value={o.tier} anyLabel="League (inherit)" onChange={(tier) => set({ tier })} />
                     <input className="input" type="number" min={0} max={30} value={o.bench} placeholder="Bench (inherit)" onChange={(e) => set({ bench: e.target.value })} style={{ width: 150 }} />
                   </div>
                 );
@@ -184,7 +228,7 @@ export default function CreateSeasonForm({
 
       <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
         <button className="btn btn-outline" style={{ border: 'none' }} onClick={onCancel} disabled={submitting}>Cancel</button>
-        <button className="btn btn-primary" onClick={submit} disabled={submitting || !label.trim() || selectedIds.length === 0}>
+        <button className="btn btn-primary" onClick={submit} disabled={submitting || !label.trim() || order.length === 0}>
           {submitting ? 'Generating…' : 'Create & Allocate'}
         </button>
       </div>

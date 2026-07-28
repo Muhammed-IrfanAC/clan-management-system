@@ -1,39 +1,35 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Swords, Plus, Activity, History } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useClan } from '@/lib/ClanContext';
-import type { CWLSeason } from '@/types/database';
-import Toast, { type ToastState } from '@/components/ui/Toast';
+import { useCWLStore } from '@/lib/stores/cwlStore';
+import Toast from '@/components/ui/Toast';
 import CreateSeasonForm from '@/components/cwl/CreateSeasonForm';
 import SeasonView from '@/components/cwl/SeasonView';
 
+/**
+ * Thin 'use client' orchestrator over cwlStore: season list, create-vs-view mode, mount-time load.
+ * Everything below SeasonView reads the store directly rather than receiving props.
+ */
 export default function CWLPage() {
   const { clans } = useClan();
-  const [seasons, setSeasons] = useState<CWLSeason[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const seasons = useCWLStore((s) => s.seasons);
+  const selectedSeasonId = useCWLStore((s) => s.selectedSeasonId);
+  const selectSeason = useCWLStore((s) => s.selectSeason);
+  const loadSeasons = useCWLStore((s) => s.loadSeasons);
+  const loading = useCWLStore((s) => s.loadingSeasons);
+  const toast = useCWLStore((s) => s.toast);
+  const setToast = useCWLStore((s) => s.setToast);
+
   const [mode, setMode] = useState<'view' | 'create'>('view');
-  const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState<ToastState | null>(null);
-
-  const notify = useCallback((message: string, type: 'success' | 'error') => setToast({ message, type }), []);
-
-  const loadSeasons = useCallback(async (selectAfter?: string) => {
-    const { data } = await supabase.from('cwl_seasons').select('*').order('created_at', { ascending: false });
-    const rows = (data as CWLSeason[]) || [];
-    setSeasons(rows);
-    setSelectedId((prev) => selectAfter ?? (prev && rows.some((r) => r.id === prev) ? prev : rows[0]?.id ?? null));
-    setLoading(false);
-  }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial load
     loadSeasons();
   }, [loadSeasons]);
 
-  const selectedSeason = seasons.find((s) => s.id === selectedId) || null;
+  const selectedSeason = seasons.find((s) => s.id === selectedSeasonId) || null;
 
   return (
     <div>
@@ -48,7 +44,7 @@ export default function CWLPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
           {mode === 'view' && seasons.length > 0 && (
-            <select className="input" style={{ width: 'auto', padding: '8px 12px' }} value={selectedId ?? ''} onChange={(e) => setSelectedId(e.target.value)}>
+            <select className="input" style={{ width: 'auto', padding: '8px 12px' }} value={selectedSeasonId ?? ''} onChange={(e) => selectSeason(e.target.value)}>
               {seasons.map((s) => <option key={s.id} value={s.id}>CWL {s.label}</option>)}
             </select>
           )}
@@ -72,19 +68,11 @@ export default function CWLPage() {
       ) : mode === 'create' ? (
         <CreateSeasonForm
           clans={clans}
-          onCreated={(id) => { setMode('view'); loadSeasons(id); }}
+          onCreated={() => setMode('view')}
           onCancel={() => setMode('view')}
-          onToast={notify}
         />
       ) : selectedSeason ? (
-        <SeasonView
-          key={selectedSeason.id}
-          season={selectedSeason}
-          clans={clans}
-          onChanged={() => loadSeasons(selectedSeason.id)}
-          onDeleted={() => loadSeasons()}
-          onToast={notify}
-        />
+        <SeasonView key={selectedSeason.id} season={selectedSeason} />
       ) : (
         <div className="card" style={{ textAlign: 'center', padding: 'var(--space-2xl)' }}>
           <Swords size={32} className="text-muted" style={{ marginBottom: 'var(--space-md)' }} />
