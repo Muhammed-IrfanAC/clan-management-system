@@ -50,6 +50,8 @@ type DossierState = {
   myPersonId: string | null;
   // The acting leader's EFFECTIVE capabilities (coded defaults + runtime overrides), for UI gating.
   myCapabilities: Capability[];
+  // Which of this person's accounts are on the kick list.
+  kickedTags: string[];
   loading: boolean;
   toast: ToastState | null;
 
@@ -72,6 +74,8 @@ type DossierState = {
   unlinkPlayer: (tag: string) => Promise<MutationResult>;
   deletePerson: () => Promise<MutationResult>;
   isAuthoredByMe: (authorTag: string | null) => boolean;
+  // Splice in an account the kick list modal just added (the add itself goes through kickListStore).
+  markKickedLocal: (tag: string) => void;
 };
 
 // Patch just one slice of `person` (never rebuild the whole profile) so a single card re-renders.
@@ -91,6 +95,7 @@ export const useMemberDossierStore = create<DossierState>((set, get) => ({
   currentUserName: null,
   myPersonId: null,
   myCapabilities: [],
+  kickedTags: [],
   loading: true,
   toast: null,
   removing: false,
@@ -147,7 +152,13 @@ export const useMemberDossierStore = create<DossierState>((set, get) => ({
 
       if (pError) throw pError;
       const person = pData as FullPerson;
-      set({ person });
+      set({ person, kickedTags: [] });
+
+      const accountTags = (person?.player_accounts || []).map((a) => a.player_tag);
+      if (accountTags.length) {
+        const { data: kicked } = await supabase.from('kicked_accounts').select('player_tag').in('player_tag', accountTags);
+        set({ kickedTags: ((kicked as { player_tag: string }[]) || []).map((k) => k.player_tag) });
+      }
 
       // Resolve player_tags (strike loggers + note authors) to display names.
       const loggerTags = Array.from(
@@ -286,7 +297,7 @@ export const useMemberDossierStore = create<DossierState>((set, get) => ({
     const navigateAway = person?.player_accounts.length === 1;
     try {
       const res = await fetch(`/api/players/${encodeURIComponent(tag)}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Error removing player');
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Error removing player');
       if (!navigateAway) {
         // Splice the removed account out; other slices are unaffected.
         patchPerson(set, (p) => ({ ...p, player_accounts: p.player_accounts.filter((a) => a.player_tag !== tag) }));
@@ -342,6 +353,10 @@ export const useMemberDossierStore = create<DossierState>((set, get) => ({
     } finally {
       set({ deletingPerson: false });
     }
+  },
+
+  markKickedLocal(tag) {
+    set((s) => (s.kickedTags.includes(tag) ? {} : { kickedTags: [...s.kickedTags, tag] }));
   },
 
   isAuthoredByMe(authorTag) {

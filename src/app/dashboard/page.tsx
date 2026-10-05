@@ -43,14 +43,19 @@ export default function DashboardPage() {
   async function fetchData() {
     setLoading(true);
     try {
-      // Person count (needs to be joined with player_accounts if filtering by clan)
-      const personQuery = supabase.from('persons').select('id', { count: 'exact', head: true });
+      // Person count (needs to be joined with player_accounts if filtering by clan). Only persons with
+      // an account that is not inactive count, matching the registry.
+      const personQuery = supabase
+        .from('persons')
+        .select('id, player_accounts!inner(status)', { count: 'exact', head: true })
+        .neq('player_accounts.status', 'inactive');
       if (selectedClanId !== 'all') {
           // This is tricky with exact count on persons. Let's count distinct person_id in player_accounts
           const { count } = await supabase
             .from('player_accounts')
             .select('person_id', { count: 'exact', head: true })
             .eq('clan_id', selectedClanId)
+            .neq('status', 'inactive')
             .not('person_id', 'is', null);
           setStats(s => ({ ...s, totalMembers: count || 0 }));
       } else {

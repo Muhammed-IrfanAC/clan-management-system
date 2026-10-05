@@ -3,7 +3,9 @@ export type DatabaseRole = 'super_admin' | 'leader' | 'co_leader' | 'elder' | 'm
 // access_role on a PERSON is the dashboard permission — the single source of truth for RBAC.
 // NULL (absent) = no dashboard access. Lives on the person so every linked alt inherits it.
 export type AccessRole = 'super_admin' | 'leader' | 'co_leader';
-export type PlayerStatus = 'active' | 'left' | 'removed';
+// 'inactive' = gone from every family clan for longer than inactive_cleanup_days. Kept, never deleted
+// (it anchors the person link, strikes and the kick list), but hidden from the registry and roster lists.
+export type PlayerStatus = 'active' | 'left' | 'removed' | 'inactive';
 export type ClanType = 'main' | 'feeder';
 // Scope of automated rule detection for a clan: both war types, CWL only, or off entirely.
 export type RuleAutomationMode = 'always' | 'cwl_only' | 'never';

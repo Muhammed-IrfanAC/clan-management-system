@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createClanOpsDb, FakeDb } from '@/test/fakeSupabase';
 import { FakeCoc, member } from '@/test/fakeCoc';
 
-const h = vi.hoisted(() => ({ db: null as unknown as FakeDb, coc: null as any }));
+const h = vi.hoisted(() => ({ db: null as unknown as FakeDb, coc: null as any, send: null as any }));
 
 vi.mock('@/lib/supabase', () => ({
   get supabase() {
@@ -24,6 +24,12 @@ vi.mock('@/lib/cwl/live', () => ({ syncCwlLiveState: vi.fn(async () => null) }))
 vi.mock('@/lib/cwl/roster', () => ({ detectCompletedTransfers: vi.fn(async () => null) }));
 vi.mock('@/lib/war', () => ({ syncWarState: vi.fn(async () => null) }));
 vi.mock('@/lib/rules/scan', () => ({ scanRuleViolations: vi.fn(async () => null) }));
+// The kick-list alert runs for real; only the Discord transport is replaced, so a test can count and
+// read the messages it would have sent.
+vi.mock('@/lib/discord', () => ({
+  sendDiscordMessage: (...args: unknown[]) => h.send(...args),
+  webhookUrlForClan: vi.fn(async () => 'https://discord.test/hook'),
+}));
 
 import { syncClan, runFullSync } from './sync';
 
@@ -48,6 +54,7 @@ beforeEach(() => {
 
   h.db = createClanOpsDb();
   h.coc = new FakeCoc();
+  h.send = vi.fn(async () => true);
   h.db.seed('clans', [
     { id: MAIN, clan_tag: '#MAIN', display_name: 'Main', active: true },
     { id: FEEDER, clan_tag: '#FEED', display_name: 'Feeder', active: true },
@@ -201,75 +208,167 @@ describe('roster reconciliation', () => {
   });
 });
 
-describe('inactive cleanup (fake clock)', () => {
+describe('inactive marking (fake clock)', () => {
   async function departBob() {
     await seedLinkedRoster();
     h.coc.remove('#B1', '#MAIN');
     await syncClan(MAIN);
   }
 
-  it('keeps a departed account inside the cleanup window', async () => {
+  it('keeps a departed account as left inside the window', async () => {
     await departBob();
     advanceDays(29);
     await syncClan(MAIN);
-    expect(account('#B1')).toBeDefined();
+    expect(account('#B1')).toMatchObject({ status: 'left', person_id: 'p-bob' });
   });
 
-  it('deletes a departed account once the window has passed', async () => {
+  it('marks a departed account inactive once the window has passed, and never deletes it', async () => {
     await departBob();
     advanceDays(31);
     await syncClan(MAIN);
-    expect(account('#B1')).toBeUndefined();
-    // …but never the person: accounts go, identities stay.
+    expect(account('#B1')).toMatchObject({ status: 'inactive', person_id: 'p-bob' });
     expect(h.db.find('persons', 'p-bob')).toBeDefined();
+    expect(h.db.log.some((l) => l.table === 'player_accounts' && l.op === 'delete')).toBe(false);
   });
 
-  it('never deletes an account whose person holds dashboard access', async () => {
+  it('an inactive account that rejoins is reactivated with its link intact', async () => {
     await departBob();
-    h.db.find('persons', 'p-bob')!.access_role = 'co_leader';
-    advanceDays(60);
+    advanceDays(40);
     await syncClan(MAIN);
-    expect(account('#B1')).toBeDefined();
+    h.coc.setRoster('#MAIN', [member('#A1'), member('#B1')]);
+    await syncClan(MAIN);
+    expect(account('#B1')).toMatchObject({ status: 'active', person_id: 'p-bob', clan_id: MAIN });
   });
 
-  it('never deletes an account carrying a strike inside the 90-day window', async () => {
+  it('keeps strikes attached to an account that goes inactive', async () => {
     await departBob();
     h.db.seed('strikes', [{ id: 's1', person_id: 'p-bob', player_account_tag: '#B1', issued_at: new Date().toISOString() }]);
-    advanceDays(60);
+    advanceDays(120);
     await syncClan(MAIN);
-    expect(account('#B1')).toBeDefined();
-    advanceDays(40); // strike is now 100 days old
-    await syncClan(MAIN);
-    expect(account('#B1')).toBeUndefined();
-    expect(h.db.find('strikes', 's1')!.player_account_tag).toBeNull();
+    expect(account('#B1')!.status).toBe('inactive');
+    expect(h.db.find('strikes', 's1')!.player_account_tag).toBe('#B1');
   });
 
-  it('measures the window from last-seen, so a sync gap longer than the window deletes a leaver in the same pass', async () => {
-    // Documents current behaviour: last_synced_at is "last seen active", and the cleanup clock
-    // runs from it. If nobody syncs for 31 days, a member who left during the gap is marked left
-    // and deleted by the very same sync.
+  it('measures the window from last-seen, so a sync gap longer than the window retires a leaver in the same pass', async () => {
+    // last_synced_at is "last seen active" and the clock runs from it. If nobody syncs for 31 days,
+    // a member who left during the gap is marked left and then inactive by the very same sync.
     await seedLinkedRoster();
     advanceDays(31);
     h.coc.remove('#B1', '#MAIN');
     await syncClan(MAIN);
-    expect(account('#B1')).toBeUndefined();
+    expect(account('#B1')!.status).toBe('inactive');
   });
 
-  it('a legacy warning on one departed account blocks the whole cleanup batch (swallowed)', async () => {
-    // Documents current behaviour, observed in production: warnings.player_account_tag is
-    // NO ACTION, the cleanup deletes every candidate in one statement, and its error is only
-    // logged — so one referenced account keeps every other stale account alive, forever.
+  it('a legacy warning on a departed account no longer holds anything up', async () => {
+    // Under the old hard delete, warnings.player_account_tag (NO ACTION) failed the whole batch and
+    // kept every stale account alive. Marking is an update, so the FK never comes into it.
     await seedLinkedRoster();
-    h.coc.setRoster('#MAIN', []);
     h.coc.setRoster('#MAIN', [member('#A1')]);
     h.db.seed('warnings', [{ id: 'w1', person_id: 'p-bob', player_account_tag: '#B1' }]);
-    h.db.seed('player_accounts', [{ player_tag: '#GONE', clan_id: MAIN, status: 'active' }]);
+    h.db.seed('player_accounts', [{ player_tag: '#GONE', clan_id: MAIN, status: 'active', last_synced_at: new Date().toISOString() }]);
     await syncClan(MAIN); // #B1 and #GONE leave
     advanceDays(31);
     await syncClan(MAIN);
-    expect(account('#B1')).toBeDefined();
-    expect(account('#GONE')).toBeDefined();
-    expect(h.db.log.some((l) => l.table === 'player_accounts' && l.op === 'delete' && l.error?.code === '23503')).toBe(true);
+    expect(account('#B1')!.status).toBe('inactive');
+    expect(account('#GONE')!.status).toBe('inactive');
+  });
+});
+
+describe('arrivals', () => {
+  const tags = (r: { arrivals: { tag: string; clanId: string }[] }) => r.arrivals.map((a) => `${a.tag}@${a.clanId}`).sort();
+
+  it('reports every member of a clan seen for the first time, then nobody once they are settled', async () => {
+    h.coc.setRoster('#MAIN', [member('#A1'), member('#B1')]);
+    expect(tags(await syncClan(MAIN))).toEqual([`#A1@${MAIN}`, `#B1@${MAIN}`]);
+    expect(tags(await syncClan(MAIN))).toEqual([]);
+  });
+
+  it('reports a member coming back after leaving', async () => {
+    await seedLinkedRoster();
+    h.coc.remove('#B1', '#MAIN');
+    await syncClan(MAIN);
+    h.coc.setRoster('#MAIN', [member('#A1'), member('#B1')]);
+    expect(tags(await syncClan(MAIN))).toEqual([`#B1@${MAIN}`]);
+  });
+
+  it('reports a mover in the clan they moved to, whichever clan syncs first', async () => {
+    await seedLinkedRoster();
+    h.coc.move('#A1', '#MAIN', '#FEED');
+    expect(tags(await syncClan(FEEDER))).toEqual([`#A1@${FEEDER}`]);
+    expect(tags(await syncClan(MAIN))).toEqual([]);
+  });
+});
+
+describe('kick list alerts', () => {
+  function kick(tag: string, over: Record<string, unknown> = {}) {
+    h.db.seed('kicked_accounts', [{
+      player_tag: tag,
+      kicked_from_clan_id: MAIN,
+      comment: 'Ignored war calls',
+      kicked_by: '#A1',
+      kicked_at: new Date().toISOString(),
+      updated_at: null,
+      ...over,
+    }]);
+  }
+  const sentEmbeds = () => h.send.mock.calls.map((c: any[]) => c[0].embeds[0]);
+
+  it('alerts once when a kicked player turns up in another family clan', async () => {
+    await seedLinkedRoster();
+    kick('#B1');
+    h.coc.remove('#B1', '#MAIN');
+    await runFullSync();
+    expect(h.send).not.toHaveBeenCalled(); // leaving is not news
+
+    h.coc.setRoster('#FEED', [member('#F1'), member('#B1', { name: 'Bob' })]);
+    const res = await runFullSync();
+    expect(res.kickList).toEqual({ matched: 1, alerted: 1 });
+    expect(sentEmbeds()).toEqual([
+      expect.objectContaining({
+        title: '⛔ Kicked player joined Feeder',
+        fields: [
+          expect.objectContaining({ name: 'Kicked', value: expect.stringContaining('from Main by Alice') }),
+          expect.objectContaining({ name: 'Reason', value: 'Ignored war calls' }),
+        ],
+      }),
+    ]);
+
+    await runFullSync(); // still there: not a new arrival
+    expect(h.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('alerts when an alt of a kicked player joins', async () => {
+    await seedLinkedRoster();
+    h.db.seed('player_accounts', [{ player_tag: '#B2', person_id: 'p-bob', in_game_name: 'Bobby', status: 'inactive', clan_id: null }]);
+    kick('#B1');
+    h.coc.setRoster('#FEED', [member('#F1'), member('#B2', { name: 'Bobby' })]);
+    await runFullSync();
+    expect(sentEmbeds()).toEqual([expect.objectContaining({ title: '⛔ Alt of a kicked player joined Feeder' })]);
+  });
+
+  it('does not alert for an account kicked while it is still in the clan', async () => {
+    await seedLinkedRoster();
+    kick('#B1');
+    await runFullSync();
+    expect(h.send).not.toHaveBeenCalled();
+  });
+
+  it('never alerts for an account linked to leadership', async () => {
+    await seedLinkedRoster();
+    kick('#B1');
+    h.db.find('persons', 'p-bob')!.access_role = 'co_leader';
+    h.coc.move('#B1', '#MAIN', '#FEED');
+    await runFullSync();
+    expect(h.send).not.toHaveBeenCalled();
+  });
+
+  it('a failing kick-list read never fails the sync', async () => {
+    await seedLinkedRoster();
+    h.coc.setRoster('#FEED', [member('#F1'), member('#NEW')]);
+    h.db.failNext('kicked_accounts', 'select', 'upstream timeout');
+    const res = await runFullSync();
+    expect(res).toMatchObject({ success: true, kickList: null });
+    expect(account('#NEW')!.status).toBe('active');
   });
 });
 

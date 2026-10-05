@@ -385,7 +385,7 @@ class QueryBuilder implements PromiseLike<{ data: any; error: DbError | null; co
  */
 export function createClanOpsDb() {
   return new FakeDb({
-    primaryKeys: { player_accounts: 'player_tag', settings: 'key' },
+    primaryKeys: { player_accounts: 'player_tag', settings: 'key', kicked_accounts: 'player_tag' },
     defaults: {
       persons: () => ({ access_role: null, created_at: new Date().toISOString() }),
       player_accounts: () => ({ person_id: null, added_at: new Date().toISOString() }),
@@ -399,6 +399,8 @@ export function createClanOpsDb() {
       { table: 'strikes', column: 'person_id', refTable: 'persons', refColumn: 'id', onDelete: 'cascade' },
       { table: 'cwl_allocations', column: 'player_account_tag', refTable: 'player_accounts', refColumn: 'player_tag', onDelete: 'cascade' },
       { table: 'member_notes', column: 'person_id', refTable: 'persons', refColumn: 'id', onDelete: 'cascade' },
+      { table: 'kicked_accounts', column: 'player_tag', refTable: 'player_accounts', refColumn: 'player_tag', onDelete: 'restrict' },
+      { table: 'kicked_accounts', column: 'kicked_from_clan_id', refTable: 'clans', refColumn: 'id', onDelete: 'set null' },
     ],
   });
 }

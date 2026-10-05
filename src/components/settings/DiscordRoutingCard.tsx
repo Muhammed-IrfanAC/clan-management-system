@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Radio, AlertTriangle, Megaphone } from 'lucide-react';
+import { Radio, AlertTriangle, Megaphone, ShieldAlert } from 'lucide-react';
 import { useSettingsStore } from '@/lib/stores/settingsStore';
 
 /**
@@ -16,6 +16,9 @@ import { useSettingsStore } from '@/lib/stores/settingsStore';
  * from the clan channels that carry everything addressed to specific people. Leaving it unset is a
  * real choice, not an omission: announcements then post to each clan's own channel exactly as before.
  *
+ * And the LEADERSHIP channel (migration 035) — alerts meant for leadership only, currently a kicked
+ * player rejoining a family clan. Same rule: unset, they post to the clan's own channel.
+ *
  * The URL fields are WRITE-ONLY. What comes back from the API is a masked fingerprint, because a
  * webhook URL is a credential — see the route's doc block. Typing a new value replaces it; leaving
  * the field blank leaves the stored one alone.
@@ -28,6 +31,7 @@ export default function DiscordRoutingCard() {
 
   const [url, setUrl] = useState('');
   const [announceUrl, setAnnounceUrl] = useState('');
+  const [leadershipUrl, setLeadershipUrl] = useState('');
 
   useEffect(() => {
     fetchDiscordRoute();
@@ -167,6 +171,62 @@ export default function DiscordRoutingCard() {
         <p className="text-muted" style={{ fontSize: '0.7rem', margin: 0 }}>
           Changing this re-posts each clan’s roster into the new channel on the next roster post. The
           old ones stay where they are — delete them manually so nobody reads a stale roster.
+        </p>
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--color-border)', margin: 'var(--space-lg) 0 var(--space-md)' }} />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: '4px' }}>
+        <ShieldAlert size={16} style={{ color: 'var(--color-cta)' }} />
+        <p style={{ fontWeight: 700, margin: 0, fontSize: '0.9rem' }}>LEADERSHIP CHANNEL</p>
+      </div>
+      <p className="text-muted" style={{ fontSize: '0.8rem', margin: '0 0 var(--space-md)' }}>
+        {route.leadershipConfigured
+          ? 'Kick list alerts go here — when a kicked player, or an alt of one, joins a family clan.'
+          : 'Not set — kick list alerts go to the clan’s own channel, where members can read them, kick reason included. Point this at a channel only leadership can see.'}
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+          Leadership webhook URL
+          {route.leadershipConfigured && (
+            <span style={{ marginLeft: 6, fontVariantNumeric: 'tabular-nums' }}>
+              · currently <code style={{ fontSize: '0.7rem' }}>{route.maskedLeadershipUrl}</code>
+            </span>
+          )}
+        </label>
+        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+          <input
+            type="password"
+            className="input"
+            style={{ flex: '1 1 320px' }}
+            autoComplete="off"
+            placeholder={route.leadershipConfigured ? 'Enter a new URL to replace the stored one' : 'https://discord.com/api/webhooks/…'}
+            value={leadershipUrl}
+            onChange={(e) => setLeadershipUrl(e.target.value)}
+          />
+          <button
+            className="btn btn-outline"
+            disabled={saving || !leadershipUrl.trim()}
+            onClick={async () => {
+              if (await saveDiscordRoute({ leadershipWebhookUrl: leadershipUrl.trim() })) setLeadershipUrl('');
+            }}
+          >
+            Save URL
+          </button>
+          {route.leadershipConfigured && (
+            <button
+              className="btn btn-outline"
+              disabled={saving}
+              onClick={() => saveDiscordRoute({ leadershipWebhookUrl: '' })}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <p className="text-muted" style={{ fontSize: '0.7rem', margin: 0 }}>
+          In Discord: Edit Channel → Integrations → Webhooks → New Webhook → Copy Webhook URL. Anyone
+          with the URL can post into the channel, so treat it like a password.
         </p>
       </div>
     </div>

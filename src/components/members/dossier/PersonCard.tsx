@@ -1,8 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { User, AtSign, CheckCircle, Link as LinkIcon, Trash2, AlertTriangle } from 'lucide-react';
-import { useMemberDossierStore } from '@/lib/stores/memberDossierStore';
+import Link from 'next/link';
+import { User, AtSign, CheckCircle, Link as LinkIcon, Trash2, AlertTriangle, Ban } from 'lucide-react';
+import { useMemberDossierStore, type FullPerson } from '@/lib/stores/memberDossierStore';
+import MarkKickedModal from '@/components/kicks/MarkKickedModal';
+
+type Account = FullPerson['player_accounts'][number];
 
 // Left column of the dossier: identity, Discord-link editor, and linked accounts.
 // Destructive actions are delegated up (the confirm modal and any navigation live in the page).
@@ -19,6 +23,9 @@ export default function PersonCard({
   const savingDiscord = useMemberDossierStore((s) => s.savingDiscord);
   const saveDiscordId = useMemberDossierStore((s) => s.saveDiscordId);
   const myCapabilities = useMemberDossierStore((s) => s.myCapabilities);
+  const kickedTags = useMemberDossierStore((s) => s.kickedTags);
+  const markKickedLocal = useMemberDossierStore((s) => s.markKickedLocal);
+  const setToast = useMemberDossierStore((s) => s.setToast);
 
   // UI gating only (API enforces): capabilities are overrides-aware, so a co-leader granted
   // leader.manage in Settings → Permissions sees the Danger Zone too.
@@ -26,8 +33,47 @@ export default function PersonCard({
 
   const [editingDiscord, setEditingDiscord] = useState(false);
   const [discordDraft, setDiscordDraft] = useState('');
+  const [marking, setMarking] = useState<Account | null>(null);
 
   if (!person) return null;
+
+  // Inactive = gone from the family past the cleanup window. Kept (so the person is recognised if
+  // they come back) but listed apart, below the accounts that are actually around.
+  const currentAccounts = person.player_accounts.filter((a) => a.status !== 'inactive');
+  const inactiveAccounts = person.player_accounts.filter((a) => a.status === 'inactive');
+
+  function renderAccount(acc: Account) {
+    const kicked = kickedTags.includes(acc.player_tag);
+    const inactive = acc.status === 'inactive';
+    return (
+      <div key={acc.player_tag} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)', opacity: inactive ? 0.65 : 1 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-xs)' }}>
+          <span style={{ fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+            {acc.in_game_name}
+            {kicked && (
+              <Link href="/dashboard/kicks" style={{ fontSize: '0.6rem', fontWeight: 800, padding: '1px 6px', borderRadius: '3px', background: 'var(--color-danger)', color: '#fff' }}>
+                KICK LIST
+              </Link>
+            )}
+          </span>
+          <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+            {/* Leadership's accounts are never put on the kick list (they kick their own alts to make room). */}
+            {!kicked && !person!.access_role && (
+              <button onClick={() => setMarking(acc)} style={{ background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }} title="Mark as kicked"><Ban size={14} /></button>
+            )}
+            <button onClick={() => onUnlink(acc.player_tag)} style={{ background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }} title="Unlink Account"><LinkIcon size={14} /></button>
+            <button onClick={() => onRequestRemove(acc.player_tag, acc.in_game_name)} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete Account"><Trash2 size={14} /></button>
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }} className="text-muted">
+          <span>{acc.player_tag} • TH{acc.th_level}</span>
+          <span style={{ fontSize: '0.65rem', padding: '1px 5px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px' }}>
+            {inactive ? 'inactive' : acc.clan?.display_name ?? 'No clan'}
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   async function handleSaveDiscord(value: string) {
     if (await saveDiscordId(value)) setEditingDiscord(false);
@@ -92,24 +138,34 @@ export default function PersonCard({
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 'var(--space-lg)' }}>
         <h3 style={{ fontSize: '0.9rem', marginBottom: 'var(--space-md)' }}>Linked Accounts</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-          {person.player_accounts.map((acc) => (
-            <div key={acc.player_tag} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.05)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-xs)' }}>
-                <span style={{ fontWeight: '700' }}>{acc.in_game_name}</span>
-                <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-                  <button onClick={() => onUnlink(acc.player_tag)} style={{ background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer' }} title="Unlink Account"><LinkIcon size={14} /></button>
-                  <button onClick={() => onRequestRemove(acc.player_tag, acc.in_game_name)} style={{ background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer' }} title="Delete Account"><Trash2 size={14} /></button>
-                </div>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }} className="text-muted">
-                <span>{acc.player_tag} • TH{acc.th_level}</span>
-                <span style={{ fontSize: '0.65rem', padding: '1px 5px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px' }}>{acc.clan.display_name}</span>
-              </div>
-            </div>
-          ))}
+          {currentAccounts.map(renderAccount)}
+          {currentAccounts.length === 0 && <p className="text-muted" style={{ fontSize: '0.8rem', margin: 0 }}>No accounts in the family right now.</p>}
         </div>
+        {inactiveAccounts.length > 0 && (
+          <>
+            <h3 style={{ fontSize: '0.8rem', margin: 'var(--space-lg) 0 var(--space-xs)' }} className="text-muted">Inactive Accounts</h3>
+            <p className="text-muted" style={{ fontSize: '0.7rem', margin: '0 0 var(--space-sm)' }}>
+              Gone from every family clan for a while. Hidden everywhere else, kept so a returning player is recognised.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+              {inactiveAccounts.map(renderAccount)}
+            </div>
+          </>
+        )}
       </div>
     </div>
+
+    {marking && (
+      <MarkKickedModal
+        account={{ tag: marking.player_tag, name: marking.in_game_name }}
+        onClose={() => setMarking(null)}
+        onDone={(entry) => {
+          markKickedLocal(entry.tag);
+          setMarking(null);
+          setToast({ type: 'success', message: `${entry.name} added to the kick list.` });
+        }}
+      />
+    )}
 
     {/* Danger Zone: delete the whole person (accounts → Unlinked, history erased). leader.manage
         only; blocked while the person still holds dashboard access. */}

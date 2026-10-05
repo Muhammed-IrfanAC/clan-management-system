@@ -5,7 +5,8 @@ import { syncCwlLiveState } from './cwl/live';
 import { detectCompletedTransfers } from './cwl/roster';
 import { syncWarState } from './war';
 import { scanRuleViolations } from './rules/scan';
-import { STRIKE_WINDOW_DAYS } from './strikes/status';
+import { alertKickedArrivals } from './kicks/arrivals';
+import type { ClanArrival } from './kicks/watch';
 
 export async function syncClan(clanId: string) {
   try {
@@ -59,10 +60,18 @@ export async function syncClan(clanId: string) {
     // 4. Update or Insert accounts
     const upsertData = [];
     const newAccounts: { player_tag: string; clan_id: string; person_id: null; added_at: string; status: 'active' }[] = [];
+    const arrivals: ClanArrival[] = [];
     const now = new Date().toISOString();
 
     for (const member of cocMembers) {
       const existing = existingByTag.get(member.tag);
+
+      // An ARRIVAL: a member this clan did not have as an active member before this pass — new to us,
+      // back from 'left' / 'inactive', or moved over from another family clan. Exactly one pass sees
+      // each join (the next finds them active here), which is what the kick-list watch relies on.
+      if (!existing || existing.status !== 'active' || existing.clan_id !== clanId) {
+        arrivals.push({ tag: member.tag, clanId });
+      }
 
       // Determine role - only use CoC role if not already a leader/coLeader in DB
       let role: DatabaseRole = 'member';
@@ -139,57 +148,26 @@ export async function syncClan(clanId: string) {
       if (leftError) throw leftError;
     }
 
-    // 7. Auto-cleanup of long-term inactive players
+    // 7. Retire long-departed accounts. An account gone from every family clan for longer than the
+    // window is marked 'inactive' — hidden from the registry and every roster list — but never deleted.
+    // The row is what keeps a player's person link, strikes and kick-list entry attached, so someone
+    // who comes back on any of their accounts is still recognised; the upsert above reactivates it.
+    // This replaces a hard delete, which needed guards for access-holders and live strikes and still
+    // failed whole batches on legacy warning FKs — none of that applies to an update.
     const { data: cleanupSetting } = await supabase.from('settings').select('value').eq('key', 'inactive_cleanup_days').single();
     const cleanupDays = parseInt(cleanupSetting?.value || '30');
-    
+
     const cleanupDate = new Date();
     cleanupDate.setDate(cleanupDate.getDate() - cleanupDays);
 
-    // Never auto-delete an account whose PERSON holds dashboard access. Access is removed only by an
-    // explicit manual revoke in Settings, so an access-holder (or their alt) must survive a 'left'
-    // state past the cleanup window rather than being silently deleted. Access now lives on the
-    // person, so we filter candidates against the set of access-holding person_ids before deleting.
-    const { data: accessPersons } = await supabase
-      .from('persons')
-      .select('id')
-      .not('access_role', 'is', null);
-    const accessIds = new Set((accessPersons || []).map((p) => p.id));
-
-    const { data: staleAccounts } = await supabase
+    const { error: retireError } = await supabase
       .from('player_accounts')
-      .select('player_tag, person_id')
+      .update({ status: 'inactive' })
       .eq('status', 'left')
       .lt('last_synced_at', cleanupDate.toISOString());
+    if (retireError) console.error('Inactive marking error:', retireError);
 
-    // Never purge an account while it still carries an ACTIVE (within-90-day) strike. Enforcement is
-    // account-scoped, so a departed member with an in-force strike must survive the cleanup window —
-    // otherwise leave-and-rejoin would wipe a live strike. Once every strike on the account has aged
-    // past the window it's history only; the account may go and its strikes detach via the FK's ON
-    // DELETE SET NULL (migration 023), staying anchored to the person for the record.
-    const strikeCutoff = new Date();
-    strikeCutoff.setDate(strikeCutoff.getDate() - STRIKE_WINDOW_DAYS);
-    const { data: activeStrikeRows } = await supabase
-      .from('strikes')
-      .select('player_account_tag')
-      .not('player_account_tag', 'is', null)
-      .gte('issued_at', strikeCutoff.toISOString());
-    const activeStrikeTags = new Set((activeStrikeRows || []).map((s) => s.player_account_tag));
-
-    const deletableTags = (staleAccounts || [])
-      .filter((a) => !a.person_id || !accessIds.has(a.person_id))
-      .filter((a) => !activeStrikeTags.has(a.player_tag))
-      .map((a) => a.player_tag);
-
-    if (deletableTags.length > 0) {
-      const { error: cleanupError } = await supabase
-        .from('player_accounts')
-        .delete()
-        .in('player_tag', deletableTags);
-      if (cleanupError) console.error('Cleanup error:', cleanupError);
-    }
-
-    return { success: true, count: upsertData.length, left: leftTags.length };
+    return { success: true, count: upsertData.length, left: leftTags.length, arrivals };
 
   } catch (error: any) {
     console.error(`Sync error for clan ${clanId}:`, error);
@@ -239,6 +217,21 @@ async function safeDetectTransfers() {
 }
 
 /**
+ * Alert leadership when an account on the kick list (or an alt of one) joins a family clan. Runs AFTER
+ * every clan is reconciled so the watch reads settled person links. Fail-safe like the other
+ * post-roster steps — a Discord or lookup error must never fail the roster sync. Returns null on any
+ * error.
+ */
+async function safeAlertKickedArrivals(arrivals: ClanArrival[]) {
+  try {
+    return await alertKickedArrivals(arrivals);
+  } catch (err) {
+    console.error('Kick-list arrival alert error (non-fatal):', err);
+    return null;
+  }
+}
+
+/**
  * Scan enabled automated rules for violations and auto-log any new ones. Runs AFTER the war syncs so
  * it sees fresh round/attack state. Fail-safe like the CWL step — a detector or notification error
  * must never fail the roster sync. Returns null on any error.
@@ -260,12 +253,13 @@ async function safeScanViolations() {
  */
 export async function runFullSync(clanId?: string) {
   if (clanId) {
-    const result = await syncClan(clanId);
+    const { arrivals, ...result } = await syncClan(clanId);
     const transfers = await safeDetectTransfers();
+    const kickList = await safeAlertKickedArrivals(arrivals);
     const cwl = await safeCwlSync();
     const war = await safeWarSync();
     const violations = await safeScanViolations();
-    return { ...result, transfers, cwl, war, violations };
+    return { ...result, transfers, kickList, cwl, war, violations };
   }
 
   const { data: clans } = await supabase.from('clans').select('id').eq('active', true);
@@ -274,6 +268,7 @@ export async function runFullSync(clanId?: string) {
   const results = await Promise.all(clans.map(c => syncClan(c.id)));
 
   const transfers = await safeDetectTransfers();
+  const kickList = await safeAlertKickedArrivals(results.flatMap((r) => r.arrivals));
   const cwl = await safeCwlSync();
   const war = await safeWarSync();
   const violations = await safeScanViolations();
@@ -283,6 +278,7 @@ export async function runFullSync(clanId?: string) {
     clansSynced: results.length,
     totalUpdated: results.reduce((acc, r) => acc + r.count, 0),
     transfers,
+    kickList,
     cwl,
     war,
     violations,

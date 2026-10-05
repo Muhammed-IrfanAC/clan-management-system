@@ -32,6 +32,9 @@ export type DiscordRoute = {
   // The announcement channel (migration 029). Not configured = announcements inherit the clan channel.
   maskedAnnouncementUrl: string | null;
   announcementConfigured: boolean;
+  // The leadership channel (migration 035). Not configured = leadership alerts inherit the clan channel.
+  maskedLeadershipUrl: string | null;
+  leadershipConfigured: boolean;
 };
 
 export type NewClan = { tag: string; name: string; type: string };
@@ -71,6 +74,7 @@ export const DISCORD_ROUTE_KEYS = [
   'discord_override_enabled',
   'discord_override_webhook_url',
   'discord_announcement_webhook_url',
+  'discord_leadership_webhook_url',
 ];
 
 async function loadAll() {
@@ -92,7 +96,9 @@ async function loadAll() {
   const { data: candAccts } = await supabase
     .from('player_accounts')
     .select('player_tag, is_main_account, person_id, person:persons!inner(access_role, display_name)')
-    .is('person.access_role', null);
+    .is('person.access_role', null)
+    // A person whose every account is inactive has left the family; they are not a candidate.
+    .neq('status', 'inactive');
   const personOptions = [...byPerson((candAccts || []) as unknown as AcctRow[]).values()]
     .map((l) => ({ person_id: l.person_id, display_name: l.display_name, player_tag: l.player_tag }))
     .sort((x, y) => x.display_name.localeCompare(y.display_name));
@@ -137,6 +143,7 @@ type SettingsState = {
     webhookUrl?: string;
     enabled?: boolean;
     announcementWebhookUrl?: string;
+    leadershipWebhookUrl?: string;
   }) => Promise<boolean>;
 
   addClan: (form: NewClan) => Promise<boolean>;
@@ -232,7 +239,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ? next.announcementConfigured
           ? 'Announcements will post to the announcement channel.'
           : 'Announcement channel cleared — announcements go to each clan’s channel.'
-        : next.enabled
+        : patch.leadershipWebhookUrl !== undefined
+          ? next.leadershipConfigured
+            ? 'Leadership alerts will post to the leadership channel.'
+            : 'Leadership channel cleared — leadership alerts go to each clan’s channel.'
+          : next.enabled
           ? 'All notifications are going to the override channel.'
           : 'Notifications are routed to the normal clan channels.';
       set({ discordRoute: next, toast: { message, type: 'success' } });

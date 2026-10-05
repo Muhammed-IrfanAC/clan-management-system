@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { requireAuth, requireCapability, authErrorResponse, authorizeActive, hasCapability } from '@/lib/auth-server';
+import { isKicked } from '@/lib/kicks/kickList';
 
 /**
  * PATCH /api/players/:tag — currently only supports UNLINKING an account from its person
@@ -90,6 +91,12 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const decodedTag = decodeURIComponent(tag);
     const auth = await requireAuth(request);
     await requireCapability(auth, 'account.delete');
+
+    // Deleting a listed account would quietly lift the ban: if they came back, sync would create a
+    // fresh, unwatched row. The FK refuses it too; this turns that into a message a leader can act on.
+    if (await isKicked(decodedTag)) {
+      return NextResponse.json({ error: 'This account is on the kick list. Remove it from the kick list first.' }, { status: 409 });
+    }
 
     const { error } = await supabase.from('player_accounts').delete().eq('player_tag', decodedTag);
     if (error) throw error;

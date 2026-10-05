@@ -44,10 +44,12 @@ export const useMembersStore = create<MembersState>((set) => ({
     set({ loading: true });
     try {
       // Persons with their linked accounts. The clan filter narrows the *person list* only
-      // (a person appearing in the selected clan keeps all their alts on the card).
+      // (a person appearing in the selected clan keeps all their alts on the card). Inactive accounts
+      // are left off the cards, and through the inner join a person with nothing else drops off too.
       const { data: personsData } = await supabase
         .from('persons')
         .select('*, player_accounts!inner (*, clan:clans (*))')
+        .neq('player_accounts.status', 'inactive')
         .order('display_name');
 
       let members = (personsData as PersonWithAccounts[]) || [];
@@ -95,6 +97,7 @@ export const useMembersStore = create<MembersState>((set) => ({
         const { data: personRow } = await supabase
           .from('persons')
           .select('*, player_accounts!inner (*, clan:clans (*))')
+          .neq('player_accounts.status', 'inactive')
           .eq('id', personId)
           .single();
 
