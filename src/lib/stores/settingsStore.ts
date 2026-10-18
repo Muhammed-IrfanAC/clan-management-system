@@ -35,6 +35,9 @@ export type DiscordRoute = {
   // The leadership channel (migration 035). Not configured = leadership alerts inherit the clan channel.
   maskedLeadershipUrl: string | null;
   leadershipConfigured: boolean;
+  // The unlinked-join channel (migration 036). Not configured = inherits the leadership channel.
+  maskedUnlinkedUrl: string | null;
+  unlinkedConfigured: boolean;
 };
 
 export type NewClan = { tag: string; name: string; type: string };
@@ -75,6 +78,7 @@ export const DISCORD_ROUTE_KEYS = [
   'discord_override_webhook_url',
   'discord_announcement_webhook_url',
   'discord_leadership_webhook_url',
+  'discord_unlinked_webhook_url',
 ];
 
 async function loadAll() {
@@ -144,6 +148,7 @@ type SettingsState = {
     enabled?: boolean;
     announcementWebhookUrl?: string;
     leadershipWebhookUrl?: string;
+    unlinkedWebhookUrl?: string;
   }) => Promise<boolean>;
 
   addClan: (form: NewClan) => Promise<boolean>;
@@ -243,6 +248,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           ? next.leadershipConfigured
             ? 'Leadership alerts will post to the leadership channel.'
             : 'Leadership channel cleared — leadership alerts go to each clan’s channel.'
+          : patch.unlinkedWebhookUrl !== undefined
+            ? next.unlinkedConfigured
+              ? 'Unlinked-join alerts will post to the unlinked-join channel.'
+              : 'Unlinked-join channel cleared — those alerts go to the leadership channel.'
           : next.enabled
           ? 'All notifications are going to the override channel.'
           : 'Notifications are routed to the normal clan channels.';

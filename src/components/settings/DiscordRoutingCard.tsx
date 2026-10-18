@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Radio, AlertTriangle, Megaphone, ShieldAlert } from 'lucide-react';
+import { Radio, AlertTriangle, Megaphone, ShieldAlert, UserPlus } from 'lucide-react';
 import { useSettingsStore } from '@/lib/stores/settingsStore';
 
 /**
@@ -19,6 +19,9 @@ import { useSettingsStore } from '@/lib/stores/settingsStore';
  * And the LEADERSHIP channel (migration 035) — alerts meant for leadership only, currently a kicked
  * player rejoining a family clan. Same rule: unset, they post to the clan's own channel.
  *
+ * And the UNLINKED-JOIN channel (migration 036) — an alert pinging the Leadership role when a player
+ * with no linked person joins a family clan. Unset, it inherits the leadership channel.
+ *
  * The URL fields are WRITE-ONLY. What comes back from the API is a masked fingerprint, because a
  * webhook URL is a credential — see the route's doc block. Typing a new value replaces it; leaving
  * the field blank leaves the stored one alone.
@@ -32,6 +35,7 @@ export default function DiscordRoutingCard() {
   const [url, setUrl] = useState('');
   const [announceUrl, setAnnounceUrl] = useState('');
   const [leadershipUrl, setLeadershipUrl] = useState('');
+  const [unlinkedUrl, setUnlinkedUrl] = useState('');
 
   useEffect(() => {
     fetchDiscordRoute();
@@ -182,7 +186,7 @@ export default function DiscordRoutingCard() {
       </div>
       <p className="text-muted" style={{ fontSize: '0.8rem', margin: '0 0 var(--space-md)' }}>
         {route.leadershipConfigured
-          ? 'Kick list alerts go here — when a kicked player, or an alt of one, joins a family clan.'
+          ? 'Kick list alerts go here, pinging the Leadership role — when a kicked player, or an alt of one, joins a family clan.'
           : 'Not set — kick list alerts go to the clan’s own channel, where members can read them, kick reason included. Point this at a channel only leadership can see.'}
       </p>
 
@@ -219,6 +223,58 @@ export default function DiscordRoutingCard() {
               className="btn btn-outline"
               disabled={saving}
               onClick={() => saveDiscordRoute({ leadershipWebhookUrl: '' })}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--color-border)', margin: 'var(--space-lg) 0 var(--space-md)' }} />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: '4px' }}>
+        <UserPlus size={16} style={{ color: 'var(--color-cta)' }} />
+        <p style={{ fontWeight: 700, margin: 0, fontSize: '0.9rem' }}>UNLINKED-JOIN CHANNEL</p>
+      </div>
+      <p className="text-muted" style={{ fontSize: '0.8rem', margin: '0 0 var(--space-md)' }}>
+        {route.unlinkedConfigured
+          ? 'When a player with no linked person joins a family clan, an alert posts here and pings the Leadership role.'
+          : 'Not set — unlinked-join alerts (which ping the Leadership role) go to the leadership channel, or the clan’s own channel if that is not set either.'}
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+          Unlinked-join webhook URL
+          {route.unlinkedConfigured && (
+            <span style={{ marginLeft: 6, fontVariantNumeric: 'tabular-nums' }}>
+              · currently <code style={{ fontSize: '0.7rem' }}>{route.maskedUnlinkedUrl}</code>
+            </span>
+          )}
+        </label>
+        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+          <input
+            type="password"
+            className="input"
+            style={{ flex: '1 1 320px' }}
+            autoComplete="off"
+            placeholder={route.unlinkedConfigured ? 'Enter a new URL to replace the stored one' : 'https://discord.com/api/webhooks/…'}
+            value={unlinkedUrl}
+            onChange={(e) => setUnlinkedUrl(e.target.value)}
+          />
+          <button
+            className="btn btn-outline"
+            disabled={saving || !unlinkedUrl.trim()}
+            onClick={async () => {
+              if (await saveDiscordRoute({ unlinkedWebhookUrl: unlinkedUrl.trim() })) setUnlinkedUrl('');
+            }}
+          >
+            Save URL
+          </button>
+          {route.unlinkedConfigured && (
+            <button
+              className="btn btn-outline"
+              disabled={saving}
+              onClick={() => saveDiscordRoute({ unlinkedWebhookUrl: '' })}
             >
               Clear
             </button>

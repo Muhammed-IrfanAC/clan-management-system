@@ -1,10 +1,13 @@
 import type { DiscordEmbedField, DiscordMessage } from '@/lib/discord';
+import { LEADERSHIP_ROLE_ID } from '@/lib/discordRoles';
 
 /**
  * PURE renderer for the "a kicked player is back" alert. `arrivals.ts` is the DB/send half.
  *
- * It goes to the leadership channel (falling back to the clan channel while none is set), and it
- * pings nobody: the point is that leadership notices, not that the player is called out.
+ * It goes to the leadership channel (falling back to the clan channel while none is set) and pings
+ * the Leadership role so someone acts on it — never the player: the point is that leadership
+ * notices, not that the player is called out. The ping sits in plain `content`, because a mention
+ * inside an embed renders but never notifies.
  */
 
 const COLOR_ALERT = 0xef4444;
@@ -58,7 +61,9 @@ export function renderKickedArrival(p: KickedArrivalPost): DiscordMessage {
   ];
 
   return {
-    allowed_mentions: { parse: [] },
+    content: `<@&${LEADERSHIP_ROLE_ID}> ${p.viaAlt ? 'An alt of a kicked player' : 'A kicked player'} joined ${clan} — please take the necessary action.`,
+    // Only the Leadership role may ping — never the player or a stray mention from a name.
+    allowed_mentions: { parse: [], roles: [LEADERSHIP_ROLE_ID] },
     embeds: [
       {
         title: p.viaAlt ? `⛔ Alt of a kicked player joined ${p.clanName}` : `⛔ Kicked player joined ${p.clanName}`,

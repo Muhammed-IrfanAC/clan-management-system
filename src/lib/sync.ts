@@ -6,6 +6,7 @@ import { detectCompletedTransfers } from './cwl/roster';
 import { syncWarState } from './war';
 import { scanRuleViolations } from './rules/scan';
 import { alertKickedArrivals } from './kicks/arrivals';
+import { alertUnlinkedArrivals } from './unlinked/joinAlert';
 import type { ClanArrival } from './kicks/watch';
 
 export async function syncClan(clanId: string) {
@@ -167,7 +168,9 @@ export async function syncClan(clanId: string) {
       .lt('last_synced_at', cleanupDate.toISOString());
     if (retireError) console.error('Inactive marking error:', retireError);
 
-    return { success: true, count: upsertData.length, left: leftTags.length, arrivals };
+    // A clan's FIRST sync makes every member an arrival. The kick watch still wants to see them, but
+    // the unlinked-join alert must not ping leadership with a whole newly added roster.
+    return { success: true, count: upsertData.length, left: leftTags.length, arrivals, firstSync: dbAccounts.length === 0 };
 
   } catch (error: any) {
     console.error(`Sync error for clan ${clanId}:`, error);
@@ -232,6 +235,20 @@ async function safeAlertKickedArrivals(arrivals: ClanArrival[]) {
 }
 
 /**
+ * Ping the Leadership role when a player with no linked person joins a family clan. Runs AFTER every
+ * clan is reconciled, like the kick watch. Fail-safe — a Discord or lookup error must never fail the
+ * roster sync. Returns null on any error.
+ */
+async function safeAlertUnlinkedArrivals(arrivals: ClanArrival[]) {
+  try {
+    return await alertUnlinkedArrivals(arrivals);
+  } catch (err) {
+    console.error('Unlinked-join alert error (non-fatal):', err);
+    return null;
+  }
+}
+
+/**
  * Scan enabled automated rules for violations and auto-log any new ones. Runs AFTER the war syncs so
  * it sees fresh round/attack state. Fail-safe like the CWL step — a detector or notification error
  * must never fail the roster sync. Returns null on any error.
@@ -253,13 +270,14 @@ async function safeScanViolations() {
  */
 export async function runFullSync(clanId?: string) {
   if (clanId) {
-    const { arrivals, ...result } = await syncClan(clanId);
+    const { arrivals, firstSync, ...result } = await syncClan(clanId);
     const transfers = await safeDetectTransfers();
     const kickList = await safeAlertKickedArrivals(arrivals);
+    const unlinked = await safeAlertUnlinkedArrivals(firstSync ? [] : arrivals);
     const cwl = await safeCwlSync();
     const war = await safeWarSync();
     const violations = await safeScanViolations();
-    return { ...result, transfers, kickList, cwl, war, violations };
+    return { ...result, transfers, kickList, unlinked, cwl, war, violations };
   }
 
   const { data: clans } = await supabase.from('clans').select('id').eq('active', true);
@@ -269,6 +287,7 @@ export async function runFullSync(clanId?: string) {
 
   const transfers = await safeDetectTransfers();
   const kickList = await safeAlertKickedArrivals(results.flatMap((r) => r.arrivals));
+  const unlinked = await safeAlertUnlinkedArrivals(results.flatMap((r) => (r.firstSync ? [] : r.arrivals)));
   const cwl = await safeCwlSync();
   const war = await safeWarSync();
   const violations = await safeScanViolations();
@@ -279,6 +298,7 @@ export async function runFullSync(clanId?: string) {
     totalUpdated: results.reduce((acc, r) => acc + r.count, 0),
     transfers,
     kickList,
+    unlinked,
     cwl,
     war,
     violations,
