@@ -7,7 +7,8 @@ import { invalidateDiscordRouteCache } from '@/lib/discord';
  * Configure Discord channel routing: the NOTIFICATION ROUTING OVERRIDE (migration 027) — the
  * testing-phase switch that sends every notification to one private channel instead of the per-clan
  * channels — the ANNOUNCEMENT channel (migration 029) that CWL roster posts go to, and the LEADERSHIP
- * channel (migration 035) that leadership-only alerts go to.
+ * channel (migration 035) that leadership-only alerts go to, and the UNLINKED-JOIN channel (migration
+ * 036) that the unlinked-player join alert goes to.
  *
  * Why this exists as a route at all, when the General settings tab writes every other settings row
  * straight to PostgREST from the browser: a webhook URL is a SECRET. Anyone holding it can post into
@@ -22,6 +23,7 @@ const ENABLED_KEY = 'discord_override_enabled';
 const URL_KEY = 'discord_override_webhook_url';
 const ANNOUNCE_KEY = 'discord_announcement_webhook_url';
 const LEADERSHIP_KEY = 'discord_leadership_webhook_url';
+const UNLINKED_KEY = 'discord_unlinked_webhook_url';
 
 const WEBHOOK_RE = /^https:\/\/(canary\.|ptb\.)?discord\.com\/api\/webhooks\//;
 
@@ -38,12 +40,13 @@ function maskWebhook(url: string): string | null {
 }
 
 async function readState() {
-  const { data } = await supabase.from('settings').select('key, value').in('key', [ENABLED_KEY, URL_KEY, ANNOUNCE_KEY, LEADERSHIP_KEY]);
+  const { data } = await supabase.from('settings').select('key, value').in('key', [ENABLED_KEY, URL_KEY, ANNOUNCE_KEY, LEADERSHIP_KEY, UNLINKED_KEY]);
   const rows = new Map((data || []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
   const str = (key: string) => (typeof rows.get(key) === 'string' ? (rows.get(key) as string) : '');
   const url = str(URL_KEY);
   const announce = str(ANNOUNCE_KEY);
   const leadership = str(LEADERSHIP_KEY);
+  const unlinked = str(UNLINKED_KEY);
   return {
     enabled: rows.get(ENABLED_KEY) === true,
     maskedUrl: maskWebhook(url),
@@ -54,6 +57,9 @@ async function readState() {
     maskedLeadershipUrl: maskWebhook(leadership),
     // Same as announcements: unset means leadership alerts inherit the clan channel.
     leadershipConfigured: !!leadership.trim(),
+    maskedUnlinkedUrl: maskWebhook(unlinked),
+    // Unset means unlinked-join alerts inherit the leadership channel, then the clan channel.
+    unlinkedConfigured: !!unlinked.trim(),
   };
 }
 
@@ -103,6 +109,16 @@ export async function PATCH(request: NextRequest) {
         return NextResponse.json({ error: 'That is not a Discord webhook URL' }, { status: 400 });
       }
       const { error } = await supabase.from('settings').update({ value: url }).eq('key', LEADERSHIP_KEY);
+      if (error) throw error;
+    }
+
+    // Blank is legitimate: it hands unlinked-join alerts back to the leadership channel.
+    if (typeof body?.unlinkedWebhookUrl === 'string') {
+      const url = body.unlinkedWebhookUrl.trim();
+      if (url && !WEBHOOK_RE.test(url)) {
+        return NextResponse.json({ error: 'That is not a Discord webhook URL' }, { status: 400 });
+      }
+      const { error } = await supabase.from('settings').update({ value: url }).eq('key', UNLINKED_KEY);
       if (error) throw error;
     }
 

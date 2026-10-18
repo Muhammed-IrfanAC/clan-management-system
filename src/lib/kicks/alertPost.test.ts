@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { LEADERSHIP_ROLE_ID } from '@/lib/discordRoles';
 import { renderKickedArrival, type KickedArrivalPost } from './alertPost';
 
 function post(over: Partial<KickedArrivalPost> = {}): KickedArrivalPost {
@@ -20,11 +21,11 @@ function post(over: Partial<KickedArrivalPost> = {}): KickedArrivalPost {
 }
 
 describe('renderKickedArrival', () => {
-  it('says who joined where, when and why they were kicked, and pings nobody', () => {
+  it('says who joined where, when and why they were kicked, and pings only the Leadership role', () => {
     const msg = renderKickedArrival(post());
     const embed = msg.embeds![0];
-    expect(msg.allowed_mentions).toEqual({ parse: [] });
-    expect(msg.content).toBeUndefined();
+    expect(msg.allowed_mentions).toEqual({ parse: [], roles: [LEADERSHIP_ROLE_ID] });
+    expect(msg.content).toBe(`<@&${LEADERSHIP_ROLE_ID}> A kicked player joined **Feeder** — please take the necessary action.`);
     expect(embed.title).toBe('⛔ Kicked player joined Feeder');
     expect(embed.description).toContain('**Bob** `#B1` (TH15) is back in **Feeder**');
     expect(embed.fields).toEqual([
@@ -36,6 +37,7 @@ describe('renderKickedArrival', () => {
   it('names the person and the kicked account when an alt is what joined', () => {
     const embed = renderKickedArrival(post({ name: 'Bobby', tag: '#B2', viaAlt: true })).embeds![0];
     expect(embed.title).toBe('⛔ Alt of a kicked player joined Feeder');
+    expect(renderKickedArrival(post({ viaAlt: true })).content).toContain('An alt of a kicked player joined **Feeder**');
     expect(embed.description).toContain('**Bobby** `#B2`');
     expect(embed.description).toContain('alt of **Bob**, whose account **Bob** `#B1` is on the kick list');
   });

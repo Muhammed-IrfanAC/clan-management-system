@@ -16,7 +16,9 @@
  * nobody in particular and belongs in the announcement channel. Pass the purpose to
  * `webhookUrlForClan`; a blank announcement setting simply inherits the clan channel, so the axis
  * costs nothing until it is configured. A third purpose, LEADERSHIP (migration 035), carries alerts
- * meant for leadership only — a kicked player rejoining — under the same blank-inherits rule.
+ * meant for leadership only — a kicked player rejoining — under the same blank-inherits rule. A
+ * fourth, UNLINKED (migration 036), carries the unlinked-player join alert; blank, it inherits the
+ * leadership channel before the clan channel.
  *
  * ROUTING OVERRIDE (migration 027): while `discord_override_enabled` is on, every message is
  * redirected to `discord_override_webhook_url` regardless of which channel the caller resolved — the
@@ -83,7 +85,7 @@ export type DiscordMessage = {
   content?: string;
   embeds?: DiscordEmbed[];
   // Restrict which mentions actually ping. Defaults to none so stray text can't mass-ping.
-  allowed_mentions?: { parse?: Array<'users' | 'roles' | 'everyone'>; users?: string[] };
+  allowed_mentions?: { parse?: Array<'users' | 'roles' | 'everyone'>; users?: string[]; roles?: string[] };
 };
 
 /**
@@ -92,7 +94,8 @@ export type DiscordMessage = {
  * Two rows drive the override (migration 027) rather than one: the switch and the destination are
  * separate so the channel can stay configured while the redirect is flipped off, which is what makes
  * turning the testing phase on and off a one-click action. Both must be present for it to apply.
- * Further rows hold the announcement channel (migration 029) and the leadership channel (035).
+ * Further rows hold the announcement channel (migration 029), the leadership channel (035) and the
+ * unlinked-join channel (036).
  *
  * Cached because EVERY notification consults it and a sync can fire dozens in one pass — and read in
  * ONE query, so adding the purpose axis did not add a round trip per message. The TTL is the same 15s
@@ -100,7 +103,12 @@ export type DiscordMessage = {
  * granularity for channel routing. Fail-safe: any DB error resolves to "nothing configured", so a
  * settings-table problem degrades to normal per-clan routing rather than to silence.
  */
-type RouteConfig = { override: string | null; announcement: string | null; leadership: string | null };
+type RouteConfig = {
+  override: string | null;
+  announcement: string | null;
+  leadership: string | null;
+  unlinked: string | null;
+};
 let routeCache: { config: RouteConfig; at: number } | null = null;
 const OVERRIDE_TTL_MS = 15_000;
 
@@ -108,7 +116,7 @@ async function routeConfig(): Promise<RouteConfig> {
   const now = Date.now();
   if (routeCache && now - routeCache.at < OVERRIDE_TTL_MS) return routeCache.config;
 
-  let config: RouteConfig = { override: null, announcement: null, leadership: null };
+  let config: RouteConfig = { override: null, announcement: null, leadership: null, unlinked: null };
   try {
     const { data } = await supabase
       .from('settings')
@@ -118,6 +126,7 @@ async function routeConfig(): Promise<RouteConfig> {
         'discord_override_webhook_url',
         'discord_announcement_webhook_url',
         'discord_leadership_webhook_url',
+        'discord_unlinked_webhook_url',
       ]);
     const rows = new Map((data || []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
     const str = (key: string) => (typeof rows.get(key) === 'string' ? (rows.get(key) as string).trim() : '');
@@ -128,6 +137,7 @@ async function routeConfig(): Promise<RouteConfig> {
       override: enabled && overrideUrl ? overrideUrl : null,
       announcement: str('discord_announcement_webhook_url') || null,
       leadership: str('discord_leadership_webhook_url') || null,
+      unlinked: str('discord_unlinked_webhook_url') || null,
     };
   } catch (err) {
     console.error('Discord routing lookup failed (falling back to normal routing):', err);
@@ -151,9 +161,11 @@ export function invalidateDiscordRouteCache(): void {
  * strike, a transfer call, a round-reveal notice — and goes to the clan channel they read.
  * 'announcement' is a standing post for the whole family (the CWL roster) and goes to the
  * announcement channel when one is configured. 'leadership' is for leadership's eyes only (a kicked
- * player rejoining) and goes to the leadership channel when one is configured.
+ * player rejoining) and goes to the leadership channel when one is configured. 'unlinked' is the
+ * unlinked-player join alert: its own channel if set, else the leadership channel — it is a call to
+ * leadership too, so it should not leak into a clan channel just because it has no channel yet.
  */
-export type ChannelPurpose = 'default' | 'announcement' | 'leadership';
+export type ChannelPurpose = 'default' | 'announcement' | 'leadership' | 'unlinked';
 
 /**
  * Resolve which webhook a message goes to: the announcement or leadership channel when that is what
@@ -173,7 +185,12 @@ export async function webhookUrlForClan(
 ): Promise<string | null> {
   if (purpose !== 'default') {
     const config = await routeConfig();
-    const dedicated = purpose === 'announcement' ? config.announcement : config.leadership;
+    const dedicated =
+      purpose === 'announcement'
+        ? config.announcement
+        : purpose === 'unlinked'
+          ? config.unlinked || config.leadership
+          : config.leadership;
     if (dedicated) return dedicated;
   }
   if (clanId) {
@@ -242,9 +259,13 @@ export async function discordIdsForAccountTags(tags: string[]): Promise<(string 
  * this normally changes nothing; it exists so a bad id degrades to "named, not pinged".
  */
 function sanitizeMentions(m: NonNullable<DiscordMessage['allowed_mentions']>): NonNullable<DiscordMessage['allowed_mentions']> {
-  if (!m.users) return m;
-  const users = [...new Set(m.users.map(normalizeDiscordId).filter((id): id is string => !!id))].slice(0, 100);
-  return { ...m, users };
+  const clean = (ids: string[]) =>
+    [...new Set(ids.map(normalizeDiscordId).filter((id): id is string => !!id))].slice(0, 100);
+  return {
+    ...m,
+    ...(m.users ? { users: clean(m.users) } : {}),
+    ...(m.roles ? { roles: clean(m.roles) } : {}),
+  };
 }
 
 /**
