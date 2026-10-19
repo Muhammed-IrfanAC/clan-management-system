@@ -11,7 +11,7 @@ const DISCORD_ID_RE = /^\d{17,20}$/;
  * PATCH /api/persons/:id — update editable person fields from the dashboard.
  *
  * Currently the only editable field is `discord_user_id`: link (or re-link) the persona to a Discord
- * account so warning webhooks can @-mention them, or pass null/'' to unlink. This replaces the
+ * account so Discord notices can @-mention them, or pass null/'' to unlink. This replaces the
  * `scripts/link-discord.mjs` backfill for one-off edits — leaders no longer touch the DB directly.
  *
  * Any active leader may set it (same bar as adding a member note — it's data entry, not a

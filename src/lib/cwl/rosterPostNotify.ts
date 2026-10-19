@@ -28,7 +28,7 @@ import {
  * The transfer call is the deliberate exception: it is a ping asking people to act, and an edit does
  * not re-notify anyone, so it is sent fresh and only ever automatically once per season.
  *
- * Send failures are collected, never thrown — one clan's dead webhook must not stop the other clans
+ * Send failures are collected, never thrown — one clan's unreachable channel must not stop the other clans
  * from getting their roster. DB failures DO throw, because a caller that cannot read the season has
  * nothing to post and should say so.
  */
@@ -178,7 +178,7 @@ export interface PostResult {
  * Post — or update — every clan's roster plus the leadership digest.
  *
  * Safe to call repeatedly: each message is edited in place, so this is also the "refresh after a
- * transfer landed" action. A clan with no webhook and no global fallback simply fails and is
+ * transfer landed" action. A clan with no channel and no global fallback simply fails and is
  * reported; the rest still go out.
  *
  * The rosters route as ANNOUNCEMENTS (migration 029) — a standing, edited-in-place post nobody has to
@@ -210,8 +210,8 @@ export async function postSeasonRoster(seasonId: string): Promise<PostResult> {
     }
   }
 
-  // The digest has no clan of its own, so it goes to the global fallback (DISCORD_DEFAULT_CHANNEL_ID /
-  // DISCORD_WEBHOOK_URL) — the family-wide channel. (While the routing override is on, so does everything else.) Deliberately NOT routed as
+  // The digest has no clan of its own, so it goes to the global fallback (DISCORD_DEFAULT_CHANNEL_ID)
+  // — the family-wide channel. (While the routing override is on, so does everything else.) Deliberately NOT routed as
   // an announcement: it reports shortfalls and unassigned accounts, which is leadership's read on how
   // the roster went, not something to publish to the family.
   const digestId = await postOrEditDiscordMessage(posts.digest, {

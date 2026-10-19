@@ -18,8 +18,7 @@ export interface Clan {
   clan_type: ClanType;
   display_order: number;
   active: boolean;
-  discord_webhook_url: string | null; // per-clan notification channel; falls back to DISCORD_WEBHOOK_URL
-  discord_channel_id: string | null; // bot routing (migration 037): preferred over the webhook when DISCORD_BOT_TOKEN is set
+  discord_channel_id: string | null; // the bot's channel for this clan (migration 037); falls back to DISCORD_DEFAULT_CHANNEL_ID
   rule_automation_mode: RuleAutomationMode; // scope of automated rule detection for this clan
   created_at: string;
 }

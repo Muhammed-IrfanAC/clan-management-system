@@ -7,7 +7,7 @@ import type { RuleAutomationMode } from '@/types/database';
 import type { Confirm } from './types';
 
 // Clan family tab: register/remove family clans, set each clan's rule-automation scope and its bot
-// channel (migration 037 — where the bot posts this clan's notices, in place of the clan webhook).
+// channel (migration 037 — where the bot posts this clan's notices).
 export default function ClansTab({ onAdd, confirm }: { onAdd: () => void; confirm: Confirm }) {
   const clans = useSettingsStore((s) => s.clans);
   const updateClanAutomation = useSettingsStore((s) => s.updateClanAutomation);

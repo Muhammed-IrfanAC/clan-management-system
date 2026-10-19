@@ -6,8 +6,7 @@ import { botConfigured, discordBotRequest, normalizeChannelId } from '@/lib/disc
 /**
  * Verify the bot can see every channel it has been pointed at — the cutover checklist.
  *
- * A channel id the bot cannot read is a silent hole: the step resolves to it (an id takes precedence
- * over the webhook), every send into it fails, and fail-safe sending swallows the failure. So the
+ * A channel id the bot cannot read is a silent hole: the step resolves to it, every send into it fails, and fail-safe sending swallows the failure. So the
  * settings card offers this one-click check before a leader trusts the new routing. It reads each
  * channel (GET /channels/:id) and reports its name, or why it could not; it does NOT post anything,
  * so it cannot prove Send Messages — the result says "visible", not "deliverable".

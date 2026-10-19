@@ -8,7 +8,7 @@ const eslintConfig = defineConfig([
   // Discord boundary. Only the transport talks to discord.com, and browser code may see the message
   // TYPES but never the server API behind `@/lib/discord` (it pulls in the Supabase client).
   {
-    // Server code only: the settings form legitimately shows a webhook URL as placeholder text.
+    // Server code only: client code is already kept off `@/lib/discord` by the import rule below.
     files: ["src/lib/**/*.ts", "src/app/api/**/*.ts"],
     ignores: ["src/lib/discord/transport.ts", "src/**/*.test.ts"],
     rules: {

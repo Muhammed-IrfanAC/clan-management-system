@@ -8,25 +8,16 @@ import { botConfigured, invalidateDiscordRouteCache, normalizeChannelId } from '
  * testing-phase switch that sends every notification to one private channel instead of the per-clan
  * channels — the ANNOUNCEMENT channel (migration 029) that CWL roster posts go to, and the LEADERSHIP
  * channel (migration 035) that leadership-only alerts go to, and the UNLINKED-JOIN channel (migration
- * 036) that the unlinked-player join alert goes to.
+ * 036) that the unlinked-player join alert goes to. Each is a bot channel id (migration 037).
  *
- * Why this exists as a route at all, when the General settings tab writes every other settings row
- * straight to PostgREST from the browser: a webhook URL is a SECRET. Anyone holding it can post into
- * the channel as the bot. So none is ever included in the settings blob the dashboard fetches —
- * the store filters the keys out, and this route serves a MASKED form of them for display. The full
- * values are write-only from the client's perspective.
- *
- * Each of those also takes a BOT CHANNEL ID (migration 037), preferred over its webhook while
- * DISCORD_BOT_TOKEN is set. A channel id is not a secret and is returned in full.
- *
- * Gated on `leader.manage`, the same capability that governs the rest of system configuration.
+ * A route rather than the General tab's direct PostgREST writes because these keys belong to one
+ * control (the store filters them out of the settings blob), each id must parse before it is stored —
+ * a stored id Discord rejects would silently send that route's traffic nowhere — and every write must
+ * drop the transport's routing cache. Gated on `leader.manage`, the same capability that governs the
+ * rest of system configuration.
  */
 
 const ENABLED_KEY = 'discord_override_enabled';
-const URL_KEY = 'discord_override_webhook_url';
-const ANNOUNCE_KEY = 'discord_announcement_webhook_url';
-const LEADERSHIP_KEY = 'discord_leadership_webhook_url';
-const UNLINKED_KEY = 'discord_unlinked_webhook_url';
 
 // Bot channel ids (migration 037), keyed by the request field that writes each one.
 const CHANNEL_KEYS = {
@@ -36,46 +27,18 @@ const CHANNEL_KEYS = {
   unlinkedChannelId: 'discord_unlinked_channel_id',
 } as const;
 
-const WEBHOOK_RE = /^https:\/\/(canary\.|ptb\.)?discord\.com\/api\/webhooks\//;
-
-/** Show enough of the URL to recognise WHICH webhook is set, never enough to use it. */
-function maskWebhook(url: string): string | null {
-  const trimmed = url.trim();
-  if (!trimmed) return null;
-  // A Discord webhook is .../webhooks/<channel-id>/<token>. The id identifies the channel and is not
-  // itself a credential; the token is the secret, so only its last few characters survive.
-  const parts = trimmed.split('/');
-  const token = parts.pop() || '';
-  const id = parts.pop() || '';
-  return `…/${id}/${'•'.repeat(8)}${token.slice(-4)}`;
-}
-
 async function readState() {
   const { data } = await supabase
     .from('settings')
     .select('key, value')
-    .in('key', [ENABLED_KEY, URL_KEY, ANNOUNCE_KEY, LEADERSHIP_KEY, UNLINKED_KEY, ...Object.values(CHANNEL_KEYS)]);
+    .in('key', [ENABLED_KEY, ...Object.values(CHANNEL_KEYS)]);
   const rows = new Map((data || []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
   const str = (key: string) => (typeof rows.get(key) === 'string' ? (rows.get(key) as string) : '');
-  const url = str(URL_KEY);
-  const announce = str(ANNOUNCE_KEY);
-  const leadership = str(LEADERSHIP_KEY);
-  const unlinked = str(UNLINKED_KEY);
   return {
     enabled: rows.get(ENABLED_KEY) === true,
-    maskedUrl: maskWebhook(url),
-    configured: !!url.trim(),
-    maskedAnnouncementUrl: maskWebhook(announce),
-    // False is a meaningful state, not an error: announcements then inherit the clan channel.
-    announcementConfigured: !!announce.trim(),
-    maskedLeadershipUrl: maskWebhook(leadership),
-    // Same as announcements: unset means leadership alerts inherit the clan channel.
-    leadershipConfigured: !!leadership.trim(),
-    maskedUnlinkedUrl: maskWebhook(unlinked),
-    // Unset means unlinked-join alerts inherit the leadership channel, then the clan channel.
-    unlinkedConfigured: !!unlinked.trim(),
-    // Whether the bot can post at all here; without it the channel ids below are stored but unused.
+    // Whether the bot can post at all here; without it nothing is sent, whatever is configured.
     botConfigured: botConfigured(),
+    // Null is a meaningful state, not an error: an unset purpose channel inherits the next step.
     overrideChannelId: normalizeChannelId(str(CHANNEL_KEYS.overrideChannelId)),
     announcementChannelId: normalizeChannelId(str(CHANNEL_KEYS.announcementChannelId)),
     leadershipChannelId: normalizeChannelId(str(CHANNEL_KEYS.leadershipChannelId)),
@@ -100,50 +63,8 @@ export async function PATCH(request: NextRequest) {
 
     const body = await request.json();
 
-    // The URL is optional on a request that only flips the switch, so "absent" and "cleared" must
-    // stay distinguishable — only a present string is written.
-    if (typeof body?.webhookUrl === 'string') {
-      const url = body.webhookUrl.trim();
-      if (url && !WEBHOOK_RE.test(url)) {
-        return NextResponse.json({ error: 'That is not a Discord webhook URL' }, { status: 400 });
-      }
-      const { error } = await supabase.from('settings').update({ value: url }).eq('key', URL_KEY);
-      if (error) throw error;
-    }
-
-    // Empty string is a legitimate value here, unlike the override URL: clearing it hands
-    // announcements back to the clan channels rather than turning them off.
-    if (typeof body?.announcementWebhookUrl === 'string') {
-      const url = body.announcementWebhookUrl.trim();
-      if (url && !WEBHOOK_RE.test(url)) {
-        return NextResponse.json({ error: 'That is not a Discord webhook URL' }, { status: 400 });
-      }
-      const { error } = await supabase.from('settings').update({ value: url }).eq('key', ANNOUNCE_KEY);
-      if (error) throw error;
-    }
-
-    // Blank is legitimate here too: it hands leadership alerts back to the clan channels.
-    if (typeof body?.leadershipWebhookUrl === 'string') {
-      const url = body.leadershipWebhookUrl.trim();
-      if (url && !WEBHOOK_RE.test(url)) {
-        return NextResponse.json({ error: 'That is not a Discord webhook URL' }, { status: 400 });
-      }
-      const { error } = await supabase.from('settings').update({ value: url }).eq('key', LEADERSHIP_KEY);
-      if (error) throw error;
-    }
-
-    // Blank is legitimate: it hands unlinked-join alerts back to the leadership channel.
-    if (typeof body?.unlinkedWebhookUrl === 'string') {
-      const url = body.unlinkedWebhookUrl.trim();
-      if (url && !WEBHOOK_RE.test(url)) {
-        return NextResponse.json({ error: 'That is not a Discord webhook URL' }, { status: 400 });
-      }
-      const { error } = await supabase.from('settings').update({ value: url }).eq('key', UNLINKED_KEY);
-      if (error) throw error;
-    }
-
-    // Blank clears a channel id, handing that step back to its webhook. Anything else must parse as
-    // one: a stored id Discord rejects would silently send that step's traffic nowhere.
+    // Blank clears a channel id, handing that route to the next step of the chain. Anything else must
+    // parse as one: a stored id Discord rejects would silently send that route's traffic nowhere.
     for (const [field, key] of Object.entries(CHANNEL_KEYS)) {
       if (typeof body?.[field] !== 'string') continue;
       const raw = (body[field] as string).trim();
@@ -159,12 +80,11 @@ export async function PATCH(request: NextRequest) {
       // Refuse to switch on with nowhere to send: silently falling back to normal per-clan routing is
       // the exact failure a testing phase cannot afford, since it would post to the real channels.
       if (body.enabled) {
-        // Read AFTER the write above, so enabling and setting the URL in one request works.
-        // Either destination will do, but a channel id only counts while the bot can use it.
+        // Read AFTER the write above, so enabling and setting the channel in one request works.
+        // A channel id only counts while the bot can use it.
         const state = await readState();
-        const configured = state.configured || (state.botConfigured && !!state.overrideChannelId);
-        if (!configured) {
-          return NextResponse.json({ error: 'Set the override webhook URL or channel before turning the redirect on' }, { status: 400 });
+        if (!state.botConfigured || !state.overrideChannelId) {
+          return NextResponse.json({ error: 'Set the override channel before turning the redirect on' }, { status: 400 });
         }
       }
       const { error } = await supabase.from('settings').update({ value: body.enabled }).eq('key', ENABLED_KEY);

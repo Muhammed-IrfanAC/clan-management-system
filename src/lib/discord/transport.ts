@@ -1,9 +1,8 @@
 /**
  * The Discord transport: the ONLY module that talks to discord.com.
  *
- * Delivers to either kind of `Destination`: a channel, through the bot's REST API
- * (DISCORD_BOT_TOKEN), or an incoming webhook. Callers resolve the destination with
- * `destinationForClan` and never need to know which one they got.
+ * Delivers to a channel through the bot's REST API (DISCORD_BOT_TOKEN). Callers resolve the
+ * destination with `destinationForClan`.
  *
  * FAIL-SAFE throughout. Every send is best-effort: a missing destination, a network hiccup, or a
  * non-2xx response is logged and swallowed so a notification failure can NEVER break the request that
@@ -14,9 +13,8 @@
  * redirected to the override destination regardless of which channel the caller resolved — the
  * testing-phase mode where the whole family's traffic lands in one private channel. The redirect is
  * applied HERE, the single choke point every notification passes through, so it cannot be bypassed
- * by a caller that forgets about it (including one written later). A webhook message in the test
- * channel is renamed `ClanOps · test routing`; a bot cannot rename itself per message, so a bot
- * message carries the same label as a subtext line instead.
+ * by a caller that forgets about it (including one written later). A bot cannot rename itself per
+ * message, so a message in the test channel carries a `ClanOps · test routing` subtext line instead.
  *
  * Two send primitives: `sendDiscordMessage` for one-shot announcements (a strike, a lineup notice),
  * and `postOrEditDiscordMessage` for a LIVING message that is edited in place as the underlying data
@@ -66,7 +64,7 @@ function labelled(content: string, test: boolean): string {
  * configured). Never throws.
  */
 export async function sendDiscordMessage(
-  payload: DiscordMessage & { username?: string },
+  payload: DiscordMessage,
   dest?: Destination | null,
 ): Promise<boolean> {
   // The override wins over whatever the caller resolved: during the testing phase EVERY notification
@@ -77,28 +75,13 @@ export async function sendDiscordMessage(
 
   const allowed_mentions = payload.allowed_mentions ? sanitizeMentions(payload.allowed_mentions) : { parse: [] };
 
-  if (to.kind === 'channel') {
-    const content = labelled(payload.content ?? '', test);
-    const sent = await request(`${API}/channels/${to.channelId}/messages`, 'POST', {
-      ...(content ? { content } : {}),
-      embeds: payload.embeds ?? [],
-      ...(payload.components?.length ? { components: payload.components } : {}),
-      allowed_mentions,
-    }, { bot: true });
-    return sent !== null;
-  }
-
-  // A channel webhook cannot carry interactive components, so a webhook message goes without them.
-  const { components: _dropped, ...webhookPayload } = payload;
-  void _dropped;
-  const sent = await request(to.url, 'POST', {
-    username: 'ClanOps',
-    ...webhookPayload,
+  const content = labelled(payload.content ?? '', test);
+  const sent = await request(`${API}/channels/${to.channelId}/messages`, 'POST', {
+    ...(content ? { content } : {}),
+    embeds: payload.embeds ?? [],
+    ...(payload.components?.length ? { components: payload.components } : {}),
     allowed_mentions,
-    // Applied AFTER the payload so it cannot be overridden: a message in the test channel must
-    // never be mistaken for one the family actually received.
-    ...(test ? { username: TEST_LABEL } : {}),
-  });
+  }, { bot: true });
   return sent !== null;
 }
 
@@ -109,47 +92,39 @@ export async function sendDiscordMessage(
  * Returns the message id to store (unchanged on a successful edit, new on a fresh post), or null if
  * nothing could be sent. Never throws, like every send here.
  *
- * Two webhook details this hides from callers:
- *   - a fresh post only returns the created message (and therefore its id) when `?wait=true` is set;
- *   - the edit endpoint accepts ONLY content/embeds/allowed_mentions, so `username` is dropped —
- *     which is also why an edited message keeps the name it was originally posted under.
- *
  * An edit that fails falls back to posting fresh. That is the self-healing path for a destination
  * that moved underneath us: a message can only be edited through the channel and the sender that
- * created it, so a re-pointed clan channel, a flip of the routing override (migration 027), or the
- * cutover from a webhook to the bot (037) makes the stored id unresolvable and Discord answers 404 or
- * 403. Posting fresh is the correct response — the old message belongs to a sender or a channel we
- * are no longer writing with.
+ * created it, so a re-pointed clan channel, a flip of the routing override (migration 027), or a
+ * message a retired webhook posted (before 038) makes the stored id unresolvable and Discord answers
+ * 404 or 403. Posting fresh is the correct response — the old message belongs to a sender or a
+ * channel we are no longer writing with.
  */
 export async function postOrEditDiscordMessage(
   payload: DiscordMessage,
-  opts: { destination?: Destination | null; messageId?: string | null; username?: string } = {},
+  opts: { destination?: Destination | null; messageId?: string | null } = {},
 ): Promise<string | null> {
   const { to, test } = await resolve(opts.destination);
   if (!to) return null; // Feature disabled in this environment — no-op.
 
-  const bot = to.kind === 'channel';
   // `content` is sent even when empty so an edit can CLEAR a previous message's text (Discord treats
   // an omitted field as "leave unchanged"); a roster that no longer has pending moves must not keep
   // the old ping line.
   const body = {
-    content: bot ? labelled(payload.content ?? '', test) : payload.content ?? '',
+    content: labelled(payload.content ?? '', test),
     embeds: payload.embeds ?? [],
     allowed_mentions: sanitizeMentions(payload.allowed_mentions ?? { parse: [] }),
-    ...(bot && payload.components ? { components: payload.components } : {}),
+    ...(payload.components ? { components: payload.components } : {}),
   };
 
   if (opts.messageId) {
-    const edited = bot
-      ? await request(`${API}/channels/${to.channelId}/messages/${encodeURIComponent(opts.messageId)}`, 'PATCH', body, { bot })
-      : await request(webhookEditUrl(to.url, opts.messageId), 'PATCH', body);
+    const edited = await request(
+      `${API}/channels/${to.channelId}/messages/${encodeURIComponent(opts.messageId)}`, 'PATCH', body, { bot: true },
+    );
     if (edited) return opts.messageId;
     // fall through and post fresh
   }
 
-  const created = bot
-    ? await request(`${API}/channels/${to.channelId}/messages`, 'POST', body, { bot })
-    : await request(webhookPostUrl(to.url), 'POST', { username: test ? TEST_LABEL : opts.username || 'ClanOps', ...body });
+  const created = await request(`${API}/channels/${to.channelId}/messages`, 'POST', body, { bot: true });
   return (created as { id?: string } | null)?.id || null;
 }
 
@@ -207,19 +182,6 @@ export async function sendInteractionFollowUp(
   return sent !== null;
 }
 
-/** Webhook URL with `wait=true`, so Discord returns the created message (and its id). */
-function webhookPostUrl(base: string): string {
-  const u = new URL(base);
-  u.searchParams.set('wait', 'true');
-  return u.toString();
-}
-
-/** The edit endpoint for one message previously posted through this webhook. */
-function webhookEditUrl(base: string, messageId: string): string {
-  const u = new URL(base);
-  return `${u.origin}${u.pathname.replace(/\/$/, '')}/messages/${encodeURIComponent(messageId)}`;
-}
-
 /**
  * One fetch, JSON in and out, every failure logged and swallowed. Null means "did not happen".
  *
@@ -233,7 +195,8 @@ async function request(
   body: unknown,
   opts: { bot?: boolean; retried?: boolean } = {},
 ): Promise<unknown | null> {
-  const label = opts.bot ? 'Discord bot' : 'Discord webhook';
+  // The only unauthenticated-by-bot calls left are interaction replies (interaction-token auth).
+  const label = opts.bot ? 'Discord bot' : 'Discord interaction';
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (opts.bot) {
     const token = process.env.DISCORD_BOT_TOKEN?.trim();

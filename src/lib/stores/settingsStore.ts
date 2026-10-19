@@ -23,23 +23,11 @@ export type PersonOption = {
   player_tag: string;
 };
 
-// The Discord routing override as the client is allowed to see it: whether the redirect is on, and a
-// masked fingerprint of the destination. The full URL is write-only from here.
+// Discord channel routing (/api/settings/discord-route): the override switch, and the bot channel
+// for each route (migration 037). A null purpose channel inherits the next step of the chain.
 export type DiscordRoute = {
   enabled: boolean;
-  maskedUrl: string | null;
-  configured: boolean;
-  // The announcement channel (migration 029). Not configured = announcements inherit the clan channel.
-  maskedAnnouncementUrl: string | null;
-  announcementConfigured: boolean;
-  // The leadership channel (migration 035). Not configured = leadership alerts inherit the clan channel.
-  maskedLeadershipUrl: string | null;
-  leadershipConfigured: boolean;
-  // The unlinked-join channel (migration 036). Not configured = inherits the leadership channel.
-  maskedUnlinkedUrl: string | null;
-  unlinkedConfigured: boolean;
-  // Bot routing (migration 037). Each channel id is preferred over its webhook while the bot is
-  // configured; without DISCORD_BOT_TOKEN they are stored but unused.
+  // Without DISCORD_BOT_TOKEN nothing is sent, whatever is configured.
   botConfigured: boolean;
   overrideChannelId: string | null;
   announcementChannelId: string | null;
@@ -82,19 +70,14 @@ function byPerson(accts: AcctRow[]): Map<string, LeaderRow> {
 
 // Read every server slice the Settings screen needs in one shot. Kept separate from the actions so
 // both the initial load (with a loading flash) and post-mutation refreshes (silent) can reuse it.
-// Discord channel routing is configured through its own masked API route, not the generic settings
-// blob: a webhook URL is a secret (holding it is enough to post as the bot), so it must never reach
-// the browser. Every one of these keys is filtered out here and rendered by their own control — the
-// bot channel ids (migration 037) too, which are not secret but belong to the same control.
+// Discord channel routing is configured through its own API route, not the generic settings blob,
+// which validates each channel id and drops the transport's routing cache. These keys are filtered
+// out here and rendered by their own control.
 export const DISCORD_ROUTE_KEYS = [
   'discord_override_enabled',
-  'discord_override_webhook_url',
   'discord_override_channel_id',
-  'discord_announcement_webhook_url',
   'discord_announcement_channel_id',
-  'discord_leadership_webhook_url',
   'discord_leadership_channel_id',
-  'discord_unlinked_webhook_url',
   'discord_unlinked_channel_id',
 ];
 
@@ -160,13 +143,7 @@ type SettingsState = {
   discordRoute: DiscordRoute | null;
   savingDiscordRoute: boolean;
   fetchDiscordRoute: () => Promise<void>;
-  saveDiscordRoute: (patch: {
-    webhookUrl?: string;
-    enabled?: boolean;
-    announcementWebhookUrl?: string;
-    leadershipWebhookUrl?: string;
-    unlinkedWebhookUrl?: string;
-  } & Partial<Record<DiscordChannelField, string>>) => Promise<boolean>;
+  saveDiscordRoute: (patch: { enabled?: boolean } & Partial<Record<DiscordChannelField, string>>) => Promise<boolean>;
   discordCheck: { bot: string | null; checks: DiscordChannelCheck[] } | null;
   checkingDiscord: boolean;
   checkDiscordChannels: () => Promise<void>;
@@ -185,6 +162,14 @@ type SettingsState = {
 
   addLeader: (playerTag: string, role: AccessRole) => Promise<boolean>;
   revokeLeader: (playerTag: string) => Promise<void>;
+};
+
+// What clearing each route's channel hands its traffic to (the fall-through in discord/routing.ts).
+const CLEARED: Record<DiscordChannelField, string> = {
+  overrideChannelId: 'Override channel cleared.',
+  announcementChannelId: 'Announcement channel cleared — roster posts go to each clan’s channel.',
+  leadershipChannelId: 'Leadership channel cleared — leadership alerts go to each clan’s channel.',
+  unlinkedChannelId: 'Unlinked-join channel cleared — those alerts go to the leadership channel.',
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -240,8 +225,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
-  // Routed through /api/settings/discord-route rather than PostgREST — the webhook URL is a secret
-  // and the route is what masks it. A non-leader simply gets no control (the GET 403s).
+  // Routed through /api/settings/discord-route rather than PostgREST — see DISCORD_ROUTE_KEYS. A
+  // non-leader simply gets no control (the GET 403s).
   async fetchDiscordRoute() {
     try {
       const res = await fetch('/api/settings/discord-route');
@@ -266,24 +251,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const next = body as DiscordRoute;
       // Report what the leader just changed, not the whole routing posture: saving an announcement
       // channel while the override happens to be on must not read as "the override was saved".
-      const channelField = (Object.keys(patch) as string[]).find((k) => k.endsWith('ChannelId'));
+      const channelField = (Object.keys(patch) as string[]).find((k) => k.endsWith('ChannelId')) as
+        | DiscordChannelField
+        | undefined;
       const message = channelField
-        ? next[channelField as DiscordChannelField]
-          ? 'Bot channel saved.'
-          : 'Bot channel cleared — that route uses its webhook again.'
-        : patch.announcementWebhookUrl !== undefined
-        ? next.announcementConfigured
-          ? 'Announcements will post to the announcement channel.'
-          : 'Announcement channel cleared — announcements go to each clan’s channel.'
-        : patch.leadershipWebhookUrl !== undefined
-          ? next.leadershipConfigured
-            ? 'Leadership alerts will post to the leadership channel.'
-            : 'Leadership channel cleared — leadership alerts go to each clan’s channel.'
-          : patch.unlinkedWebhookUrl !== undefined
-            ? next.unlinkedConfigured
-              ? 'Unlinked-join alerts will post to the unlinked-join channel.'
-              : 'Unlinked-join channel cleared — those alerts go to the leadership channel.'
-          : next.enabled
+        ? next[channelField]
+          ? 'Channel saved.'
+          : CLEARED[channelField]
+        : next.enabled
           ? 'All notifications are going to the override channel.'
           : 'Notifications are routed to the normal clan channels.';
       set({ discordRoute: next, toast: { message, type: 'success' } });

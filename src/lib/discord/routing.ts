@@ -1,8 +1,9 @@
 /**
  * Where a message goes.
  *
- * Each clan may have its own channel so events post to a clan-specific channel; when a clan has
- * none, we fall back to the family-wide channel (DISCORD_DEFAULT_CHANNEL_ID / DISCORD_WEBHOOK_URL).
+ * Every destination is a channel the bot posts to (DISCORD_BOT_TOKEN). Each clan may have its own
+ * channel so events post to a clan-specific channel; when a clan has none, we fall back to the
+ * family-wide channel (DISCORD_DEFAULT_CHANNEL_ID).
  *
  * PURPOSE (migration 029): the second routing axis. Most messages are addressed to particular people
  * and belong in the clan channel they already read; an ANNOUNCEMENT (the CWL roster) is addressed to
@@ -12,10 +13,8 @@
  * under the same blank-inherits rule. A fourth, UNLINKED (migration 036), carries the unlinked-player
  * join alert; blank, it inherits the leadership channel before the clan channel.
  *
- * BOT vs WEBHOOK (migration 037): every step of the chain holds a channel id beside its webhook. With
- * DISCORD_BOT_TOKEN set, a step that has a channel id resolves to that channel; otherwise the step's
- * webhook is used, and only a step with neither falls through to the next. That makes the cutover
- * per channel — and removing the token puts the whole family back on webhooks with nothing to undo.
+ * Webhooks (migrations 013–036) were retired once every channel moved to the bot (037, 038): a step
+ * with no channel id falls through to the next, and without the bot token nothing is sent at all.
  *
  * ROUTING OVERRIDE (migration 027): while `discord_override_enabled` is on, every message is
  * redirected to the override destination. That redirect is applied by the transport at send time,
@@ -31,15 +30,10 @@ export function botConfigured(): boolean {
   return !!process.env.DISCORD_BOT_TOKEN?.trim();
 }
 
-/** One step of the routing chain: a channel id and/or a webhook, either possibly unset. */
-type Hop = { channelId: string | null; webhookUrl: string | null };
-
-/** The step's destination: its channel when the bot can post there, else its webhook, else nothing. */
-export function pickDestination(hop: Hop, bot = botConfigured()): Destination | null {
-  const channelId = normalizeChannelId(hop.channelId);
-  if (bot && channelId) return { kind: 'channel', channelId };
-  const url = hop.webhookUrl?.trim();
-  return url ? { kind: 'webhook', url } : null;
+/** One step of the routing chain: its channel, when the bot can post there, else nothing. */
+export function pickDestination(channelId: string | null | undefined, bot = botConfigured()): Destination | null {
+  const id = normalizeChannelId(channelId);
+  return bot && id ? { channelId: id } : null;
 }
 
 /**
@@ -49,7 +43,7 @@ export function pickDestination(hop: Hop, bot = botConfigured()): Destination | 
  * separate so the channel can stay configured while the redirect is flipped off, which is what makes
  * turning the testing phase on and off a one-click action. The switch must be on and a destination
  * present for it to apply. Further rows hold the announcement channel (migration 029), the leadership
- * channel (035) and the unlinked-join channel (036), each as a webhook and a bot channel id (037).
+ * channel (035) and the unlinked-join channel (036), each as a bot channel id (037).
  *
  * Cached because EVERY notification consults it and a sync can fire dozens in one pass — and read in
  * ONE query, so adding the purpose axis did not add a round trip per message. The TTL is the same 15s
@@ -59,25 +53,19 @@ export function pickDestination(hop: Hop, bot = botConfigured()): Destination | 
  */
 type RouteConfig = {
   overrideEnabled: boolean;
-  override: Hop;
-  announcement: Hop;
-  leadership: Hop;
-  unlinked: Hop;
+  override: string | null;
+  announcement: string | null;
+  leadership: string | null;
+  unlinked: string | null;
 };
 let routeCache: { config: RouteConfig; at: number } | null = null;
 const OVERRIDE_TTL_MS = 15_000;
 
-const EMPTY_HOP: Hop = { channelId: null, webhookUrl: null };
-
 export const ROUTE_SETTING_KEYS = [
   'discord_override_enabled',
-  'discord_override_webhook_url',
   'discord_override_channel_id',
-  'discord_announcement_webhook_url',
   'discord_announcement_channel_id',
-  'discord_leadership_webhook_url',
   'discord_leadership_channel_id',
-  'discord_unlinked_webhook_url',
   'discord_unlinked_channel_id',
 ] as const;
 
@@ -87,19 +75,16 @@ async function routeConfig(): Promise<RouteConfig> {
 
   let config: RouteConfig = {
     overrideEnabled: false,
-    override: EMPTY_HOP,
-    announcement: EMPTY_HOP,
-    leadership: EMPTY_HOP,
-    unlinked: EMPTY_HOP,
+    override: null,
+    announcement: null,
+    leadership: null,
+    unlinked: null,
   };
   try {
     const { data } = await supabase.from('settings').select('key, value').in('key', [...ROUTE_SETTING_KEYS]);
     const rows = new Map((data || []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
     const str = (key: string) => (typeof rows.get(key) === 'string' ? (rows.get(key) as string).trim() : '');
-    const hop = (name: string): Hop => ({
-      channelId: str(`discord_${name}_channel_id`) || null,
-      webhookUrl: str(`discord_${name}_webhook_url`) || null,
-    });
+    const hop = (name: string) => str(`discord_${name}_channel_id`) || null;
 
     config = {
       overrideEnabled: rows.get('discord_override_enabled') === true,
@@ -128,14 +113,11 @@ export function invalidateDiscordRouteCache(): void {
 }
 
 /**
- * The last step of every chain: the family-wide channel — DISCORD_DEFAULT_CHANNEL_ID for the bot,
- * else DISCORD_WEBHOOK_URL — or nothing (feature disabled).
+ * The last step of every chain: the family-wide channel (DISCORD_DEFAULT_CHANNEL_ID), or nothing
+ * (feature disabled).
  */
 export function fallbackDestination(): Destination | null {
-  return pickDestination({
-    channelId: process.env.DISCORD_DEFAULT_CHANNEL_ID || null,
-    webhookUrl: process.env.DISCORD_WEBHOOK_URL || null,
-  });
+  return pickDestination(process.env.DISCORD_DEFAULT_CHANNEL_ID);
 }
 
 /**
@@ -165,15 +147,8 @@ export async function destinationForClan(
     if (dedicated) return dedicated;
   }
   if (clanId) {
-    const { data } = await supabase
-      .from('clans')
-      .select('discord_webhook_url, discord_channel_id')
-      .eq('id', clanId)
-      .maybeSingle();
-    const clan = pickDestination({
-      channelId: data?.discord_channel_id ?? null,
-      webhookUrl: data?.discord_webhook_url ?? null,
-    });
+    const { data } = await supabase.from('clans').select('discord_channel_id').eq('id', clanId).maybeSingle();
+    const clan = pickDestination(data?.discord_channel_id);
     if (clan) return clan;
   }
   return fallbackDestination();

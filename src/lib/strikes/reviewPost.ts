@@ -10,8 +10,7 @@ import { encodeCustomId } from '@/lib/discord/interactions/customId';
  * leadership channel with Confirm / Dismiss buttons that act exactly as the dashboard does
  * (`strikes/review.ts`), and the message is stamped with who acted and how.
  *
- * Buttons only work on a message the bot posted; through a webhook the same alert arrives without
- * them, and the footer still points at the dashboard queue.
+ * The footer still points at the dashboard queue, which is where the same review can be settled.
  */
 
 export const REVIEW_NS = 'review';

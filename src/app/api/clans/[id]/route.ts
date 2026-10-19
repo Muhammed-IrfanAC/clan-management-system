@@ -8,7 +8,8 @@ const RULE_AUTOMATION_MODES: RuleAutomationMode[] = ['always', 'cwl_only', 'neve
 
 // PATCH /api/clans/:id — update a clan's config: `rule_automation_mode` (whether the rule detectors
 // act on this clan's wars: always / cwl_only / never) and/or `discord_channel_id` (the bot's channel
-// for this clan, migration 037; blank clears it back to the clan webhook). Gated by clan management.
+// for this clan, migration 037; blank clears it, so the clan's notices go to the family-wide
+// fallback channel). Gated by clan management.
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;

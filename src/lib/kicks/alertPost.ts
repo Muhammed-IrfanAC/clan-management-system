@@ -10,9 +10,8 @@ import { encodeCustomId } from '@/lib/discord/interactions/customId';
  * notices, not that the player is called out. The ping sits in plain `content`, because a mention
  * inside an embed renders but never notifies.
  *
- * Through the bot it carries two buttons (`interactions/commands/kickButtons.ts`): "Handled" stamps
- * the alert with who dealt with it, and "Welcome back" takes the entry off the kick list after a
- * confirmation. Through a webhook it arrives without them and the footer still says where to go.
+ * It carries two buttons (`interactions/commands/kickButtons.ts`): "Handled" stamps the alert with
+ * who dealt with it, and "Welcome back" takes the entry off the kick list after a confirmation.
  */
 
 export const KICK_NS = 'kick';

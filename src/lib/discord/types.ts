@@ -14,11 +14,7 @@ export type DiscordEmbed = {
   footer?: { text: string };
 };
 
-/**
- * Message components (buttons, selects). INTERACTIVE ones work only on a message the bot posted:
- * a channel webhook cannot carry them, so the transport strips `components` from every webhook send,
- * and a renderer that offers buttons must still read correctly without them.
- */
+/** Message components (buttons, selects), handled by `interactions/`. */
 export const ButtonStyle = { PRIMARY: 1, SECONDARY: 2, SUCCESS: 3, DANGER: 4 } as const;
 
 export type DiscordButton = {
@@ -52,15 +48,12 @@ export type DiscordUserSelect = {
 
 export type DiscordActionRow = { type: 1; components: Array<DiscordButton | DiscordStringSelect | DiscordUserSelect> };
 
-/** The editable part of a webhook message — what a pure renderer produces. Deliberately excludes
- * `username`: Discord's message-EDIT endpoint accepts only content/embeds/allowed_mentions, so a
- * payload that carries a username cannot be replayed as an edit. */
+/** The editable part of a message — what a pure renderer produces. */
 export type DiscordMessage = {
   content?: string;
   embeds?: DiscordEmbed[];
   // Restrict which mentions actually ping. Defaults to none so stray text can't mass-ping.
   allowed_mentions?: { parse?: Array<'users' | 'roles' | 'everyone'>; users?: string[]; roles?: string[] };
-  /** Bot sends only — dropped on the way to a webhook (see DiscordActionRow). */
   components?: DiscordActionRow[];
 };
 
@@ -75,11 +68,5 @@ export type DiscordMessage = {
  */
 export type ChannelPurpose = 'default' | 'announcement' | 'leadership' | 'unlinked';
 
-/**
- * Where a message is delivered: a channel the BOT posts to (by id, with DISCORD_BOT_TOKEN), or a
- * webhook. Routing resolves one; the transport sends to either. A message posted one way can only be
- * edited the same way, which the living-message fallback absorbs (see postOrEditDiscordMessage).
- */
-export type Destination =
-  | { kind: 'channel'; channelId: string }
-  | { kind: 'webhook'; url: string };
+/** Where a message is delivered: a channel the BOT posts to (by id, with DISCORD_BOT_TOKEN). */
+export type Destination = { channelId: string };
