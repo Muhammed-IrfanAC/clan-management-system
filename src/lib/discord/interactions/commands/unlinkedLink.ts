@@ -3,13 +3,15 @@
  * Same bar as Members → Unlinked Accounts: dashboard access.
  *
  *  - `pick` (the alert's select): opens the private link panel for that account — or, if somebody
- *    linked it since the alert was posted, stamps that on the alert and drops it from the select.
+ *    linked it since the alert was posted, says so privately, stamps the alert and drops it from the
+ *    select.
  *  - `alt` (a suggested match), `altdc` (the owner's Discord), `new` (a new person): link it
  *    (`unlinked/link.ts`), stamp the alert, and turn the panel into the result — which offers the
  *    person's Discord when they have none yet.
  *  - `dc`: link that Discord to the person. Also offered by `/link`.
  *
- * Everything after `pick` is deferred: a link is several reads and writes plus an edit of the alert.
+ * Everything is deferred — Discord allows 3 seconds for the first answer, and none of these fit
+ * reliably once a cold start is added: a link is several reads and writes plus an edit of the alert.
  * A refusal (`LinkError`) is shown in the panel; the alert is left alone.
  */
 
@@ -98,26 +100,35 @@ function deferred(work: () => Promise<Reply>): HandlerResult {
   };
 }
 
-async function pick(interaction: Interaction, tag: string | undefined): Promise<HandlerResult> {
+/**
+ * Deferred like everything else here: answering means reading the account and ranking every person
+ * as a possible owner, and with a cold start on top that does not fit Discord's 3-second window.
+ * The acknowledgement is a private "thinking…" that the panel then replaces — so even the
+ * already-linked case answers in that private message, and stamps the alert through the bot.
+ */
+function pick(interaction: Interaction, tag: string | undefined): HandlerResult {
   const alertId = interaction.message?.id;
   if (!tag || !alertId) return ephemeral('Pick an account to link.');
-  const account = await loadAccountForLink(tag);
-  if (!account) return ephemeral(`\`${tag}\` is no longer a ClanOps account.`);
+  return {
+    kind: 'defer',
+    ephemeral: true,
+    work: async () => {
+      const account = await loadAccountForLink(tag);
+      if (!account) return { content: `\`${tag}\` is no longer a ClanOps account.` };
 
-  if (account.person) {
-    // Linked since the alert went out (dashboard or `/link`): the alert should say so, not offer it.
-    const components = withoutOption(interaction.message?.components, linkIds.pick(), account.tag);
-    return {
-      kind: 'update',
-      reply: stampResolution(
-        interaction.message,
-        `🔗 \`${account.tag}\` was already linked to **${escapeMarkdown(account.person.displayName)}**`,
-        { components, stillOpen: components.length > 0 },
-      ),
-    };
-  }
-  const suggestions = suggestPersons({ name: account.name, clanId: account.clanId }, await loadPersonCandidates());
-  return { kind: 'reply', reply: renderLinkPanel(account, suggestions, alertId) };
+      if (account.person) {
+        // Linked since the alert went out (dashboard or `/link`): the alert should say so, not offer it.
+        const line = `🔗 \`${account.tag}\` was already linked to **${escapeMarkdown(account.person.displayName)}**`;
+        await editAlert(interaction.channel_id, alertId, (alert) => {
+          const components = withoutOption(alert.components as DiscordActionRow[] | undefined, linkIds.pick(), account.tag);
+          return stampResolution(alert, line, { components, stillOpen: components.length > 0 });
+        });
+        return { content: `${line}.`, allowed_mentions: { parse: [] } };
+      }
+      const suggestions = suggestPersons({ name: account.name, clanId: account.clanId }, await loadPersonCandidates());
+      return renderLinkPanel(account, suggestions, alertId);
+    },
+  };
 }
 
 async function link(interaction: Interaction, actor: Actor, tag: string, alertId: string, target: LinkTarget): Promise<Reply> {

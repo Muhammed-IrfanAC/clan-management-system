@@ -118,11 +118,12 @@ describe('unlinked link', () => {
     ]);
   });
 
-  it('opens a private panel suggesting the likely owner', async () => {
+  it('acknowledges at once, then fills a private panel suggesting the likely owner', async () => {
     const r = await unlinkedLink.run(pickClick('#8QQ'), LEAD, idOf(pickId));
-    if (r.kind !== 'reply') throw new Error('expected a reply');
-    expect(r.reply.ephemeral).toBe(true);
-    const [suggested, byDiscord, fresh] = r.reply.components!.map((row) => row.components[0]);
+    if (r.kind !== 'defer') throw new Error('expected defer');
+    expect(r.ephemeral).toBe(true);
+    const panel = await r.work();
+    const [suggested, byDiscord, fresh] = panel.components!.map((row) => row.components[0]);
     expect(suggested).toMatchObject({ type: 2, label: 'Alt of Bob', custom_id: 'unl:v1:alt:#8QQ:p1:m1' });
     expect(byDiscord).toMatchObject({ type: 5, custom_id: 'unl:v1:altdc:#8QQ:m1' });
     expect(fresh).toMatchObject({ type: 2, label: 'New person: Bob alt', custom_id: 'unl:v1:new:#8QQ:m1' });
@@ -159,10 +160,15 @@ describe('unlinked link', () => {
     expect(h.db.find('player_accounts', '#8QQ')!.person_id).toBe('p1');
   });
 
-  it('stamps the alert instead of opening a panel when the account was linked meanwhile', async () => {
+  it('says so and stamps the alert instead of opening a panel when the account was linked meanwhile', async () => {
     h.db.find('player_accounts', '#8QQ')!.person_id = 'p1';
+    h.bot.mockResolvedValueOnce(alert).mockResolvedValueOnce({});
     const r = await unlinkedLink.run(pickClick('#8QQ'), LEAD, idOf(pickId));
-    expect(actions(r)).toBe('🔗 `#8QQ` was already linked to **Bob**');
+    if (r.kind !== 'defer') throw new Error('expected defer');
+    expect((await r.work()).content).toBe('🔗 `#8QQ` was already linked to **Bob**.');
+    const patched = h.bot.mock.calls[1][2] as { components: { components: { options: { value: string }[] }[] }[]; embeds: { fields: { value: string }[] }[] };
+    expect(patched.embeds[0].fields.at(-1)!.value).toBe('🔗 `#8QQ` was already linked to **Bob**');
+    expect(patched.components[0].components[0].options.map((o) => o.value)).toEqual(['#9YY']);
   });
 
   it('links a Discord to the new person', async () => {
