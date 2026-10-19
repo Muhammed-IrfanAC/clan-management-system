@@ -1,5 +1,5 @@
-import type { DiscordMessage } from '@/lib/discord';
-import { LEADERSHIP_ROLE_ID } from '@/lib/discordRoles';
+import type { DiscordMessage } from '@/lib/discord/types';
+import { LEADERSHIP_ROLE_ID } from '@/lib/discord/roles';
 
 /**
  * PURE half of the "an unlinked player joined" alert. `joinAlert.ts` is the DB/send half.

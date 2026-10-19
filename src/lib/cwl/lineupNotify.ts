@@ -1,7 +1,8 @@
 import { supabase } from '@/lib/supabase';
 import { diffLineup, type PlannedSlot, type ActualSlot, type LineupDiff } from './lineup';
 import { diffFieldedLineups, type FieldedSlot } from './lineupChange';
-import { discordIdsForAccountTags, notifyLineupSwap, notifyRoundLineup, webhookUrlForClan } from '@/lib/discord';
+import { discordIdsForAccountTags, sendDiscordMessage, webhookUrlForClan } from '@/lib/discord';
+import { renderLineupSwap, renderRoundLineup } from './lineupPost';
 
 /**
  * The DB/notify half of the planned-vs-actual lineup check — `lineup.ts` is the pure diff.
@@ -151,7 +152,7 @@ export async function notifyLineupIfRevealed(params: {
       .eq('id', clanId)
       .maybeSingle();
 
-    const sent = await notifyRoundLineup({
+    const sent = await sendDiscordMessage(renderRoundLineup({
       clanName: clan?.display_name || 'Clan',
       roundNumber,
       opponentName,
@@ -159,8 +160,7 @@ export async function notifyLineupIfRevealed(params: {
       diff,
       basis: prev ? 'previous_round' : 'plan',
       swappedInMentions,
-      webhookUrl: await webhookUrlForClan(clanId),
-    });
+    }), await webhookUrlForClan(clanId));
 
     if (sent) {
       await supabase
@@ -239,7 +239,7 @@ export async function recordLineupChange(params: {
       supabase.from('clans').select('display_name').eq('id', clanId).maybeSingle(),
     ]);
 
-    await notifyLineupSwap({
+    const message = renderLineupSwap({
       clanName: clan?.display_name || 'Clan',
       roundNumber,
       opponentName,
@@ -247,8 +247,8 @@ export async function recordLineupChange(params: {
       swappedIn: change.swappedIn,
       swappedOut: change.swappedOut,
       swappedInMentions,
-      webhookUrl: await webhookUrlForClan(clanId),
     });
+    if (message) await sendDiscordMessage(message, await webhookUrlForClan(clanId));
   } catch (err) {
     console.error(`CWL lineup change record failed for round ${roundId} (non-fatal):`, err);
   }

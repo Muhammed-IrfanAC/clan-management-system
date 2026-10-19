@@ -1,5 +1,5 @@
-import type { DiscordEmbedField, DiscordMessage } from '@/lib/discord';
-import { LEADERSHIP_ROLE_ID } from '@/lib/discordRoles';
+import type { DiscordEmbedField, DiscordMessage } from '@/lib/discord/types';
+import { LEADERSHIP_ROLE_ID } from '@/lib/discord/roles';
 
 /**
  * PURE renderer for the "a kicked player is back" alert. `arrivals.ts` is the DB/send half.

@@ -1,4 +1,4 @@
-import type { DiscordEmbedField, DiscordMessage } from '@/lib/discord';
+import type { DiscordEmbedField, DiscordMessage } from '@/lib/discord/types';
 
 /**
  * PURE renderers for the three CWL roster announcements. No I/O, no Supabase, no fetch — feed them

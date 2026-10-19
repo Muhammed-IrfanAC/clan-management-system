@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
-import { notifyStrikeLogged, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
+import { sendDiscordMessage, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
+import { renderStrikePost } from './strikePost';
 import { loadStrikeNotifyContext } from './notify-context';
 import { planStrikes, type PlannedStrike } from './plan';
 import type { DetectedViolation } from '@/lib/rules/types';
@@ -188,7 +189,7 @@ export async function commitReviewStrike(params: {
   if (created) {
     try {
       const ctx = await loadStrikeNotifyContext(playerTag);
-      await notifyStrikeLogged({
+      await sendDiscordMessage(renderStrikePost({
         memberName: memberName ?? null,
         playerTag: playerTag ?? '—',
         ruleName: ruleName ?? null,
@@ -197,9 +198,8 @@ export async function commitReviewStrike(params: {
         strikeNumber: ctx.strikeNumber,
         level: ctx.level,
         activeStrikes: ctx.activeStrikes,
-        webhookUrl: await webhookUrlForClan(clanId),
         mentionDiscordId: await discordUserIdForPerson(personId),
-      });
+      }), await webhookUrlForClan(clanId));
     } catch (err) {
       console.error('Review strike Discord notify failed (non-fatal):', err);
     }
@@ -212,7 +212,7 @@ async function notifyNewStrikes(rule: StrikeRule, newStrikes: PlannedStrike[]): 
   for (const p of newStrikes) {
     try {
       const ctx = await loadStrikeNotifyContext(p.playerTag);
-      await notifyStrikeLogged({
+      await sendDiscordMessage(renderStrikePost({
         memberName: p.violations[0]?.memberName ?? null,
         playerTag: p.playerTag,
         ruleName: rule.name,
@@ -224,9 +224,8 @@ async function notifyNewStrikes(rule: StrikeRule, newStrikes: PlannedStrike[]): 
         strikeNumber: ctx.strikeNumber,
         level: ctx.level,
         activeStrikes: ctx.activeStrikes,
-        webhookUrl: await webhookUrlForClan(p.clanId),
         mentionDiscordId: await discordUserIdForPerson(p.personId),
-      });
+      }), await webhookUrlForClan(p.clanId));
     } catch (err) {
       console.error('Strike Discord notify failed (non-fatal):', err);
     }

@@ -3,7 +3,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { X, Activity, Send, Megaphone, AlertTriangle } from 'lucide-react';
 import { useCWLStore } from '@/lib/stores/cwlStore';
-import type { DiscordMessage } from '@/lib/discord';
+import type { DiscordMessage } from '@/lib/discord/types';
 
 /**
  * Publish the finalized roster to Discord — with a preview first.

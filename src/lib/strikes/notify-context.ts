@@ -14,7 +14,7 @@ export type StrikeNotifyContext = {
   strikeNumber: number;       // this account's active strike count (i.e. "Strike N")
   level: StrikeLevel;         // green=1, orange=2, red>=3 — drives the embed colour + title emoji
   // oldest-first, for the embed's list field. `leadershipApproved` lets the embed mark trust-restored
-  // strikes apart from live unresolved ones (see notifyStrikeLogged).
+  // strikes apart from live unresolved ones (see renderStrikePost).
   activeStrikes: { issuedAt: string; label: string; leadershipApproved: boolean }[];
 };
 

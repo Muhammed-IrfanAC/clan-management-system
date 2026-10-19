@@ -1,7 +1,8 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
-import { notifyStrikeLogged, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
+import { sendDiscordMessage, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
+import { renderStrikePost } from '@/lib/strikes/strikePost';
 import { loadStrikeNotifyContext } from '@/lib/strikes/notify-context';
 
 /**
@@ -103,7 +104,7 @@ export async function POST(request: NextRequest) {
         ? await supabase.from('rules').select('name').eq('id', ruleId).maybeSingle()
         : { data: null };
       const ctx = await loadStrikeNotifyContext(playerTag);
-      await notifyStrikeLogged({
+      await sendDiscordMessage(renderStrikePost({
         memberName: account?.in_game_name,
         playerTag,
         ruleName: rule?.name ?? null,
@@ -111,9 +112,8 @@ export async function POST(request: NextRequest) {
         strikeNumber: ctx.strikeNumber,
         level: ctx.level,
         activeStrikes: ctx.activeStrikes,
-        webhookUrl: await webhookUrlForClan(account?.clan_id),
         mentionDiscordId: await discordUserIdForPerson(personId),
-      });
+      }), await webhookUrlForClan(account?.clan_id));
     } catch (notifyErr) {
       console.error('Manual strike Discord notification failed (non-fatal):', notifyErr);
     }

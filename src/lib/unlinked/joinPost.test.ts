@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LEADERSHIP_ROLE_ID } from '@/lib/discordRoles';
+import { LEADERSHIP_ROLE_ID } from '@/lib/discord/roles';
 import { renderUnlinkedJoins, selectUnlinkedJoins, type UnlinkedAccount } from './joinPost';
 
 function acct(tag: string, over: Partial<UnlinkedAccount> = {}): [string, UnlinkedAccount] {
