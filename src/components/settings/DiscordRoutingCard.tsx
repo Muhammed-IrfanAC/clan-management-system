@@ -195,8 +195,8 @@ export default function DiscordRoutingCard() {
       </div>
       <p className="text-muted" style={{ fontSize: '0.8rem', margin: '0 0 var(--space-md)' }}>
         {route.leadershipConfigured
-          ? 'Kick list alerts go here, pinging the Leadership role — when a kicked player, or an alt of one, joins a family clan.'
-          : 'Not set — kick list alerts go to the clan’s own channel, where members can read them, kick reason included. Point this at a channel only leadership can see.'}
+          ? 'Kick list alerts go here, pinging the Leadership role — when a kicked player, or an alt of one, joins a family clan — and so do hit-up reviews waiting to be confirmed or dismissed.'
+          : 'Not set — kick list alerts and hit-up reviews go to the clan’s own channel, where members can read them, kick reason included. Point this at a channel only leadership can see.'}
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
