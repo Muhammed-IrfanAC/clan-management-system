@@ -310,6 +310,8 @@ function BotStatus() {
   const check = useSettingsStore((s) => s.discordCheck);
   const checking = useSettingsStore((s) => s.checkingDiscord);
   const checkDiscordChannels = useSettingsStore((s) => s.checkDiscordChannels);
+  const syncing = useSettingsStore((s) => s.syncingCommands);
+  const syncDiscordCommands = useSettingsStore((s) => s.syncDiscordCommands);
   if (!route) return null;
 
   return (
@@ -327,6 +329,17 @@ function BotStatus() {
         {route.botConfigured && (
           <button className="btn btn-outline" style={{ fontSize: '0.7rem' }} disabled={checking} onClick={checkDiscordChannels}>
             {checking ? 'Checking…' : 'Check channel access'}
+          </button>
+        )}
+        {route.botConfigured && (
+          <button
+            className="btn btn-outline"
+            style={{ fontSize: '0.7rem' }}
+            disabled={syncing}
+            title="Push the slash commands to Discord — after setup, or after a command changes"
+            onClick={syncDiscordCommands}
+          >
+            {syncing ? 'Syncing…' : 'Sync slash commands'}
           </button>
         )}
       </div>

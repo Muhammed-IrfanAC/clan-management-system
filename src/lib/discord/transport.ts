@@ -161,6 +161,29 @@ export async function discordBotRequest(
   return request(`${API}${path.startsWith('/') ? path : `/${path}`}`, method, body, { bot: true });
 }
 
+/**
+ * Fill in the reply to a DEFERRED interaction (the "thinking…" placeholder). Authenticated by the
+ * interaction token rather than the bot token, valid for 15 minutes after the interaction arrived.
+ * Not subject to the routing override: a reply belongs to the person who asked, wherever they asked.
+ */
+export async function editInteractionReply(
+  applicationId: string,
+  interactionToken: string,
+  payload: DiscordMessage & { components?: unknown[] },
+): Promise<boolean> {
+  const sent = await request(
+    `${API}/webhooks/${applicationId}/${encodeURIComponent(interactionToken)}/messages/@original`,
+    'PATCH',
+    {
+      content: payload.content ?? '',
+      embeds: payload.embeds ?? [],
+      components: payload.components ?? [],
+      allowed_mentions: sanitizeMentions(payload.allowed_mentions ?? { parse: [] }),
+    },
+  );
+  return sent !== null;
+}
+
 /** Webhook URL with `wait=true`, so Discord returns the created message (and its id). */
 function webhookPostUrl(base: string): string {
   const u = new URL(base);

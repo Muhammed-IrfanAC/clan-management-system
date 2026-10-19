@@ -170,6 +170,8 @@ type SettingsState = {
   discordCheck: { bot: string | null; checks: DiscordChannelCheck[] } | null;
   checkingDiscord: boolean;
   checkDiscordChannels: () => Promise<void>;
+  syncingCommands: boolean;
+  syncDiscordCommands: () => Promise<void>;
   updateClanChannel: (id: string, channelId: string) => Promise<boolean>;
 
   addClan: (form: NewClan) => Promise<boolean>;
@@ -203,6 +205,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   savingDiscordRoute: false,
   discordCheck: null,
   checkingDiscord: false,
+  syncingCommands: false,
 
   setToast: (toast) => set({ toast }),
 
@@ -345,6 +348,23 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ toast: { message: err instanceof Error ? err.message : 'Error checking Discord channels', type: 'error' } });
     } finally {
       set({ checkingDiscord: false });
+    }
+  },
+
+  // Push the slash-command definitions to Discord (after setup, or after a definition changes).
+  async syncDiscordCommands() {
+    if (get().syncingCommands) return;
+    set({ syncingCommands: true });
+    try {
+      const res = await fetch('/api/discord/commands', { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || 'Error syncing slash commands');
+      const where = body.scope === 'guild' ? 'the family server' : 'all servers (may take up to an hour)';
+      set({ toast: { message: `Synced /${(body.names as string[]).join(', /')} to ${where}.`, type: 'success' } });
+    } catch (err) {
+      set({ toast: { message: err instanceof Error ? err.message : 'Error syncing slash commands', type: 'error' } });
+    } finally {
+      set({ syncingCommands: false });
     }
   },
 
