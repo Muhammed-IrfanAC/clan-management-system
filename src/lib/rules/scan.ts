@@ -3,6 +3,7 @@ import { DETECTORS } from './detectors';
 import { detectorMeta } from './registry';
 import { filterViolationsByClanMode, normalizeMode } from './automationScope';
 import { commitStrikes } from '@/lib/strikes/commit';
+import { alertQueuedSuggestions, type QueuedSuggestion } from '@/lib/strikes/reviewAlert';
 import type { RuleAutomationMode } from '@/types/database';
 import type { DetectedViolation } from './types';
 
@@ -106,10 +107,17 @@ async function queueStrikeSuggestions(
   const { data: inserted, error } = await supabase
     .from('strike_suggestions')
     .upsert(rows, { onConflict: 'dedup_key', ignoreDuplicates: true })
-    .select('dedup_key');
+    .select('id, clan_id, member_name, player_account_tag, war_label, description, occurred_at');
   if (error) {
     console.error('Strike-suggestion insert failed:', error);
     return 0;
   }
-  return (inserted as { dedup_key: string }[] | null)?.length || 0;
+  const queued = (inserted as QueuedSuggestion[] | null) || [];
+  // Only the rows this scan inserted come back, so each suggestion reaches Discord exactly once.
+  try {
+    await alertQueuedSuggestions(rule.name, queued);
+  } catch (err) {
+    console.error('Strike-suggestion Discord alert failed (non-fatal):', err);
+  }
+  return queued.length;
 }

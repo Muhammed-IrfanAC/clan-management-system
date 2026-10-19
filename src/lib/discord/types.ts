@@ -14,6 +14,35 @@ export type DiscordEmbed = {
   footer?: { text: string };
 };
 
+/**
+ * Message components (buttons, selects). INTERACTIVE ones work only on a message the bot posted:
+ * a channel webhook cannot carry them, so the transport strips `components` from every webhook send,
+ * and a renderer that offers buttons must still read correctly without them.
+ */
+export const ButtonStyle = { PRIMARY: 1, SECONDARY: 2, SUCCESS: 3, DANGER: 4 } as const;
+
+export type DiscordButton = {
+  type: 2;
+  style: (typeof ButtonStyle)[keyof typeof ButtonStyle];
+  label: string;
+  custom_id: string;
+  emoji?: { name: string };
+  disabled?: boolean;
+};
+
+export type DiscordSelectOption = { label: string; value: string; description?: string };
+
+export type DiscordStringSelect = {
+  type: 3;
+  custom_id: string;
+  placeholder?: string;
+  options: DiscordSelectOption[];
+  min_values?: number;
+  max_values?: number;
+};
+
+export type DiscordActionRow = { type: 1; components: Array<DiscordButton | DiscordStringSelect> };
+
 /** The editable part of a webhook message — what a pure renderer produces. Deliberately excludes
  * `username`: Discord's message-EDIT endpoint accepts only content/embeds/allowed_mentions, so a
  * payload that carries a username cannot be replayed as an edit. */
@@ -22,6 +51,8 @@ export type DiscordMessage = {
   embeds?: DiscordEmbed[];
   // Restrict which mentions actually ping. Defaults to none so stray text can't mass-ping.
   allowed_mentions?: { parse?: Array<'users' | 'roles' | 'everyone'>; users?: string[]; roles?: string[] };
+  /** Bot sends only — dropped on the way to a webhook (see DiscordActionRow). */
+  components?: DiscordActionRow[];
 };
 
 /**

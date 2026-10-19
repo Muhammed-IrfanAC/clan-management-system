@@ -82,14 +82,18 @@ export async function sendDiscordMessage(
     const sent = await request(`${API}/channels/${to.channelId}/messages`, 'POST', {
       ...(content ? { content } : {}),
       embeds: payload.embeds ?? [],
+      ...(payload.components?.length ? { components: payload.components } : {}),
       allowed_mentions,
     }, { bot: true });
     return sent !== null;
   }
 
+  // A channel webhook cannot carry interactive components, so a webhook message goes without them.
+  const { components: _dropped, ...webhookPayload } = payload;
+  void _dropped;
   const sent = await request(to.url, 'POST', {
     username: 'ClanOps',
-    ...payload,
+    ...webhookPayload,
     allowed_mentions,
     // Applied AFTER the payload so it cannot be overridden: a message in the test channel must
     // never be mistaken for one the family actually received.
@@ -132,6 +136,7 @@ export async function postOrEditDiscordMessage(
     content: bot ? labelled(payload.content ?? '', test) : payload.content ?? '',
     embeds: payload.embeds ?? [],
     allowed_mentions: sanitizeMentions(payload.allowed_mentions ?? { parse: [] }),
+    ...(bot && payload.components ? { components: payload.components } : {}),
   };
 
   if (opts.messageId) {
@@ -169,7 +174,7 @@ export async function discordBotRequest(
 export async function editInteractionReply(
   applicationId: string,
   interactionToken: string,
-  payload: DiscordMessage & { components?: unknown[] },
+  payload: DiscordMessage,
 ): Promise<boolean> {
   const sent = await request(
     `${API}/webhooks/${applicationId}/${encodeURIComponent(interactionToken)}/messages/@original`,
@@ -181,6 +186,24 @@ export async function editInteractionReply(
       allowed_mentions: sanitizeMentions(payload.allowed_mentions ?? { parse: [] }),
     },
   );
+  return sent !== null;
+}
+
+/**
+ * A further message on an interaction, after its first response — e.g. telling the clicker why a
+ * deferred button press did nothing. Same interaction-token auth and override exemption as above.
+ */
+export async function sendInteractionFollowUp(
+  applicationId: string,
+  interactionToken: string,
+  payload: DiscordMessage & { ephemeral?: boolean },
+): Promise<boolean> {
+  const { ephemeral, ...rest } = payload;
+  const sent = await request(`${API}/webhooks/${applicationId}/${encodeURIComponent(interactionToken)}`, 'POST', {
+    ...rest,
+    allowed_mentions: sanitizeMentions(rest.allowed_mentions ?? { parse: [] }),
+    ...(ephemeral ? { flags: 1 << 6 } : {}),
+  });
   return sent !== null;
 }
 

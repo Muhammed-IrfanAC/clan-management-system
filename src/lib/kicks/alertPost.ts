@@ -1,5 +1,6 @@
-import type { DiscordEmbedField, DiscordMessage } from '@/lib/discord/types';
+import { ButtonStyle, type DiscordEmbedField, type DiscordMessage } from '@/lib/discord/types';
 import { LEADERSHIP_ROLE_ID } from '@/lib/discord/roles';
+import { encodeCustomId } from '@/lib/discord/interactions/customId';
 
 /**
  * PURE renderer for the "a kicked player is back" alert. `arrivals.ts` is the DB/send half.
@@ -8,7 +9,17 @@ import { LEADERSHIP_ROLE_ID } from '@/lib/discord/roles';
  * the Leadership role so someone acts on it — never the player: the point is that leadership
  * notices, not that the player is called out. The ping sits in plain `content`, because a mention
  * inside an embed renders but never notifies.
+ *
+ * Through the bot it carries two buttons (`interactions/commands/kickButtons.ts`): "Handled" stamps
+ * the alert with who dealt with it, and "Welcome back" takes the entry off the kick list after a
+ * confirmation. Through a webhook it arrives without them and the footer still says where to go.
  */
+
+export const KICK_NS = 'kick';
+const VERSION = 1;
+
+export const kickButtonId = (action: 'handled' | 'remove' | 'confirm', ...args: string[]) =>
+  encodeCustomId(KICK_NS, VERSION, [action, ...args]);
 
 const COLOR_ALERT = 0xef4444;
 const FIELD_LIMIT = 1024;
@@ -71,6 +82,15 @@ export function renderKickedArrival(p: KickedArrivalPost): DiscordMessage {
         color: COLOR_ALERT,
         fields,
         footer: { text: 'ClanOps · kick list — remove the entry there if they are welcome back' },
+      },
+    ],
+    components: [
+      {
+        type: 1,
+        components: [
+          { type: 2, style: ButtonStyle.SUCCESS, label: 'Handled', custom_id: kickButtonId('handled') },
+          { type: 2, style: ButtonStyle.SECONDARY, label: 'Welcome back (remove from list)', custom_id: kickButtonId('remove', p.kickedTag) },
+        ],
       },
     ],
   };

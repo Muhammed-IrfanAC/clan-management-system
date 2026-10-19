@@ -1,5 +1,6 @@
-import type { DiscordMessage } from '@/lib/discord/types';
+import type { DiscordActionRow, DiscordMessage } from '@/lib/discord/types';
 import { LEADERSHIP_ROLE_ID } from '@/lib/discord/roles';
+import { encodeCustomId } from '@/lib/discord/interactions/customId';
 
 /**
  * PURE half of the "an unlinked player joined" alert. `joinAlert.ts` is the DB/send half.
@@ -11,7 +12,19 @@ import { LEADERSHIP_ROLE_ID } from '@/lib/discord/roles';
  *
  * The ping sits in plain `content`, not the embed: a mention inside an embed renders but never
  * notifies, and the notification is the point.
+ *
+ * Through the bot the alert carries a "Link…" select of its joiners (`interactions/commands/
+ * unlinkedLink.ts`): picking one opens a short form — an alt of somebody, or a new person — and each
+ * link is stamped onto the alert and drops out of the select, so what is left is what is still open.
  */
+
+export const UNLINKED_NS = 'unl';
+const VERSION = 1;
+/** Discord allows at most 25 options in a select. */
+const MAX_OPTIONS = 25;
+
+export const unlinkedPickId = () => encodeCustomId(UNLINKED_NS, VERSION, ['pick']);
+export const unlinkedLinkId = (tag: string) => encodeCustomId(UNLINKED_NS, VERSION, ['link', tag]);
 
 const COLOR_ALERT = 0xf59e0b;
 // Discord caps an embed description at 4096 characters; a line is well under 100, so this leaves room.
@@ -75,5 +88,22 @@ export function renderUnlinkedJoins(clanName: string, joiners: UnlinkedJoiner[])
         footer: { text: 'ClanOps · link them to a person under Members → Unlinked Accounts' },
       },
     ],
+    components: linkSelect(joiners),
   };
+}
+
+function linkSelect(joiners: UnlinkedJoiner[]): DiscordActionRow[] {
+  return [{
+    type: 1,
+    components: [{
+      type: 3,
+      custom_id: unlinkedPickId(),
+      placeholder: 'Link an account to a person…',
+      options: joiners.slice(0, MAX_OPTIONS).map((j) => ({
+        label: j.name.slice(0, 100),
+        value: j.tag,
+        description: `${j.tag}${j.thLevel ? ` · TH${j.thLevel}` : ''}`,
+      })),
+    }],
+  }];
 }

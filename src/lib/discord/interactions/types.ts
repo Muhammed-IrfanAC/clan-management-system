@@ -4,7 +4,7 @@
  * https://discord.com/developers/docs/interactions/receiving-and-responding
  */
 
-import type { DiscordMessage } from '../types';
+import type { DiscordActionRow, DiscordEmbed, DiscordMessage } from '../types';
 
 export const InteractionType = {
   PING: 1,
@@ -21,6 +21,7 @@ export const ResponseType = {
   DEFERRED_UPDATE_MESSAGE: 6,
   UPDATE_MESSAGE: 7,
   AUTOCOMPLETE_RESULT: 8,
+  MODAL: 9,
 } as const;
 
 /** Message flag: only the invoking user sees the reply. */
@@ -58,8 +59,17 @@ export type Interaction = {
     component_type?: number;
     values?: string[];
     resolved?: { users?: Record<string, { id: string; username: string }> };
+    /** MODAL_SUBMIT: the modal's rows of text inputs, with what was typed. */
+    components?: { type: number; components: { type: number; custom_id: string; value?: string }[] }[];
   };
-  message?: { id: string };
+  /** The message a component sits on (and, for a modal opened from one, the message behind it). */
+  message?: {
+    id: string;
+    channel_id?: string;
+    content?: string;
+    embeds?: DiscordEmbed[];
+    components?: DiscordActionRow[];
+  };
 };
 
 /** The invoking Discord user's id, wherever Discord put it. */
@@ -77,8 +87,34 @@ export function focusedOption(i: Interaction): CommandOption | undefined {
   return i.data?.options?.find((o) => o.focused);
 }
 
+/** A submitted modal's text input by custom id, trimmed; undefined when absent or blank. */
+export function modalValue(i: Interaction, customId: string): string | undefined {
+  for (const row of i.data?.components ?? []) {
+    const input = row.components.find((c) => c.custom_id === customId);
+    if (input) return input.value?.trim() || undefined;
+  }
+  return undefined;
+}
+
 /** A reply as a handler states it; `ephemeral` maps to the message flag. */
-export type Reply = DiscordMessage & { ephemeral?: boolean; components?: unknown[] };
+export type Reply = DiscordMessage & { ephemeral?: boolean };
+
+export const TextInputStyle = { SHORT: 1, PARAGRAPH: 2 } as const;
+
+/** A modal: up to five text inputs, one per row. Its submit arrives as MODAL_SUBMIT on `customId`. */
+export type Modal = {
+  customId: string;
+  title: string;
+  inputs: {
+    customId: string;
+    label: string;
+    style?: (typeof TextInputStyle)[keyof typeof TextInputStyle];
+    required?: boolean;
+    value?: string;
+    placeholder?: string;
+    maxLength?: number;
+  }[];
+};
 
 /**
  * What a handler asks the router to do.
@@ -86,12 +122,17 @@ export type Reply = DiscordMessage & { ephemeral?: boolean; components?: unknown
  *  - `defer`: acknowledge now ("thinking…") and finish `work` in the background, editing the reply in.
  *    Anything that touches the CoC API, or might be slow on a cold start, defers.
  *  - `update`: replace the message a component was clicked on (buttons, selects).
+ *  - `deferUpdate`: acknowledge a click now and replace that message with `work`'s result later —
+ *    the `update` for anything that writes to the DB or posts elsewhere first.
+ *  - `modal`: open a form (only in answer to a command or a component, never to a modal submit).
  *  - `choices`: autocomplete suggestions.
  */
 export type HandlerResult =
   | { kind: 'reply'; reply: Reply }
   | { kind: 'defer'; ephemeral: boolean; work: () => Promise<Reply> }
   | { kind: 'update'; reply: Reply }
+  | { kind: 'deferUpdate'; work: () => Promise<Reply> }
+  | { kind: 'modal'; modal: Modal }
   | { kind: 'choices'; choices: { name: string; value: string }[] };
 
 export const reply = (r: Reply): HandlerResult => ({ kind: 'reply', reply: r });

@@ -31,13 +31,21 @@ function deps(over: Partial<RouterDeps> = {}): RouterDeps {
   const broken: CommandHandler = { name: 'broken', run: async () => { throw new Error('boom'); } };
   const button: ComponentHandler = {
     namespace: 'btn',
-    run: async (_i, _a, id) => ({ kind: 'update', reply: { content: `clicked ${id.args.join(',')}` } }),
+    run: async (_i, _a, id) => {
+      if (id.args[0] === 'slow') return { kind: 'deferUpdate', work: async () => ({ content: 'stamped', components: [] }) };
+      if (id.args[0] === 'crash') return { kind: 'deferUpdate', work: async () => { throw new Error('boom'); } };
+      if (id.args[0] === 'form') {
+        return { kind: 'modal', modal: { customId: 'btn:v1:submit', title: 'Form', inputs: [{ customId: 'name', label: 'Name', value: 'Bob' }] } };
+      }
+      return { kind: 'update', reply: { content: `clicked ${id.args.join(',')}` } };
+    },
   };
   return {
     resolveActor: vi.fn(async () => LEADER),
     commands: new Map([echo, slow, broken].map((c) => [c.name, c])),
     components: new Map([[button.namespace, button]]),
     editReply: vi.fn(async () => true),
+    followUp: vi.fn(async () => true),
     ...over,
   };
 }
@@ -98,5 +106,37 @@ describe('routeInteraction', () => {
       data: { allowed_mentions: { parse: [] }, content: 'clicked a,b' },
     });
     expect(((await click('gone:v1')).body.data as { content: string }).content).toMatch(/no longer active/);
+  });
+
+  it('acknowledges a slow click, then edits the clicked message', async () => {
+    const d = deps();
+    const { body, background } = await routeInteraction(
+      interaction({ type: InteractionType.MESSAGE_COMPONENT, data: { custom_id: 'btn:v1:slow' } }), d);
+    expect(body).toEqual({ type: ResponseType.DEFERRED_UPDATE_MESSAGE });
+    await background!();
+    expect(d.editReply).toHaveBeenCalledWith('app', 'tok', { content: 'stamped', components: [] });
+  });
+
+  it('leaves the clicked message alone when the deferred work fails, and tells the clicker', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const d = deps();
+    const { background } = await routeInteraction(
+      interaction({ type: InteractionType.MESSAGE_COMPONENT, data: { custom_id: 'btn:v1:crash' } }), d);
+    await background!();
+    expect(d.editReply).not.toHaveBeenCalled();
+    expect(d.followUp).toHaveBeenCalledWith('app', 'tok', expect.objectContaining({ ephemeral: true }));
+  });
+
+  it('opens a modal with one text input per row', async () => {
+    const { body } = await routeInteraction(
+      interaction({ type: InteractionType.MESSAGE_COMPONENT, data: { custom_id: 'btn:v1:form' } }), deps());
+    expect(body).toEqual({
+      type: ResponseType.MODAL,
+      data: {
+        custom_id: 'btn:v1:submit',
+        title: 'Form',
+        components: [{ type: 1, components: [{ type: 4, custom_id: 'name', label: 'Name', style: 1, required: false, value: 'Bob' }] }],
+      },
+    });
   });
 });

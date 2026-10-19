@@ -11,4 +11,6 @@ export type { ChannelPurpose, Destination, DiscordEmbed, DiscordEmbedField, Disc
 export { normalizeChannelId, normalizeDiscordId } from './format';
 export { botConfigured, destinationForClan, invalidateDiscordRouteCache } from './routing';
 export { discordIdsForAccountTags, discordUserIdForPerson } from './identity';
-export { discordBotRequest, editInteractionReply, postOrEditDiscordMessage, sendDiscordMessage } from './transport';
+export {
+  discordBotRequest, editInteractionReply, postOrEditDiscordMessage, sendDiscordMessage, sendInteractionFollowUp,
+} from './transport';

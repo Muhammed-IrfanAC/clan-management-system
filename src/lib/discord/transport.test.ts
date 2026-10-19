@@ -59,6 +59,14 @@ describe('sendDiscordMessage', () => {
     expect(calls[0].body).toEqual({ username: 'ClanOps', content: 'hi', allowed_mentions: { parse: [] } });
   });
 
+  it('sends buttons through the bot, and drops them for a webhook, which cannot carry them', async () => {
+    const components = [{ type: 1 as const, components: [{ type: 2 as const, style: 1 as const, label: 'Go', custom_id: 'x:v1' }] }];
+    await sendDiscordMessage({ content: 'hi', components }, { kind: 'channel', channelId: CH });
+    await sendDiscordMessage({ content: 'hi', components }, { kind: 'webhook', url: HOOK });
+    expect(calls[0].body!.components).toEqual(components);
+    expect(calls[1].body).toEqual({ username: 'ClanOps', content: 'hi', allowed_mentions: { parse: [] } });
+  });
+
   it('redirects to the override and labels a bot message as test routing', async () => {
     h.override = { kind: 'channel', channelId: CH };
     await sendDiscordMessage({ content: 'hi' }, { kind: 'webhook', url: HOOK });

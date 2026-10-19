@@ -10,13 +10,18 @@
 import type { Actor } from './actor';
 import { decodeCustomId } from './customId';
 import type { CommandHandler, ComponentHandler } from './commands/registry';
-import { EPHEMERAL, InteractionType, ResponseType, invokerId, type HandlerResult, type Interaction, type Reply } from './types';
+import {
+  EPHEMERAL, InteractionType, ResponseType, TextInputStyle, invokerId,
+  type HandlerResult, type Interaction, type Modal, type Reply,
+} from './types';
 
 export type RouterDeps = {
   resolveActor(discordUserId: string): Promise<Actor>;
   commands: Map<string, CommandHandler>;
   components: Map<string, ComponentHandler>;
   editReply(applicationId: string, token: string, reply: Reply): Promise<boolean>;
+  /** An extra, ephemeral message to the clicker — how a failed `deferUpdate` is reported. */
+  followUp(applicationId: string, token: string, reply: Reply): Promise<boolean>;
 };
 
 export type Routed = { body: Record<string, unknown>; background?: () => Promise<void> };
@@ -86,22 +91,65 @@ function toResponse(interaction: Interaction, result: HandlerResult, deps: Route
       return { body: { type: ResponseType.UPDATE_MESSAGE, data: data(result.reply) } };
     case 'choices':
       return { body: { type: ResponseType.AUTOCOMPLETE_RESULT, data: { choices: result.choices.slice(0, 25) } } };
+    case 'modal':
+      return { body: { type: ResponseType.MODAL, data: modalData(result.modal) } };
     case 'defer':
       return {
         body: { type: ResponseType.DEFERRED_CHANNEL_MESSAGE, data: result.ephemeral ? { flags: EPHEMERAL } : {} },
-        background: async () => {
-          let reply: Reply;
-          try {
-            reply = await result.work();
-          } catch (err) {
-            console.error(`Discord deferred interaction ${interaction.data?.name ?? interaction.data?.custom_id} failed:`, err);
-            reply = { content: SOMETHING_WRONG };
-          }
-          // The ephemeral flag was fixed by the deferral; an edit cannot change it.
-          const { ephemeral: _ignored, ...rest } = reply;
-          void _ignored;
-          await deps.editReply(interaction.application_id, interaction.token, rest);
-        },
+        background: background(interaction, result.work, deps, { content: SOMETHING_WRONG }),
+      };
+    case 'deferUpdate':
+      return {
+        body: { type: ResponseType.DEFERRED_UPDATE_MESSAGE },
+        // The edit replaces the clicked message, so a failure must not wipe it: it is left as it was
+        // (buttons included, so the click can be retried) and the clicker is told privately.
+        background: background(interaction, result.work, deps, null),
       };
   }
+}
+
+/** Run deferred work, then edit the original response (the reply, or the clicked message) with it. */
+function background(
+  interaction: Interaction,
+  work: () => Promise<Reply>,
+  deps: RouterDeps,
+  onError: Reply | null,
+): () => Promise<void> {
+  return async () => {
+    let reply: Reply;
+    try {
+      reply = await work();
+    } catch (err) {
+      console.error(`Discord deferred interaction ${interaction.data?.name ?? interaction.data?.custom_id} failed:`, err);
+      if (!onError) {
+        await deps.followUp(interaction.application_id, interaction.token, { content: SOMETHING_WRONG, ephemeral: true });
+        return;
+      }
+      reply = onError;
+    }
+    // The ephemeral flag was fixed by the deferral; an edit cannot change it.
+    const { ephemeral: _ignored, ...rest } = reply;
+    void _ignored;
+    await deps.editReply(interaction.application_id, interaction.token, rest);
+  };
+}
+
+function modalData(m: Modal): Record<string, unknown> {
+  return {
+    custom_id: m.customId,
+    title: m.title,
+    components: m.inputs.map((input) => ({
+      type: 1,
+      components: [{
+        type: 4,
+        custom_id: input.customId,
+        label: input.label,
+        style: input.style ?? TextInputStyle.SHORT,
+        required: input.required ?? false,
+        ...(input.value ? { value: input.value } : {}),
+        ...(input.placeholder ? { placeholder: input.placeholder } : {}),
+        ...(input.maxLength ? { max_length: input.maxLength } : {}),
+      }],
+    })),
+  };
 }
