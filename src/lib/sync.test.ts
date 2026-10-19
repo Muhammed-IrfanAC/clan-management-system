@@ -28,7 +28,7 @@ vi.mock('@/lib/rules/scan', () => ({ scanRuleViolations: vi.fn(async () => null)
 // read the messages it would have sent.
 vi.mock('@/lib/discord', () => ({
   sendDiscordMessage: (...args: unknown[]) => h.send(...args),
-  webhookUrlForClan: vi.fn(async () => 'https://discord.test/hook'),
+  destinationForClan: vi.fn(async () => 'https://discord.test/hook'),
 }));
 
 import { syncClan, runFullSync } from './sync';

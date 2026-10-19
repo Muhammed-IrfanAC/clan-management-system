@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase';
-import { sendDiscordMessage, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
+import { sendDiscordMessage, destinationForClan, discordUserIdForPerson } from '@/lib/discord';
 import { renderStrikePost } from './strikePost';
 import { loadStrikeNotifyContext } from './notify-context';
 import { planStrikes, type PlannedStrike } from './plan';
@@ -199,7 +199,7 @@ export async function commitReviewStrike(params: {
         level: ctx.level,
         activeStrikes: ctx.activeStrikes,
         mentionDiscordId: await discordUserIdForPerson(personId),
-      }), await webhookUrlForClan(clanId));
+      }), await destinationForClan(clanId));
     } catch (err) {
       console.error('Review strike Discord notify failed (non-fatal):', err);
     }
@@ -225,7 +225,7 @@ async function notifyNewStrikes(rule: StrikeRule, newStrikes: PlannedStrike[]): 
         level: ctx.level,
         activeStrikes: ctx.activeStrikes,
         mentionDiscordId: await discordUserIdForPerson(p.personId),
-      }), await webhookUrlForClan(p.clanId));
+      }), await destinationForClan(p.clanId));
     } catch (err) {
       console.error('Strike Discord notify failed (non-fatal):', err);
     }

@@ -7,7 +7,7 @@
  */
 
 import { supabase } from '@/lib/supabase';
-import { sendDiscordMessage, webhookUrlForClan } from '@/lib/discord';
+import { sendDiscordMessage, destinationForClan } from '@/lib/discord';
 import type { ClanArrival } from '@/lib/kicks/watch';
 import { renderUnlinkedJoins, selectUnlinkedJoins, type UnlinkedAccount } from './joinPost';
 
@@ -41,7 +41,7 @@ export async function alertUnlinkedArrivals(arrivals: ClanArrival[]): Promise<{ 
   for (const [clanId, joiners] of byClan) {
     matched += joiners.length;
     const message = renderUnlinkedJoins(clanName.get(clanId) || 'a family clan', joiners);
-    if (await sendDiscordMessage(message, await webhookUrlForClan(clanId, 'unlinked'))) alerted += joiners.length;
+    if (await sendDiscordMessage(message, await destinationForClan(clanId, 'unlinked'))) alerted += joiners.length;
   }
   return { matched, alerted };
 }

@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Radio, AlertTriangle, Megaphone, ShieldAlert, UserPlus } from 'lucide-react';
-import { useSettingsStore } from '@/lib/stores/settingsStore';
+import { Radio, AlertTriangle, Megaphone, ShieldAlert, UserPlus, Bot, CheckCircle2, XCircle } from 'lucide-react';
+import { useSettingsStore, type DiscordChannelField } from '@/lib/stores/settingsStore';
 
 /**
  * The notification ROUTING OVERRIDE control (migration 027).
@@ -21,6 +21,10 @@ import { useSettingsStore } from '@/lib/stores/settingsStore';
  *
  * And the UNLINKED-JOIN channel (migration 036) — an alert pinging the Leadership role when a player
  * with no linked person joins a family clan. Unset, it inherits the leadership channel.
+ *
+ * Every route also takes a BOT CHANNEL ID (migration 037). With the bot configured, a route that has
+ * one posts there through the bot and its webhook goes unused; clearing it hands the route back to
+ * the webhook. That makes the move off webhooks one channel at a time.
  *
  * The URL fields are WRITE-ONLY. What comes back from the API is a masked fingerprint, because a
  * webhook URL is a credential — see the route's doc block. Typing a new value replaces it; leaving
@@ -44,6 +48,7 @@ export default function DiscordRoutingCard() {
   if (!route) return null; // not loaded, or the actor lacks leader.manage
 
   const active = route.enabled;
+  const overrideReady = route.configured || (route.botConfigured && !!route.overrideChannelId);
 
   return (
     <div
@@ -73,7 +78,10 @@ export default function DiscordRoutingCard() {
           : 'Notifications fan out to each clan’s own channel. Turn the override on to send everything to one private channel instead.'}
       </p>
 
+      <BotStatus />
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <ChannelIdField field="overrideChannelId" label="Override bot channel" />
         <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
           Override webhook URL
           {route.configured && (
@@ -107,14 +115,14 @@ export default function DiscordRoutingCard() {
           <button
             className={`btn ${active ? 'btn-primary' : 'btn-outline'}`}
             style={{ fontSize: '0.75rem', padding: 'var(--space-xs) var(--space-md)' }}
-            disabled={saving || (!active && !route.configured)}
+            disabled={saving || (!active && !overrideReady)}
             onClick={() => saveDiscordRoute({ enabled: !active })}
           >
             {active ? 'REDIRECT ON' : 'REDIRECT OFF'}
           </button>
-          {!route.configured && (
+          {!overrideReady && (
             <span className="text-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem' }}>
-              <AlertTriangle size={13} /> Set a webhook URL first.
+              <AlertTriangle size={13} /> Set a webhook URL{route.botConfigured ? ' or bot channel' : ''} first.
             </span>
           )}
         </div>
@@ -133,6 +141,7 @@ export default function DiscordRoutingCard() {
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <ChannelIdField field="announcementChannelId" label="Announcement bot channel" />
         <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
           Announcement webhook URL
           {route.announcementConfigured && (
@@ -191,6 +200,7 @@ export default function DiscordRoutingCard() {
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <ChannelIdField field="leadershipChannelId" label="Leadership bot channel" />
         <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
           Leadership webhook URL
           {route.leadershipConfigured && (
@@ -243,6 +253,7 @@ export default function DiscordRoutingCard() {
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+        <ChannelIdField field="unlinkedChannelId" label="Unlinked-join bot channel" />
         <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
           Unlinked-join webhook URL
           {route.unlinkedConfigured && (
@@ -286,5 +297,98 @@ export default function DiscordRoutingCard() {
         </p>
       </div>
     </div>
+  );
+}
+
+/**
+ * Whether the bot can post here, and a check that it can SEE every channel it has been given — the
+ * one thing a channel id cannot prove by being saved. Fail-safe sending would otherwise swallow a
+ * channel the bot was never invited to.
+ */
+function BotStatus() {
+  const route = useSettingsStore((s) => s.discordRoute);
+  const check = useSettingsStore((s) => s.discordCheck);
+  const checking = useSettingsStore((s) => s.checkingDiscord);
+  const checkDiscordChannels = useSettingsStore((s) => s.checkDiscordChannels);
+  if (!route) return null;
+
+  return (
+    <div style={{ marginBottom: 'var(--space-lg)', padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+        <Bot size={16} style={{ color: route.botConfigured ? 'var(--color-cta)' : 'var(--color-muted)' }} />
+        <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+          {route.botConfigured ? 'Bot connected' : 'Bot not configured'}
+        </span>
+        <span className="text-muted" style={{ fontSize: '0.75rem', flex: '1 1 240px' }}>
+          {route.botConfigured
+            ? 'Routes with a bot channel post through the bot; the rest still use their webhook.'
+            : 'DISCORD_BOT_TOKEN is not set, so every route uses its webhook. Bot channels can be saved now and take over once it is.'}
+        </span>
+        {route.botConfigured && (
+          <button className="btn btn-outline" style={{ fontSize: '0.7rem' }} disabled={checking} onClick={checkDiscordChannels}>
+            {checking ? 'Checking…' : 'Check channel access'}
+          </button>
+        )}
+      </div>
+      {check && (
+        <ul style={{ listStyle: 'none', padding: 0, margin: 'var(--space-sm) 0 0', fontSize: '0.75rem' }}>
+          {check.checks.length === 0 && <li className="text-muted">No bot channels are set yet.</li>}
+          {check.checks.map((c) => (
+            <li key={`${c.label}-${c.channelId}`} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0' }}>
+              {c.ok
+                ? <CheckCircle2 size={13} style={{ color: 'var(--color-cta)' }} />
+                : <XCircle size={13} style={{ color: 'var(--color-danger)' }} />}
+              <span style={{ fontWeight: 600 }}>{c.label}</span>
+              <span className="text-muted">{c.ok ? `#${c.name}` : c.error}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** One route's bot channel id. Accepts a bare id, a `<#id>` mention or a channel link. */
+function ChannelIdField({ field, label }: { field: DiscordChannelField; label: string }) {
+  const current = useSettingsStore((s) => s.discordRoute?.[field] ?? null);
+  const saving = useSettingsStore((s) => s.savingDiscordRoute);
+  const saveDiscordRoute = useSettingsStore((s) => s.saveDiscordRoute);
+  const [value, setValue] = useState('');
+
+  return (
+    <>
+      <label style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+        {label}
+        {current && (
+          <span style={{ marginLeft: 6, fontVariantNumeric: 'tabular-nums' }}>
+            · currently <code style={{ fontSize: '0.7rem' }}>{current}</code>
+          </span>
+        )}
+      </label>
+      <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', marginBottom: 'var(--space-sm)' }}>
+        <input
+          className="input"
+          style={{ flex: '1 1 320px' }}
+          autoComplete="off"
+          placeholder="Channel id or link (right-click the channel → Copy Link)"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <button
+          className="btn btn-outline"
+          disabled={saving || !value.trim()}
+          onClick={async () => {
+            if (await saveDiscordRoute({ [field]: value.trim() })) setValue('');
+          }}
+        >
+          Save channel
+        </button>
+        {current && (
+          <button className="btn btn-outline" disabled={saving} onClick={() => saveDiscordRoute({ [field]: '' })}>
+            Clear
+          </button>
+        )}
+      </div>
+    </>
   );
 }

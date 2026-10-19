@@ -8,7 +8,7 @@
  */
 
 import { supabase } from '@/lib/supabase';
-import { sendDiscordMessage, webhookUrlForClan } from '@/lib/discord';
+import { sendDiscordMessage, destinationForClan } from '@/lib/discord';
 import { loadWatchContext, namesForTags } from './kickList';
 import { matchKickedArrivals, type ClanArrival, type KickRow } from './watch';
 import { renderKickedArrival } from './alertPost';
@@ -51,7 +51,7 @@ export async function alertKickedArrivals(arrivals: ClanArrival[]): Promise<{ ma
       kickedByName: kickerNames.get(m.kick.kicked_by) || m.kick.kicked_by,
       comment: m.kick.comment,
     });
-    if (await sendDiscordMessage(message, await webhookUrlForClan(m.clanId, 'leadership'))) alerted++;
+    if (await sendDiscordMessage(message, await destinationForClan(m.clanId, 'leadership'))) alerted++;
   }
   return { matched: matches.length, alerted };
 }

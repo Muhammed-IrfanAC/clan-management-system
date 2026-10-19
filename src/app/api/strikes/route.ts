@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
-import { sendDiscordMessage, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
+import { sendDiscordMessage, destinationForClan, discordUserIdForPerson } from '@/lib/discord';
 import { renderStrikePost } from '@/lib/strikes/strikePost';
 import { loadStrikeNotifyContext } from '@/lib/strikes/notify-context';
 
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
         level: ctx.level,
         activeStrikes: ctx.activeStrikes,
         mentionDiscordId: await discordUserIdForPerson(personId),
-      }), await webhookUrlForClan(account?.clan_id));
+      }), await destinationForClan(account?.clan_id));
     } catch (notifyErr) {
       console.error('Manual strike Discord notification failed (non-fatal):', notifyErr);
     }

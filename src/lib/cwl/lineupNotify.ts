@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { diffLineup, type PlannedSlot, type ActualSlot, type LineupDiff } from './lineup';
 import { diffFieldedLineups, type FieldedSlot } from './lineupChange';
-import { discordIdsForAccountTags, sendDiscordMessage, webhookUrlForClan } from '@/lib/discord';
+import { discordIdsForAccountTags, sendDiscordMessage, destinationForClan } from '@/lib/discord';
 import { renderLineupSwap, renderRoundLineup } from './lineupPost';
 
 /**
@@ -160,7 +160,7 @@ export async function notifyLineupIfRevealed(params: {
       diff,
       basis: prev ? 'previous_round' : 'plan',
       swappedInMentions,
-    }), await webhookUrlForClan(clanId));
+    }), await destinationForClan(clanId));
 
     if (sent) {
       await supabase
@@ -248,7 +248,7 @@ export async function recordLineupChange(params: {
       swappedOut: change.swappedOut,
       swappedInMentions,
     });
-    if (message) await sendDiscordMessage(message, await webhookUrlForClan(clanId));
+    if (message) await sendDiscordMessage(message, await destinationForClan(clanId));
   } catch (err) {
     console.error(`CWL lineup change record failed for round ${roundId} (non-fatal):`, err);
   }

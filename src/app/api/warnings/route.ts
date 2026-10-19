@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
-import { sendDiscordMessage, webhookUrlForClan, discordUserIdForPerson } from '@/lib/discord';
+import { sendDiscordMessage, destinationForClan, discordUserIdForPerson } from '@/lib/discord';
 import { renderWarningPost } from '@/lib/warnings/warningPost';
 
 export async function GET(request: NextRequest) {
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
         loggedBy: loggedByName,
         // @-mention the warned member when their persona has a linked Discord id (null => no ping).
         mentionDiscordId: await discordUserIdForPerson(personId),
-      }), await webhookUrlForClan(account?.clan_id));
+      }), await destinationForClan(account?.clan_id));
     } catch (notifyErr) {
       console.error('Warning Discord notification failed (non-fatal):', notifyErr);
     }

@@ -2,7 +2,7 @@ import { supabase } from '@/lib/supabase';
 import {
   discordIdsForAccountTags,
   postOrEditDiscordMessage,
-  webhookUrlForClan,
+  destinationForClan,
   type DiscordMessage,
 } from '@/lib/discord';
 import {
@@ -192,7 +192,7 @@ export async function postSeasonRoster(seasonId: string): Promise<PostResult> {
 
   for (const clan of posts.clans) {
     const messageId = await postOrEditDiscordMessage(clan.message, {
-      webhookUrl: await webhookUrlForClan(clan.clanId, 'announcement'),
+      destination: await destinationForClan(clan.clanId, 'announcement'),
       messageId: clan.messageId,
     });
     if (!messageId) {
@@ -210,12 +210,12 @@ export async function postSeasonRoster(seasonId: string): Promise<PostResult> {
     }
   }
 
-  // The digest has no clan of its own, so it goes to the global DISCORD_WEBHOOK_URL — the family-wide
-  // channel. (While the routing override is on, so does everything else.) Deliberately NOT routed as
+  // The digest has no clan of its own, so it goes to the global fallback (DISCORD_DEFAULT_CHANNEL_ID /
+  // DISCORD_WEBHOOK_URL) — the family-wide channel. (While the routing override is on, so does everything else.) Deliberately NOT routed as
   // an announcement: it reports shortfalls and unassigned accounts, which is leadership's read on how
   // the roster went, not something to publish to the family.
   const digestId = await postOrEditDiscordMessage(posts.digest, {
-    webhookUrl: null,
+    destination: null,
     messageId: posts.digestMessageId,
   });
   if (!digestId) {
@@ -250,7 +250,7 @@ export async function postTransferCall(seasonId: string, opts: { auto?: boolean 
     // Sent fresh, never edited: editing a message does not re-notify anyone, and the whole purpose
     // of this message is the notification. A group with no source clan goes family-wide.
     const messageId = await postOrEditDiscordMessage(group.message, {
-      webhookUrl: group.fromClanId ? await webhookUrlForClan(group.fromClanId) : null,
+      destination: group.fromClanId ? await destinationForClan(group.fromClanId) : null,
     });
     if (messageId) result.posted += 1;
     else result.failed.push(group.fromClanName || 'family-wide transfer call');

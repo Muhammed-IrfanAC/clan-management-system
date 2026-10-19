@@ -38,7 +38,19 @@ export type DiscordRoute = {
   // The unlinked-join channel (migration 036). Not configured = inherits the leadership channel.
   maskedUnlinkedUrl: string | null;
   unlinkedConfigured: boolean;
+  // Bot routing (migration 037). Each channel id is preferred over its webhook while the bot is
+  // configured; without DISCORD_BOT_TOKEN they are stored but unused.
+  botConfigured: boolean;
+  overrideChannelId: string | null;
+  announcementChannelId: string | null;
+  leadershipChannelId: string | null;
+  unlinkedChannelId: string | null;
 };
+
+export type DiscordChannelField = 'overrideChannelId' | 'announcementChannelId' | 'leadershipChannelId' | 'unlinkedChannelId';
+
+// One row of the bot's channel-access check (POST /api/settings/discord-route/check).
+export type DiscordChannelCheck = { label: string; channelId: string; ok: boolean; name?: string; error?: string };
 
 export type NewClan = { tag: string; name: string; type: string };
 export type NewRule = { name: string; description: string; guidance: string };
@@ -72,13 +84,18 @@ function byPerson(accts: AcctRow[]): Map<string, LeaderRow> {
 // both the initial load (with a loading flash) and post-mutation refreshes (silent) can reuse it.
 // Discord channel routing is configured through its own masked API route, not the generic settings
 // blob: a webhook URL is a secret (holding it is enough to post as the bot), so it must never reach
-// the browser. Every one of these keys is filtered out here and rendered by their own control.
+// the browser. Every one of these keys is filtered out here and rendered by their own control — the
+// bot channel ids (migration 037) too, which are not secret but belong to the same control.
 export const DISCORD_ROUTE_KEYS = [
   'discord_override_enabled',
   'discord_override_webhook_url',
+  'discord_override_channel_id',
   'discord_announcement_webhook_url',
+  'discord_announcement_channel_id',
   'discord_leadership_webhook_url',
+  'discord_leadership_channel_id',
   'discord_unlinked_webhook_url',
+  'discord_unlinked_channel_id',
 ];
 
 async function loadAll() {
@@ -149,7 +166,11 @@ type SettingsState = {
     announcementWebhookUrl?: string;
     leadershipWebhookUrl?: string;
     unlinkedWebhookUrl?: string;
-  }) => Promise<boolean>;
+  } & Partial<Record<DiscordChannelField, string>>) => Promise<boolean>;
+  discordCheck: { bot: string | null; checks: DiscordChannelCheck[] } | null;
+  checkingDiscord: boolean;
+  checkDiscordChannels: () => Promise<void>;
+  updateClanChannel: (id: string, channelId: string) => Promise<boolean>;
 
   addClan: (form: NewClan) => Promise<boolean>;
   removeClan: (id: string) => Promise<void>;
@@ -180,6 +201,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   discordRoute: null,
   savingDiscordRoute: false,
+  discordCheck: null,
+  checkingDiscord: false,
 
   setToast: (toast) => set({ toast }),
 
@@ -240,7 +263,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const next = body as DiscordRoute;
       // Report what the leader just changed, not the whole routing posture: saving an announcement
       // channel while the override happens to be on must not read as "the override was saved".
-      const message = patch.announcementWebhookUrl !== undefined
+      const channelField = (Object.keys(patch) as string[]).find((k) => k.endsWith('ChannelId'));
+      const message = channelField
+        ? next[channelField as DiscordChannelField]
+          ? 'Bot channel saved.'
+          : 'Bot channel cleared — that route uses its webhook again.'
+        : patch.announcementWebhookUrl !== undefined
         ? next.announcementConfigured
           ? 'Announcements will post to the announcement channel.'
           : 'Announcement channel cleared — announcements go to each clan’s channel.'
@@ -301,6 +329,43 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ toast: { message: 'Clan removed.', type: 'success' } });
     } catch (err) {
       set({ toast: { message: err instanceof Error ? err.message : 'Error removing clan', type: 'error' } });
+    }
+  },
+
+  // Run the bot's channel-access check. Not optimistic: the result IS the server's answer.
+  async checkDiscordChannels() {
+    if (get().checkingDiscord) return;
+    set({ checkingDiscord: true });
+    try {
+      const res = await fetch('/api/settings/discord-route/check', { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || 'Error checking Discord channels');
+      set({ discordCheck: body });
+    } catch (err) {
+      set({ toast: { message: err instanceof Error ? err.message : 'Error checking Discord channels', type: 'error' } });
+    } finally {
+      set({ checkingDiscord: false });
+    }
+  },
+
+  // Set (or clear, with '') a clan's bot channel. Splices the normalised id the server stored.
+  async updateClanChannel(id, channelId) {
+    try {
+      const res = await fetch(`/api/clans/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ discord_channel_id: channelId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || 'Error updating clan channel');
+      set({
+        clans: get().clans.map((c) => (c.id === id ? { ...c, discord_channel_id: body.discord_channel_id ?? null } : c)),
+        toast: { message: body.discord_channel_id ? 'Clan channel saved.' : 'Clan channel cleared.', type: 'success' },
+      });
+      return true;
+    } catch (err) {
+      set({ toast: { message: err instanceof Error ? err.message : 'Error updating clan channel', type: 'error' } });
+      return false;
     }
   },
 

@@ -38,5 +38,21 @@ export function truncateField(value: string): string {
  */
 export function normalizeDiscordId(raw?: string | null): string | null {
   const id = (raw || '').trim().replace(/^<@!?/, '').replace(/>$/, '');
-  return /^\d{15,25}$/.test(id) ? id : null;
+  return isSnowflake(id) ? id : null;
+}
+
+/**
+ * A channel id as a leader is likely to paste it: the bare id (Developer Mode → Copy Channel ID), a
+ * channel mention (`<#123>`), or a channel link (`https://discord.com/channels/<guild>/<channel>`,
+ * from Copy Link). Anything else is "not set" rather than a value Discord would reject later.
+ */
+export function normalizeChannelId(raw?: string | null): string | null {
+  const s = (raw || '').trim();
+  const link = s.match(/^https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/\d+\/(\d+)\/?$/);
+  const id = link ? link[1] : s.replace(/^<#/, '').replace(/>$/, '');
+  return isSnowflake(id) ? id : null;
+}
+
+function isSnowflake(id: string): boolean {
+  return /^\d{15,25}$/.test(id);
 }

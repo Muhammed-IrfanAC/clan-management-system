@@ -7,8 +7,8 @@
  * (and `/format`), never from here, because this entry point pulls in the Supabase client.
  */
 
-export type { ChannelPurpose, DiscordEmbed, DiscordEmbedField, DiscordMessage } from './types';
-export { normalizeDiscordId } from './format';
-export { invalidateDiscordRouteCache, webhookUrlForClan } from './routing';
+export type { ChannelPurpose, Destination, DiscordEmbed, DiscordEmbedField, DiscordMessage } from './types';
+export { normalizeChannelId, normalizeDiscordId } from './format';
+export { botConfigured, destinationForClan, invalidateDiscordRouteCache } from './routing';
 export { discordIdsForAccountTags, discordUserIdForPerson } from './identity';
-export { postOrEditDiscordMessage, sendDiscordMessage } from './transport';
+export { discordBotRequest, postOrEditDiscordMessage, sendDiscordMessage } from './transport';

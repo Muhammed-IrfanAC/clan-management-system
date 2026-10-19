@@ -34,3 +34,12 @@ export type DiscordMessage = {
  * leadership too, so it should not leak into a clan channel just because it has no channel yet.
  */
 export type ChannelPurpose = 'default' | 'announcement' | 'leadership' | 'unlinked';
+
+/**
+ * Where a message is delivered: a channel the BOT posts to (by id, with DISCORD_BOT_TOKEN), or a
+ * webhook. Routing resolves one; the transport sends to either. A message posted one way can only be
+ * edited the same way, which the living-message fallback absorbs (see postOrEditDiscordMessage).
+ */
+export type Destination =
+  | { kind: 'channel'; channelId: string }
+  | { kind: 'webhook'; url: string };

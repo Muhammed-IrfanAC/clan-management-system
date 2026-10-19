@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { requireAuth, requireCapability, authErrorResponse } from '@/lib/auth-server';
-import { invalidateDiscordRouteCache } from '@/lib/discord';
+import { botConfigured, invalidateDiscordRouteCache, normalizeChannelId } from '@/lib/discord';
 
 /**
  * Configure Discord channel routing: the NOTIFICATION ROUTING OVERRIDE (migration 027) — the
@@ -16,6 +16,9 @@ import { invalidateDiscordRouteCache } from '@/lib/discord';
  * the store filters the keys out, and this route serves a MASKED form of them for display. The full
  * values are write-only from the client's perspective.
  *
+ * Each of those also takes a BOT CHANNEL ID (migration 037), preferred over its webhook while
+ * DISCORD_BOT_TOKEN is set. A channel id is not a secret and is returned in full.
+ *
  * Gated on `leader.manage`, the same capability that governs the rest of system configuration.
  */
 
@@ -24,6 +27,14 @@ const URL_KEY = 'discord_override_webhook_url';
 const ANNOUNCE_KEY = 'discord_announcement_webhook_url';
 const LEADERSHIP_KEY = 'discord_leadership_webhook_url';
 const UNLINKED_KEY = 'discord_unlinked_webhook_url';
+
+// Bot channel ids (migration 037), keyed by the request field that writes each one.
+const CHANNEL_KEYS = {
+  overrideChannelId: 'discord_override_channel_id',
+  announcementChannelId: 'discord_announcement_channel_id',
+  leadershipChannelId: 'discord_leadership_channel_id',
+  unlinkedChannelId: 'discord_unlinked_channel_id',
+} as const;
 
 const WEBHOOK_RE = /^https:\/\/(canary\.|ptb\.)?discord\.com\/api\/webhooks\//;
 
@@ -40,7 +51,10 @@ function maskWebhook(url: string): string | null {
 }
 
 async function readState() {
-  const { data } = await supabase.from('settings').select('key, value').in('key', [ENABLED_KEY, URL_KEY, ANNOUNCE_KEY, LEADERSHIP_KEY, UNLINKED_KEY]);
+  const { data } = await supabase
+    .from('settings')
+    .select('key, value')
+    .in('key', [ENABLED_KEY, URL_KEY, ANNOUNCE_KEY, LEADERSHIP_KEY, UNLINKED_KEY, ...Object.values(CHANNEL_KEYS)]);
   const rows = new Map((data || []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
   const str = (key: string) => (typeof rows.get(key) === 'string' ? (rows.get(key) as string) : '');
   const url = str(URL_KEY);
@@ -60,6 +74,12 @@ async function readState() {
     maskedUnlinkedUrl: maskWebhook(unlinked),
     // Unset means unlinked-join alerts inherit the leadership channel, then the clan channel.
     unlinkedConfigured: !!unlinked.trim(),
+    // Whether the bot can post at all here; without it the channel ids below are stored but unused.
+    botConfigured: botConfigured(),
+    overrideChannelId: normalizeChannelId(str(CHANNEL_KEYS.overrideChannelId)),
+    announcementChannelId: normalizeChannelId(str(CHANNEL_KEYS.announcementChannelId)),
+    leadershipChannelId: normalizeChannelId(str(CHANNEL_KEYS.leadershipChannelId)),
+    unlinkedChannelId: normalizeChannelId(str(CHANNEL_KEYS.unlinkedChannelId)),
   };
 }
 
@@ -122,15 +142,29 @@ export async function PATCH(request: NextRequest) {
       if (error) throw error;
     }
 
+    // Blank clears a channel id, handing that step back to its webhook. Anything else must parse as
+    // one: a stored id Discord rejects would silently send that step's traffic nowhere.
+    for (const [field, key] of Object.entries(CHANNEL_KEYS)) {
+      if (typeof body?.[field] !== 'string') continue;
+      const raw = (body[field] as string).trim();
+      const id = normalizeChannelId(raw);
+      if (raw && !id) {
+        return NextResponse.json({ error: 'That is not a Discord channel id or channel link' }, { status: 400 });
+      }
+      const { error } = await supabase.from('settings').update({ value: id ?? '' }).eq('key', key);
+      if (error) throw error;
+    }
+
     if (typeof body?.enabled === 'boolean') {
       // Refuse to switch on with nowhere to send: silently falling back to normal per-clan routing is
       // the exact failure a testing phase cannot afford, since it would post to the real channels.
       if (body.enabled) {
         // Read AFTER the write above, so enabling and setting the URL in one request works.
-        const { data } = await supabase.from('settings').select('value').eq('key', URL_KEY).maybeSingle();
-        const configured = typeof data?.value === 'string' && data.value.trim();
+        // Either destination will do, but a channel id only counts while the bot can use it.
+        const state = await readState();
+        const configured = state.configured || (state.botConfigured && !!state.overrideChannelId);
         if (!configured) {
-          return NextResponse.json({ error: 'Set the override webhook URL before turning the redirect on' }, { status: 400 });
+          return NextResponse.json({ error: 'Set the override webhook URL or channel before turning the redirect on' }, { status: 400 });
         }
       }
       const { error } = await supabase.from('settings').update({ value: body.enabled }).eq('key', ENABLED_KEY);
