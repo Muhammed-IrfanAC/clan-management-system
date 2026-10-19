@@ -9,13 +9,13 @@
  *    the alert through the bot, since the confirmation is a different message from the alert.
  */
 
-import { discordBotRequest } from '@/lib/discord';
 import { KickListError, removeKick } from '@/lib/kicks/kickList';
 import { KICK_NS, kickButtonId } from '@/lib/kicks/alertPost';
-import { ButtonStyle, type DiscordMessage } from '../../types';
+import { ButtonStyle } from '../../types';
+import { editAlert } from '../alertEdit';
 import { isLeadership } from '../actor';
 import { byUser, stampResolution } from '../resolution';
-import { ephemeral, type HandlerResult, type Interaction } from '../types';
+import { ephemeral, type HandlerResult } from '../types';
 import type { ComponentHandler } from './registry';
 
 export const kickButtons: ComponentHandler = {
@@ -60,9 +60,10 @@ export const kickButtons: ComponentHandler = {
               if (!(err instanceof KickListError) || err.status !== 404) throw err;
               removed = false;
             }
-            await stampAlert(interaction, alertMessageId, removed
+            const line = removed
               ? `👋 Welcome back — removed from the kick list by ${byUser(actor.discordUserId)}`
-              : '👋 Already off the kick list');
+              : '👋 Already off the kick list';
+            await editAlert(interaction.channel_id, alertMessageId, (alert) => stampResolution(alert, line));
             return { content: removed ? `\`${tag}\` is off the kick list.` : 'It was already off the kick list.', components: [] };
           },
         };
@@ -72,14 +73,3 @@ export const kickButtons: ComponentHandler = {
     }
   },
 };
-
-/** Stamp the original alert, which is not the message this click came from. Best-effort. */
-async function stampAlert(interaction: Interaction, messageId: string, line: string): Promise<void> {
-  const channelId = interaction.channel_id;
-  if (!channelId) return;
-  const path = `/channels/${channelId}/messages/${encodeURIComponent(messageId)}`;
-  const alert = (await discordBotRequest('GET', path)) as DiscordMessage | null;
-  if (!alert) return;
-  const { content, embeds, components, allowed_mentions } = stampResolution(alert, line);
-  await discordBotRequest('PATCH', path, { content, embeds, components, allowed_mentions });
-}

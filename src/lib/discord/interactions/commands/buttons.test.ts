@@ -18,6 +18,7 @@ import { renderKickedArrival } from '@/lib/kicks/alertPost';
 import { renderUnlinkedJoins } from '@/lib/unlinked/joinPost';
 import { renderReviewSuggestion } from '@/lib/strikes/reviewPost';
 import { kickButtons } from './kickButtons';
+import { link as linkCommand } from './link';
 import { reviewButtons } from './reviewButtons';
 import { unlinkedLink } from './unlinkedLink';
 
@@ -102,39 +103,93 @@ describe('kick buttons', () => {
 
 describe('unlinked link', () => {
   const alert = renderUnlinkedJoins('Alpha', [
-    { name: 'Fresh', tag: '#8QQ', thLevel: 14 },
+    { name: 'Bob alt', tag: '#8QQ', thLevel: 14 },
     { name: 'Other', tag: '#9YY', thLevel: null },
   ]);
-  const pick = (alert.components![0].components[0] as { custom_id: string }).custom_id;
+  const pickId = (alert.components![0].components[0] as { custom_id: string }).custom_id;
+  const pickClick = (tag: string) => click(alert, pickId, { data: { custom_id: pickId, values: [tag] } });
 
-  it('opens a form for the picked account, prefilled with its name', async () => {
-    const r = await unlinkedLink.run(click(alert, pick, { data: { custom_id: pick, values: ['#8QQ'] } }), LEAD, idOf(pick));
-    if (r.kind !== 'modal') throw new Error('expected a modal');
-    expect(r.modal.title).toBe('Link #8QQ');
-    expect(r.modal.inputs[1].value).toBe('Fresh');
+  beforeEach(() => {
+    h.db.seed('persons', [{ id: 'p1', display_name: 'Bob', discord_user_id: null }]);
+    h.db.seed('player_accounts', [
+      { player_tag: '#2PP', person_id: 'p1', in_game_name: 'Bob' },
+      { player_tag: '#8QQ', person_id: null, in_game_name: 'Bob alt' },
+      { player_tag: '#9YY', person_id: null, in_game_name: 'Other' },
+    ]);
   });
 
-  it('links on submit, stamps the alert and leaves the other joiner pickable', async () => {
-    h.db.seed('player_accounts', [{ player_tag: '#8QQ', person_id: null }]);
-    const submitId = 'unl:v1:link:#8QQ';
-    const submit = click(alert, submitId, {
-      type: InteractionType.MODAL_SUBMIT,
-      data: { custom_id: submitId, components: [{ type: 1, components: [{ type: 4, custom_id: 'new_name', value: 'Fresh Face' }] }] },
+  it('opens a private panel suggesting the likely owner', async () => {
+    const r = await unlinkedLink.run(pickClick('#8QQ'), LEAD, idOf(pickId));
+    if (r.kind !== 'reply') throw new Error('expected a reply');
+    expect(r.reply.ephemeral).toBe(true);
+    const [suggested, byDiscord, fresh] = r.reply.components!.map((row) => row.components[0]);
+    expect(suggested).toMatchObject({ type: 2, label: 'Alt of Bob', custom_id: 'unl:v1:alt:#8QQ:p1:m1' });
+    expect(byDiscord).toMatchObject({ type: 5, custom_id: 'unl:v1:altdc:#8QQ:m1' });
+    expect(fresh).toMatchObject({ type: 2, label: 'New person: Bob alt', custom_id: 'unl:v1:new:#8QQ:m1' });
+  });
+
+  it('a suggestion click links, stamps the alert and offers the person’s Discord', async () => {
+    h.bot.mockResolvedValueOnce(alert).mockResolvedValueOnce({});
+    const altId = 'unl:v1:alt:#8QQ:p1:m1';
+    const r = await unlinkedLink.run(click({ content: 'panel' }, altId, { message: { id: 'eph' } }), LEAD, idOf(altId));
+    if (r.kind !== 'deferUpdate') throw new Error('expected deferUpdate');
+    const panel = await r.work();
+    expect(h.db.find('player_accounts', '#8QQ')!.person_id).toBe('p1');
+    expect(panel.content).toMatch(/linked to \*\*Bob\*\* as an alt/);
+    expect(panel.components![0].components[0]).toMatchObject({ type: 5, custom_id: 'unl:v1:dc:p1' });
+
+    const patched = h.bot.mock.calls[1][2] as { components: { components: { options: { value: string }[] }[] }[]; embeds: { fields: { name: string; value: string }[] }[] };
+    expect(patched.embeds[0].fields.at(-1)!.value).toBe('🔗 `#8QQ` linked to **Bob** as an alt by <@42>');
+    expect(patched.components[0].components[0].options.map((o) => o.value)).toEqual(['#9YY']);
+  });
+
+  it('links by the owner’s Discord, and keeps the panel when that Discord is nobody', async () => {
+    h.bot.mockResolvedValue(null); // alert edit is best-effort
+    const id = 'unl:v1:altdc:#8QQ:m1';
+    const choose = (user: string) => click({ content: 'panel', components: [] }, id, { data: { custom_id: id, values: [user] }, message: { id: 'eph', content: 'panel', components: [] } });
+
+    const miss = await unlinkedLink.run(choose('333333333333333333'), LEAD, idOf(id));
+    if (miss.kind !== 'deferUpdate') throw new Error('expected deferUpdate');
+    expect((await miss.work()).content).toMatch(/^⚠️ <@333333333333333333> is not linked to anyone[\s\S]*panel$/);
+
+    h.db.rows('persons')[0].discord_user_id = '444444444444444444';
+    const hit = await unlinkedLink.run(choose('444444444444444444'), LEAD, idOf(id));
+    if (hit.kind !== 'deferUpdate') throw new Error('expected deferUpdate');
+    expect((await hit.work()).content).toMatch(/Their Discord is <@444444444444444444>/);
+    expect(h.db.find('player_accounts', '#8QQ')!.person_id).toBe('p1');
+  });
+
+  it('stamps the alert instead of opening a panel when the account was linked meanwhile', async () => {
+    h.db.find('player_accounts', '#8QQ')!.person_id = 'p1';
+    const r = await unlinkedLink.run(pickClick('#8QQ'), LEAD, idOf(pickId));
+    expect(actions(r)).toBe('🔗 `#8QQ` was already linked to **Bob**');
+  });
+
+  it('links a Discord to the new person', async () => {
+    const id = 'unl:v1:dc:p1';
+    const r = await unlinkedLink.run(click({}, id, { data: { custom_id: id, values: ['555555555555555555'] } }), LEAD, idOf(id));
+    if (r.kind !== 'deferUpdate') throw new Error('expected deferUpdate');
+    expect((await r.work()).content).toMatch(/now linked to <@555555555555555555>/);
+  });
+});
+
+describe('/link', () => {
+  const run = (options: { name: string; value: string }[], actor = LEAD) =>
+    linkCommand.run({ id: 'i', application_id: 'app', token: 't', type: InteractionType.APPLICATION_COMMAND, data: { name: 'link', options: options.map((o) => ({ ...o, type: 3 })) } }, actor);
+
+  it('is for leadership, and wants a person picked from the suggestions', async () => {
+    expect(await run([{ name: 'account', value: '#8QQ' }], MEMBER)).toMatchObject({ kind: 'reply', reply: { ephemeral: true } });
+    expect(await run([{ name: 'account', value: '#8QQ' }, { name: 'person', value: 'bob' }])).toMatchObject({
+      kind: 'reply', reply: { content: expect.stringMatching(/from the suggestions/) },
     });
-    const r = await unlinkedLink.run(submit, LEAD, idOf(submitId));
-    expect(actions(r)).toBe('🔗 `#8QQ` linked to **Fresh Face** (new person) by <@42>');
-    if (r.kind !== 'update') throw new Error('expected update');
-    const select = r.reply.components![0].components[0] as { options: { value: string }[] };
-    expect(select.options.map((o) => o.value)).toEqual(['#9YY']);
-    expect(h.db.find('player_accounts', '#8QQ')!.person_id).toBeTruthy();
   });
 
-  it('tells the leader privately when the account was linked meanwhile', async () => {
-    h.db.seed('persons', [{ id: 'p1', display_name: 'Bob' }]);
-    h.db.seed('player_accounts', [{ player_tag: '#8QQ', person_id: 'p1' }]);
-    const submitId = 'unl:v1:link:#8QQ';
-    const r = await unlinkedLink.run(
-      click(alert, submitId, { type: InteractionType.MODAL_SUBMIT, data: { custom_id: submitId, components: [] } }), LEAD, idOf(submitId));
-    expect(r).toMatchObject({ kind: 'reply', reply: { ephemeral: true, content: expect.stringMatching(/already linked/) } });
+  it('with no person, makes a new one named after the account and offers their Discord', async () => {
+    h.db.seed('player_accounts', [{ player_tag: '#8QQ', person_id: null, in_game_name: 'Fresh' }]);
+    const r = await run([{ name: 'account', value: '8qq' }]);
+    if (r.kind !== 'defer') throw new Error('expected defer');
+    const reply = await r.work();
+    expect(reply.content).toMatch(/`#8QQ` is linked to \*\*Fresh\*\* \(new person\)/);
+    expect(reply.components![0].components[0]).toMatchObject({ type: 5 });
   });
 });

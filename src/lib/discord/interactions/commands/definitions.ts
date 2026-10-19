@@ -32,6 +32,16 @@ export const COMMAND_DEFINITIONS = [
       { name: 'user', description: 'Discord user', type: OptionType.USER, required: false },
     ],
   },
+  {
+    name: 'link',
+    description: 'Leadership: link an unlinked account as someone’s alt, or as a new person',
+    type: 1,
+    ...GUILD_ONLY,
+    options: [
+      { name: 'account', description: 'The unlinked account (name or tag)', type: OptionType.STRING, required: true, autocomplete: true },
+      { name: 'person', description: 'Whose alt it is — leave out to make a new person', type: OptionType.STRING, required: false, autocomplete: true },
+    ],
+  },
 ] as const;
 
 export type CommandName = (typeof COMMAND_DEFINITIONS)[number]['name'];

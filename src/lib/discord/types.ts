@@ -41,7 +41,16 @@ export type DiscordStringSelect = {
   max_values?: number;
 };
 
-export type DiscordActionRow = { type: 1; components: Array<DiscordButton | DiscordStringSelect> };
+/** Discord's own member picker (searchable); the chosen user ids arrive in `data.values`. */
+export type DiscordUserSelect = {
+  type: 5;
+  custom_id: string;
+  placeholder?: string;
+  min_values?: number;
+  max_values?: number;
+};
+
+export type DiscordActionRow = { type: 1; components: Array<DiscordButton | DiscordStringSelect | DiscordUserSelect> };
 
 /** The editable part of a webhook message — what a pure renderer produces. Deliberately excludes
  * `username`: Discord's message-EDIT endpoint accepts only content/embeds/allowed_mentions, so a
