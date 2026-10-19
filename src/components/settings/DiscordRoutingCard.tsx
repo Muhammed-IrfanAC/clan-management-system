@@ -186,7 +186,7 @@ function BotStatus() {
         <ul style={{ listStyle: 'none', padding: 0, margin: 'var(--space-sm) 0 0', fontSize: '0.75rem' }}>
           {check.checks.length === 0 && <li className="text-muted">No bot channels are set yet.</li>}
           {check.checks.map((c) => (
-            <li key={`${c.label}-${c.channelId}`} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0' }}>
+            <li key={`${c.label}-${c.channelId}`} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '2px 0' }}>
               {c.ok
                 ? <CheckCircle2 size={13} style={{ color: 'var(--color-cta)' }} />
                 : <XCircle size={13} style={{ color: 'var(--color-danger)' }} />}
@@ -220,7 +220,7 @@ function ChannelIdField({ field, label }: { field: DiscordChannelField; label: s
       <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', marginBottom: 'var(--space-sm)' }}>
         <input
           className="input"
-          style={{ flex: '1 1 320px' }}
+          style={{ flex: '1 1 240px', minWidth: 0 }}
           autoComplete="off"
           placeholder="Channel id or link (right-click the channel → Copy Link)"
           value={value}

@@ -22,12 +22,14 @@ export default function ClansTab({ onAdd, confirm }: { onAdd: () => void; confir
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
         {clans.map((c) => (
-          <div key={c.id} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
+          // Wraps rather than overflowing: with two channel buttons and the automation select the
+          // controls are wider than a phone, so they drop below the name and wrap among themselves.
+          <div key={c.id} style={{ padding: 'var(--space-md)', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-sm) var(--space-md)' }}>
+            <div style={{ minWidth: 0 }}>
               <span style={{ fontWeight: '700' }}>{c.display_name}</span>
               <span className="text-muted" style={{ marginLeft: 'var(--space-md)' }}>{c.clan_tag}</span>
             </div>
-            <div style={{ display: 'flex', gap: 'var(--space-md)', alignItems: 'center' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-sm) var(--space-md)', alignItems: 'center', minWidth: 0 }}>
               <span style={{ fontSize: '0.7rem', color: 'var(--color-muted)', textTransform: 'uppercase' }}>{c.clan_type}</span>
               <ClanChannel id={c.id} name={c.display_name} channelId={c.discord_channel_id ?? null} />
               <ClanChannel
@@ -99,7 +101,7 @@ function ClanChannel({ id, name, channelId, column = 'discord_channel_id' }: {
     return (
       <button
         className="btn btn-outline"
-        style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+        style={{ fontSize: '0.7rem', padding: '0.3rem 0.5rem', display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}
         title={copy.title}
         onClick={() => { setValue(channelId ?? ''); setEditing(true); }}
       >
@@ -109,7 +111,7 @@ function ClanChannel({ id, name, channelId, column = 'discord_channel_id' }: {
   }
   return (
     <form
-      style={{ display: 'flex', gap: 4 }}
+      style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: '1 1 260px', maxWidth: '100%' }}
       onSubmit={async (e) => {
         e.preventDefault();
         if (await updateClanChannel(id, value.trim(), column)) setEditing(false);
@@ -118,7 +120,7 @@ function ClanChannel({ id, name, channelId, column = 'discord_channel_id' }: {
       <input
         className="input"
         autoFocus
-        style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', width: 210 }}
+        style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', flex: '1 1 160px', minWidth: 0 }}
         placeholder={column === 'discord_join_channel_id' ? 'Channel or thread link' : 'Channel id or link'}
         aria-label={`${copy.label} for ${name}`}
         value={value}
