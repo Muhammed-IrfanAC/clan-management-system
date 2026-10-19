@@ -19,6 +19,7 @@ export interface Clan {
   display_order: number;
   active: boolean;
   discord_channel_id: string | null; // the bot's channel for this clan (migration 037); falls back to DISCORD_DEFAULT_CHANNEL_ID
+  discord_join_channel_id: string | null; // channel or thread for this clan's unlinked-join alerts (039); falls back to the unlinked channel
   rule_automation_mode: RuleAutomationMode; // scope of automated rule detection for this clan
   created_at: string;
 }

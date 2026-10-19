@@ -20,7 +20,8 @@ import { useSettingsStore, type DiscordChannelField } from '@/lib/stores/setting
  * player rejoining a family clan. Same rule: unset, they post to the clan's own channel.
  *
  * And the UNLINKED-JOIN channel (migration 036) — an alert pinging the Leadership role when a player
- * with no linked person joins a family clan. Unset, it inherits the leadership channel.
+ * with no linked person joins a family clan. Unset, it inherits the leadership channel. A clan's own
+ * join-alert channel or thread (Clans tab, migration 039) wins over it.
  *
  * Every route is a bot channel id (migration 037); the per-clan channels are set on the Clans tab.
  */
@@ -117,8 +118,8 @@ export default function DiscordRoutingCard() {
       <SectionHeading icon={<UserPlus size={16} style={{ color: 'var(--color-cta)' }} />} title="UNLINKED-JOIN CHANNEL" />
       <p className="text-muted" style={{ fontSize: '0.8rem', margin: '0 0 var(--space-md)' }}>
         {route.unlinkedChannelId
-          ? 'When a player with no linked person joins a family clan, an alert posts here and pings the Leadership role.'
-          : 'Not set — unlinked-join alerts (which ping the Leadership role) go to the leadership channel, or the clan’s own channel if that is not set either.'}
+          ? 'When a player with no linked person joins a family clan, an alert posts here and pings the Leadership role — unless that clan has its own join-alert channel or thread (Clans tab).'
+          : 'Not set — unlinked-join alerts (which ping the Leadership role) go to the clan’s join-alert channel or thread if it has one (Clans tab), else the leadership channel, else the clan’s own channel.'}
       </p>
       <ChannelIdField field="unlinkedChannelId" label="Unlinked-join channel" />
     </div>

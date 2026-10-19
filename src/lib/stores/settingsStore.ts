@@ -35,6 +35,9 @@ export type DiscordRoute = {
   unlinkedChannelId: string | null;
 };
 
+// A clan's two bot destinations: its notices (037) and its unlinked-join alerts (039).
+export type ClanChannelColumn = 'discord_channel_id' | 'discord_join_channel_id';
+
 export type DiscordChannelField = 'overrideChannelId' | 'announcementChannelId' | 'leadershipChannelId' | 'unlinkedChannelId';
 
 // One row of the bot's channel-access check (POST /api/settings/discord-route/check).
@@ -149,7 +152,7 @@ type SettingsState = {
   checkDiscordChannels: () => Promise<void>;
   syncingCommands: boolean;
   syncDiscordCommands: () => Promise<void>;
-  updateClanChannel: (id: string, channelId: string) => Promise<boolean>;
+  updateClanChannel: (id: string, channelId: string, column?: ClanChannelColumn) => Promise<boolean>;
 
   addClan: (form: NewClan) => Promise<boolean>;
   removeClan: (id: string) => Promise<void>;
@@ -344,18 +347,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   // Set (or clear, with '') a clan's bot channel. Splices the normalised id the server stored.
-  async updateClanChannel(id, channelId) {
+  async updateClanChannel(id, channelId, column = 'discord_channel_id') {
     try {
       const res = await fetch(`/api/clans/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ discord_channel_id: channelId }),
+        body: JSON.stringify({ [column]: channelId }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.error || 'Error updating clan channel');
+      const saved = body[column] ?? null;
+      const what = column === 'discord_join_channel_id' ? 'Join-alert channel' : 'Clan channel';
       set({
-        clans: get().clans.map((c) => (c.id === id ? { ...c, discord_channel_id: body.discord_channel_id ?? null } : c)),
-        toast: { message: body.discord_channel_id ? 'Clan channel saved.' : 'Clan channel cleared.', type: 'success' },
+        clans: get().clans.map((c) => (c.id === id ? { ...c, [column]: saved } : c)),
+        toast: { message: `${what} ${saved ? 'saved' : 'cleared'}.`, type: 'success' },
       });
       return true;
     } catch (err) {

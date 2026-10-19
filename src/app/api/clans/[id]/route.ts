@@ -7,9 +7,11 @@ import type { RuleAutomationMode } from '@/types/database';
 const RULE_AUTOMATION_MODES: RuleAutomationMode[] = ['always', 'cwl_only', 'never'];
 
 // PATCH /api/clans/:id — update a clan's config: `rule_automation_mode` (whether the rule detectors
-// act on this clan's wars: always / cwl_only / never) and/or `discord_channel_id` (the bot's channel
-// for this clan, migration 037; blank clears it, so the clan's notices go to the family-wide
-// fallback channel). Gated by clan management.
+// act on this clan's wars: always / cwl_only / never), `discord_channel_id` (the bot's channel for
+// this clan, migration 037; blank clears it, so the clan's notices go to the family-wide fallback
+// channel) and/or `discord_join_channel_id` (a channel or thread for this clan's unlinked-join
+// alerts, migration 039; blank hands them back to the family-wide unlinked-join channel). Gated by
+// clan management.
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -26,13 +28,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       update.rule_automation_mode = body.rule_automation_mode;
     }
 
-    if ('discord_channel_id' in body) {
-      const raw = typeof body.discord_channel_id === 'string' ? body.discord_channel_id.trim() : '';
+    for (const column of ['discord_channel_id', 'discord_join_channel_id'] as const) {
+      if (!(column in body)) continue;
+      const raw = typeof body[column] === 'string' ? body[column].trim() : '';
       const channelId = normalizeChannelId(raw);
       if (raw && !channelId) {
         return NextResponse.json({ error: 'That is not a Discord channel id or channel link' }, { status: 400 });
       }
-      update.discord_channel_id = channelId;
+      update[column] = channelId;
     }
 
     if (Object.keys(update).length === 0) {
@@ -43,7 +46,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       .from('clans')
       .update(update)
       .eq('id', id)
-      .select('id, rule_automation_mode, discord_channel_id')
+      .select('id, rule_automation_mode, discord_channel_id, discord_join_channel_id')
       .single();
     if (error) throw error;
     return NextResponse.json(data);

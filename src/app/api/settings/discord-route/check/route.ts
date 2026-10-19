@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
 
     const [{ data: settings }, { data: clans }] = await Promise.all([
       supabase.from('settings').select('key, value').in('key', PURPOSE_KEYS.map(([, k]) => k)),
-      supabase.from('clans').select('display_name, discord_channel_id').eq('active', true).order('display_order'),
+      supabase.from('clans').select('display_name, discord_channel_id, discord_join_channel_id').eq('active', true).order('display_order'),
     ]);
     const byKey = new Map((settings || []).map((r: { key: string; value: unknown }) => [r.key, r.value]));
 
@@ -41,9 +41,12 @@ export async function POST(request: NextRequest) {
       const id = normalizeChannelId(typeof byKey.get(key) === 'string' ? (byKey.get(key) as string) : null);
       if (id) targets.push({ label, channelId: id });
     }
-    for (const c of (clans || []) as { display_name: string; discord_channel_id: string | null }[]) {
+    type ClanRow = { display_name: string; discord_channel_id: string | null; discord_join_channel_id: string | null };
+    for (const c of (clans || []) as ClanRow[]) {
       const id = normalizeChannelId(c.discord_channel_id);
       if (id) targets.push({ label: c.display_name, channelId: id });
+      const join = normalizeChannelId(c.discord_join_channel_id);
+      if (join) targets.push({ label: `${c.display_name} · join alerts`, channelId: join });
     }
     const fallback = normalizeChannelId(process.env.DISCORD_DEFAULT_CHANNEL_ID);
     if (fallback) targets.push({ label: 'Family-wide fallback', channelId: fallback });

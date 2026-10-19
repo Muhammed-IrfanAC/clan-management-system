@@ -59,6 +59,18 @@ describe('destinationForClan', () => {
     expect(await destinationForClan('main', 'unlinked')).toEqual({ channelId: CH2 });
   });
 
+  it('sends a clan’s unlinked-join alerts to its own join channel or thread first', async () => {
+    setting('discord_unlinked_channel_id', CH2);
+    h.db.find('clans', 'main')!.discord_join_channel_id = CH3;
+    expect(await destinationForClan('main', 'unlinked')).toEqual({ channelId: CH3 });
+    // Only that purpose: the clan's other notices and leadership alerts are unaffected.
+    expect(await destinationForClan('main')).toEqual({ channelId: CH });
+    expect(await destinationForClan('main', 'leadership')).toEqual({ channelId: CH });
+    // Unset, the shared unlinked-join channel takes it as before.
+    h.db.find('clans', 'main')!.discord_join_channel_id = null;
+    expect(await destinationForClan('main', 'unlinked')).toEqual({ channelId: CH2 });
+  });
+
   it('ends at the family-wide fallback channel', async () => {
     h.db.find('clans', 'main')!.discord_channel_id = null;
     expect(await destinationForClan('main')).toBeNull();

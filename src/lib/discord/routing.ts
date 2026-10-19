@@ -11,7 +11,9 @@
  * inherits the clan channel, so the axis costs nothing until it is configured. A third purpose,
  * LEADERSHIP (migration 035), carries alerts meant for leadership only — a kicked player rejoining —
  * under the same blank-inherits rule. A fourth, UNLINKED (migration 036), carries the unlinked-player
- * join alert; blank, it inherits the leadership channel before the clan channel.
+ * join alert; blank, it inherits the leadership channel before the clan channel. A clan may route its
+ * own unlinked-join alerts to a dedicated channel or thread (`clans.discord_join_channel_id`,
+ * migration 039), which wins over the family-wide one — so each clan's joiners can be triaged apart.
  *
  * Webhooks (migrations 013–036) were retired once every channel moved to the bot (037, 038): a step
  * with no channel id falls through to the next, and without the bot token nothing is sent at all.
@@ -136,6 +138,12 @@ export async function destinationForClan(
   clanId?: string | null,
   purpose: ChannelPurpose = 'default',
 ): Promise<Destination | null> {
+  if (purpose === 'unlinked' && clanId) {
+    // A thread id works here too: Discord posts into a thread exactly as into a channel.
+    const { data } = await supabase.from('clans').select('discord_join_channel_id').eq('id', clanId).maybeSingle();
+    const own = pickDestination(data?.discord_join_channel_id);
+    if (own) return own;
+  }
   if (purpose !== 'default') {
     const config = await routeConfig();
     const dedicated =
