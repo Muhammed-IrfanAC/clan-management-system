@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createClanOpsDb, FakeDb } from '@/test/fakeSupabase';
 import { FakeCoc, member } from '@/test/fakeCoc';
 
-const h = vi.hoisted(() => ({ db: null as unknown as FakeDb, coc: null as any, send: null as any }));
+const h = vi.hoisted(() => ({ db: null as unknown as FakeDb, coc: null as any, send: null as any, discord: null as any }));
 
 vi.mock('@/lib/supabase', () => ({
   get supabase() {
@@ -28,10 +28,29 @@ vi.mock('@/lib/rules/scan', () => ({ scanRuleViolations: vi.fn(async () => null)
 // read the messages it would have sent.
 vi.mock('@/lib/discord', () => ({
   sendDiscordMessage: (...args: unknown[]) => h.send(...args),
+  postDiscordMessage: (...args: unknown[]) => h.discord.post(...args),
+  discordBotRequest: (...args: unknown[]) => h.discord.request(...args),
   destinationForClan: vi.fn(async () => 'https://discord.test/hook'),
 }));
 
 import { syncClan, runFullSync } from './sync';
+
+/** The bot's view of one channel: messages it posted, readable and editable by id. */
+class FakeChannel {
+  messages = new Map<string, any>();
+  post = vi.fn(async (msg: any) => {
+    const messageId = `m${this.messages.size + 1}`;
+    this.messages.set(messageId, structuredClone(msg));
+    return { channelId: 'ch-unlinked', messageId };
+  });
+  request = vi.fn(async (method: string, path: string, body?: any) => {
+    const id = path.split('/').pop()!;
+    if (!this.messages.has(id)) return null;
+    if (method === 'GET') return structuredClone(this.messages.get(id));
+    if (method === 'PATCH') return this.messages.set(id, structuredClone(body)) && {};
+    return null;
+  });
+}
 
 const DAY = 24 * 60 * 60 * 1000;
 const T0 = new Date('2026-09-01T12:00:00Z');
@@ -55,6 +74,7 @@ beforeEach(() => {
   h.db = createClanOpsDb();
   h.coc = new FakeCoc();
   h.send = vi.fn(async () => true);
+  h.discord = new FakeChannel();
   h.db.seed('clans', [
     { id: MAIN, clan_tag: '#MAIN', display_name: 'Main', active: true },
     { id: FEEDER, clan_tag: '#FEED', display_name: 'Feeder', active: true },
@@ -369,6 +389,66 @@ describe('kick list alerts', () => {
     const res = await runFullSync();
     expect(res).toMatchObject({ success: true, kickList: null });
     expect(account('#NEW')!.status).toBe('active');
+  });
+});
+
+describe('unlinked join alerts', () => {
+  const actions = (id: string) => h.discord.messages.get(id).embeds[0].fields?.[0]?.value ?? '';
+  const offered = (id: string) =>
+    h.discord.messages.get(id).components.flatMap((r: any) => r.components).flatMap((c: any) => c.options.map((o: any) => o.value));
+
+  it('stamps a joiner who left before being linked, and keeps the alert open for the one who stayed', async () => {
+    await seedLinkedRoster();
+    h.coc.setRoster('#MAIN', [member('#A1'), member('#B1'), member('#N1'), member('#N2')]);
+    const res = await runFullSync();
+    expect(res.unlinked).toMatchObject({ matched: 2, alerted: 2, settled: 0 });
+    expect(h.db.rows('unlinked_join_alerts').map((r) => [r.message_id, r.player_tag, r.closed_at]))
+      .toEqual([['m1', '#N1', null], ['m1', '#N2', null]]);
+
+    h.coc.remove('#N1', '#MAIN');
+    expect((await runFullSync()).unlinked).toMatchObject({ settled: 1 });
+    expect(actions('m1')).toMatch(/^🚪 `#N1` left <t:\d+:R>, before anyone linked them$/);
+    expect(offered('m1')).toEqual(['#N2']);
+
+    await runFullSync(); // nothing new to say: the alert is not edited again
+    expect(h.discord.request.mock.calls.filter((c: any[]) => c[0] === 'PATCH')).toHaveLength(1);
+  });
+
+  it('says where a joiner moved, and alerts the clan they moved to', async () => {
+    await seedLinkedRoster();
+    h.coc.setRoster('#MAIN', [member('#A1'), member('#B1'), member('#N1')]);
+    await runFullSync();
+
+    h.coc.remove('#N1', '#MAIN');
+    h.coc.setRoster('#FEED', [member('#F1'), member('#N1')]);
+    await runFullSync();
+    expect(actions('m1')).toContain('↪️ `#N1` moved to **Feeder**');
+    expect(h.discord.messages.get('m1').components).toEqual([]); // nothing left open
+    expect(h.discord.messages.get('m2').embeds[0].title).toBe('🔗 Unlinked player joined Feeder');
+  });
+
+  it('stamps a link made on the dashboard', async () => {
+    await seedLinkedRoster();
+    h.coc.setRoster('#MAIN', [member('#A1'), member('#B1'), member('#N1')]);
+    await runFullSync();
+
+    account('#N1')!.person_id = 'p-alice';
+    await runFullSync();
+    expect(actions('m1')).toBe('🔗 `#N1` was linked to **Alice** outside this alert');
+  });
+
+  it('keeps the joiner open while the alert cannot be edited, and retries next sync', async () => {
+    await seedLinkedRoster();
+    h.coc.setRoster('#MAIN', [member('#A1'), member('#B1'), member('#N1')]);
+    await runFullSync();
+
+    h.coc.remove('#N1', '#MAIN');
+    h.discord.request.mockResolvedValueOnce(null); // Discord down for the GET
+    expect((await runFullSync()).unlinked).toMatchObject({ settled: 0 });
+    expect(h.db.rows('unlinked_join_alerts')[0].closed_at).toBeNull();
+
+    expect((await runFullSync()).unlinked).toMatchObject({ settled: 1 });
+    expect(actions('m1')).toContain('🚪 `#N1` left');
   });
 });
 

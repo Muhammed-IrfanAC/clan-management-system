@@ -6,7 +6,7 @@ import { detectCompletedTransfers } from './cwl/roster';
 import { syncWarState } from './war';
 import { scanRuleViolations } from './rules/scan';
 import { alertKickedArrivals } from './kicks/arrivals';
-import { alertUnlinkedArrivals } from './unlinked/joinAlert';
+import { alertUnlinkedArrivals, settleUnlinkedJoinAlerts } from './unlinked/joinAlert';
 import type { ClanArrival } from './kicks/watch';
 
 export async function syncClan(clanId: string) {
@@ -235,13 +235,20 @@ async function safeAlertKickedArrivals(arrivals: ClanArrival[]) {
 }
 
 /**
- * Ping the Leadership role when a player with no linked person joins a family clan. Runs AFTER every
- * clan is reconciled, like the kick watch. Fail-safe — a Discord or lookup error must never fail the
- * roster sync. Returns null on any error.
+ * Ping the Leadership role when a player with no linked person joins a family clan, after first
+ * settling earlier alerts whose joiners have since left, moved or been linked. Runs AFTER every clan
+ * is reconciled, like the kick watch. Fail-safe — a Discord or lookup error must never fail the
+ * roster sync, and one half failing never costs the other. Each half is null on error.
  */
 async function safeAlertUnlinkedArrivals(arrivals: ClanArrival[]) {
+  let settled: Awaited<ReturnType<typeof settleUnlinkedJoinAlerts>> | null = null;
   try {
-    return await alertUnlinkedArrivals(arrivals);
+    settled = await settleUnlinkedJoinAlerts();
+  } catch (err) {
+    console.error('Unlinked-join alert settle error (non-fatal):', err);
+  }
+  try {
+    return { ...(await alertUnlinkedArrivals(arrivals)), settled: settled?.settled ?? null };
   } catch (err) {
     console.error('Unlinked-join alert error (non-fatal):', err);
     return null;

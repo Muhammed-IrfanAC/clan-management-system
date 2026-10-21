@@ -67,11 +67,23 @@ export async function sendDiscordMessage(
   payload: DiscordMessage,
   dest?: Destination | null,
 ): Promise<boolean> {
+  return (await postDiscordMessage(payload, dest)) !== null;
+}
+
+/**
+ * `sendDiscordMessage` that keeps a handle on what it posted: the channel it ACTUALLY landed in
+ * (the override's, while that is on) and the message id — what a caller needs to come back and edit
+ * the message later through the bot. Null on any failure. Never throws.
+ */
+export async function postDiscordMessage(
+  payload: DiscordMessage,
+  dest?: Destination | null,
+): Promise<{ channelId: string; messageId: string } | null> {
   // The override wins over whatever the caller resolved: during the testing phase EVERY notification
   // belongs in the one private channel. Mentions are left live — the point of a rehearsal channel is
   // to see exactly what the real message would look like, pings included.
   const { to, test } = await resolve(dest);
-  if (!to) return false; // Feature disabled in this environment — no-op.
+  if (!to) return null; // Feature disabled in this environment — no-op.
 
   const allowed_mentions = payload.allowed_mentions ? sanitizeMentions(payload.allowed_mentions) : { parse: [] };
 
@@ -82,7 +94,8 @@ export async function sendDiscordMessage(
     ...(payload.components?.length ? { components: payload.components } : {}),
     allowed_mentions,
   }, { bot: true });
-  return sent !== null;
+  const messageId = (sent as { id?: string } | null)?.id;
+  return messageId ? { channelId: to.channelId, messageId } : null;
 }
 
 /**

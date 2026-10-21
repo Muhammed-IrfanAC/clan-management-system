@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { LEADERSHIP_ROLE_ID } from '@/lib/discord/roles';
-import { renderUnlinkedJoins, selectUnlinkedJoins, type UnlinkedAccount } from './joinPost';
+import {
+  joinOutcome,
+  outcomeLine,
+  renderUnlinkedJoins,
+  selectUnlinkedJoins,
+  settleAlert,
+  type JoinerNow,
+  type SettledJoiner,
+  type UnlinkedAccount,
+} from './joinPost';
 
 function acct(tag: string, over: Partial<UnlinkedAccount> = {}): [string, UnlinkedAccount] {
   return [tag, { player_tag: tag, person_id: null, in_game_name: `P${tag}`, th_level: 15, ...over }];
@@ -62,5 +71,73 @@ describe('renderUnlinkedJoins', () => {
     expect(lines).toHaveLength(31);
     expect(lines[0]).toBe('• **\\*x\\*** `#T0`');
     expect(lines[30]).toBe('…and 3 more');
+  });
+});
+
+describe('joinOutcome', () => {
+  const now = (over: Partial<JoinerNow> = {}): JoinerNow => ({
+    player_tag: '#A', person_id: null, status: 'active', clan_id: 'c1', in_game_name: 'A', ...over,
+  });
+  const entry = { clan_id: 'c1' };
+
+  it('is null while the joiner is still an unlinked member of the clan', () => {
+    expect(joinOutcome(entry, now())).toBeNull();
+  });
+
+  it('settles a joiner who left, moved, was linked or was removed', () => {
+    expect(joinOutcome(entry, now({ status: 'left' }))).toEqual({ kind: 'left' });
+    expect(joinOutcome(entry, now({ status: 'inactive' }))).toEqual({ kind: 'left' });
+    expect(joinOutcome(entry, now({ clan_id: 'c2' }))).toEqual({ kind: 'moved', toClanId: 'c2' });
+    expect(joinOutcome(entry, now({ person_id: 'p1' }))).toEqual({ kind: 'linked', personId: 'p1' });
+    expect(joinOutcome(entry, undefined)).toEqual({ kind: 'gone' });
+  });
+
+  it('reads a linked joiner as linked even once they have left', () => {
+    expect(joinOutcome(entry, now({ person_id: 'p1', status: 'left' }))).toEqual({ kind: 'linked', personId: 'p1' });
+  });
+});
+
+describe('settleAlert', () => {
+  const NOW = '2026-10-21T12:00:00Z';
+  const names = { clan: (id: string) => (id === 'c2' ? 'Feeder' : '?'), person: () => 'Bob' };
+  const line = (s: SettledJoiner) => outcomeLine(s.tag, s.outcome, names, NOW);
+  const alert = () =>
+    renderUnlinkedJoins('Main', [
+      { name: 'A', tag: '#A', thLevel: 15 },
+      { name: 'B', tag: '#B', thLevel: 15 },
+    ]);
+  const offered = (msg: { components?: { components: unknown[] }[] }) =>
+    (msg.components ?? []).flatMap((r) => r.components as { options: { value: string }[] }[]).flatMap((c) => c.options.map((o) => o.value));
+
+  it('stamps a departure, drops it from the select and keeps the alert open for the rest', () => {
+    const out = settleAlert(alert(), [{ tag: '#A', outcome: { kind: 'left' } }], line)!;
+    expect(out.embeds![0].fields).toEqual([
+      { name: 'Actions', value: '🚪 `#A` left <t:1792584000:R>, before anyone linked them', inline: false },
+    ]);
+    expect(offered(out)).toEqual(['#B']);
+    expect(out.embeds![0].color).toBe(alert().embeds![0].color);
+    expect(out.allowed_mentions).toEqual({ parse: [] }); // the edit must not re-ping Leadership
+  });
+
+  it('resolves the alert once every joiner is settled', () => {
+    const out = settleAlert(
+      alert(),
+      [
+        { tag: '#A', outcome: { kind: 'left' } },
+        { tag: '#B', outcome: { kind: 'moved', toClanId: 'c2' } },
+      ],
+      line,
+    )!;
+    expect(out.components).toEqual([]);
+    expect(out.embeds![0].fields![0].value).toContain('↪️ `#B` moved to **Feeder**');
+    expect(out.embeds![0].color).not.toBe(alert().embeds![0].color);
+  });
+
+  it('stamps a link made elsewhere, but not one the alert already recorded', () => {
+    const elsewhere = settleAlert(alert(), [{ tag: '#A', outcome: { kind: 'linked', personId: 'p1' } }], line)!;
+    expect(elsewhere.embeds![0].fields![0].value).toBe('🔗 `#A` was linked to **Bob** outside this alert');
+
+    // A link from the alert's own panel already removed #A from the select and stamped it.
+    expect(settleAlert(elsewhere, [{ tag: '#A', outcome: { kind: 'linked', personId: 'p1' } }], line)).toBeNull();
   });
 });

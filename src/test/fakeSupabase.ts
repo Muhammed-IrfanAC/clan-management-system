@@ -389,6 +389,7 @@ export function createClanOpsDb() {
     defaults: {
       persons: () => ({ access_role: null, created_at: new Date().toISOString() }),
       player_accounts: () => ({ person_id: null, added_at: new Date().toISOString() }),
+      unlinked_join_alerts: () => ({ posted_at: new Date().toISOString(), closed_at: null }),
     },
     foreignKeys: [
       { table: 'player_accounts', column: 'person_id', refTable: 'persons', refColumn: 'id', onDelete: 'restrict' },
@@ -401,6 +402,7 @@ export function createClanOpsDb() {
       { table: 'member_notes', column: 'person_id', refTable: 'persons', refColumn: 'id', onDelete: 'cascade' },
       { table: 'kicked_accounts', column: 'player_tag', refTable: 'player_accounts', refColumn: 'player_tag', onDelete: 'restrict' },
       { table: 'kicked_accounts', column: 'kicked_from_clan_id', refTable: 'clans', refColumn: 'id', onDelete: 'set null' },
+      { table: 'unlinked_join_alerts', column: 'clan_id', refTable: 'clans', refColumn: 'id', onDelete: 'cascade' },
     ],
   });
 }

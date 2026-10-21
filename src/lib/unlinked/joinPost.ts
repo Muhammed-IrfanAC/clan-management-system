@@ -1,5 +1,8 @@
 import type { DiscordActionRow, DiscordMessage } from '@/lib/discord/types';
 import { LEADERSHIP_ROLE_ID } from '@/lib/discord/roles';
+import { discordTs } from '@/lib/discord/format';
+import { stampResolution, withoutOption } from '@/lib/discord/interactions/resolution';
+import type { Reply } from '@/lib/discord/interactions/types';
 import { linkIds } from './linkPanel';
 
 /**
@@ -16,6 +19,11 @@ import { linkIds } from './linkPanel';
  * Through the bot the alert carries a "Link…" select of its joiners: picking one opens a private
  * link panel (`linkPanel.ts`), and each link is stamped onto the alert and drops out of the select,
  * so what is left is what is still open.
+ *
+ * An alert also outlives its joiners: many leave again before anybody links them. Each later sync
+ * re-checks the joiners of every open alert (`joinOutcome`) and stamps the ones that need nothing
+ * more — left, moved to another family clan, linked elsewhere — onto the alert the same way a click
+ * does (`settleAlert`), so a leader never goes looking for a player who is no longer there.
  */
 
 /** Discord allows at most 25 options in a select. */
@@ -101,4 +109,84 @@ function linkSelect(joiners: UnlinkedJoiner[]): DiscordActionRow[] {
       })),
     }],
   }];
+}
+
+/** A joiner of an alert that is still open, as `unlinked_join_alerts` records it. */
+export type OpenAlertEntry = { message_id: string; channel_id: string; player_tag: string; clan_id: string };
+
+export type JoinerNow = {
+  player_tag: string;
+  person_id: string | null;
+  status: string | null;
+  clan_id: string | null;
+  in_game_name: string | null;
+};
+
+export type JoinOutcome =
+  | { kind: 'left' }
+  | { kind: 'moved'; toClanId: string }
+  | { kind: 'linked'; personId: string }
+  | { kind: 'gone' };
+
+/**
+ * Whether a joiner still needs the alert, judged from their account now: null while they are still
+ * an unlinked member of the clan they joined. Linked wins over everything else — a player linked and
+ * then gone needs no line about leaving, the link already settled them. 'left' is also what an
+ * account in another clan that this pass did not poll looks like (sync marks a departure 'left'
+ * without clearing `clan_id`), and it is true of the clan the alert is about either way.
+ */
+export function joinOutcome(entry: Pick<OpenAlertEntry, 'clan_id'>, account: JoinerNow | undefined): JoinOutcome | null {
+  if (!account) return { kind: 'gone' };
+  if (account.person_id) return { kind: 'linked', personId: account.person_id };
+  if (account.status !== 'active') return { kind: 'left' };
+  if (account.clan_id && account.clan_id !== entry.clan_id) return { kind: 'moved', toClanId: account.clan_id };
+  return null;
+}
+
+export type SettledJoiner = { tag: string; outcome: JoinOutcome };
+
+export function outcomeLine(
+  tag: string,
+  outcome: JoinOutcome,
+  names: { clan: (id: string) => string; person: (id: string) => string },
+  nowIso: string,
+): string {
+  const who = `\`${tag}\``;
+  switch (outcome.kind) {
+    case 'left':
+      return `🚪 ${who} left ${discordTs(nowIso, 'R')}, before anyone linked them`;
+    case 'moved':
+      return `↪️ ${who} moved to **${escapeMarkdown(names.clan(outcome.toClanId))}** ${discordTs(nowIso, 'R')}, before anyone linked them`;
+    case 'linked':
+      return `🔗 ${who} was linked to **${escapeMarkdown(names.person(outcome.personId))}** outside this alert`;
+    case 'gone':
+      return `🗑️ ${who} was removed from ClanOps`;
+  }
+}
+
+/**
+ * The alert with its settled joiners stamped and dropped from the "Link…" select, or null when there
+ * is nothing to change. A joiner linked from the alert itself is already stamped and gone from the
+ * select (the click did both), so a link is only stamped while the select still offers the account —
+ * that is what tells a link made from the dashboard or `/link` apart from one made here. Departures
+ * are always stamped: the select stops at 25 accounts, and a joiner past that leaving is still news.
+ */
+export function settleAlert(
+  alert: DiscordMessage,
+  settled: SettledJoiner[],
+  line: (s: SettledJoiner) => string,
+): Reply | null {
+  let components = alert.components;
+  const lines: string[] = [];
+  for (const s of settled) {
+    const offered = (components ?? []).some((row) =>
+      row.components.some((c) => c.type === 3 && c.custom_id === linkIds.pick() && c.options.some((o) => o.value === s.tag)),
+    );
+    if (s.outcome.kind === 'linked' && !offered) continue;
+    lines.push(line(s));
+    components = withoutOption(components, linkIds.pick(), s.tag);
+  }
+  if (!lines.length) return null;
+  const remaining = components ?? [];
+  return stampResolution(alert, lines.join('\n'), { components: remaining, stillOpen: remaining.length > 0 });
 }
