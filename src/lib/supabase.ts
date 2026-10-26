@@ -8,8 +8,8 @@ import { createClient } from '@supabase/supabase-js';
  * and the guard below refuses to build a client in a browser should an import slip through.
  *
  * `SUPABASE_SERVICE_ROLE_KEY` takes either key format (`sb_secret_…` or the legacy service_role
- * JWT). Falling back to the anon key keeps a deploy that lands before the env var from failing
- * outright; it stops working the moment the anon grants are revoked, so the warning is loud.
+ * JWT). It is required: since migration 042 the anon role holds no privileges, so the anon-key
+ * fallback below only lets the module load (build, tests) — every query through it is refused.
  */
 
 if (typeof window !== 'undefined') {
@@ -20,7 +20,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!serviceKey) {
-  console.warn('SUPABASE_SERVICE_ROLE_KEY is not set — falling back to the anon key. Set it before revoking anon access.');
+  console.warn('SUPABASE_SERVICE_ROLE_KEY is not set — falling back to the anon key, which has no database access (migration 042).');
 }
 
 export const supabase = createClient(supabaseUrl, serviceKey || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {

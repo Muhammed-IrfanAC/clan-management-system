@@ -41,15 +41,15 @@ echo "→ Restoring into testing project…"
 psql "$DST_DB_URL" -v ON_ERROR_STOP=1 -f "$DUMP_FILE"
 
 # The dump is taken with --no-privileges (avoids role-ownership noise), so the
-# Supabase API roles lose their grants on the recreated tables. Without this,
-# the anon/service keys can't read anything and every PostgREST query returns
-# empty. Re-grant to match a fresh Supabase project's defaults.
-echo "→ Re-granting privileges to Supabase API roles…"
+# app's role loses its grants on the recreated tables. Without this the secret
+# key can't read anything and every PostgREST query fails. Re-grant to match
+# production: service_role only (the dump carries RLS over; anon gets nothing).
+echo "→ Re-granting privileges to the app's role…"
 psql "$DST_DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
-GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
+GRANT USAGE ON SCHEMA public TO service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO service_role;
 SQL
 
 echo "✓ Testing DB now mirrors production's public schema + data."
