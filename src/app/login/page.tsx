@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Shield, Sword, ChevronRight } from 'lucide-react';
+import { Shield, ChevronRight, ArrowLeft } from 'lucide-react';
 
 const REMEMBERED_TAG_KEY = 'clanops-remembered-tag';
 
@@ -11,7 +11,17 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Step 2: the code sent to the user's Discord DMs. Null while still on the tag step.
+  const [challenge, setChallenge] = useState<{ id: string; tag: string } | null>(null);
+  const [code, setCode] = useState('');
+  const [resendIn, setResendIn] = useState(0);
   const router = useRouter();
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
 
   // Prefill the tag saved on this device so returning users don't retype it.
   useEffect(() => {
@@ -24,8 +34,9 @@ export default function LoginPage() {
     }
   }, []);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Step 1: ask for a code to be sent to the tag owner's Discord.
+  const sendCode = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     setLoading(true);
     setError('');
 
@@ -35,26 +46,59 @@ export default function LoginPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ playerTag }),
       });
-
       const data = await res.json();
-
       if (!res.ok) {
+        if (data.retryAfterSec) setResendIn(data.retryAfterSec);
         throw new Error(data.error || 'Login failed');
       }
 
       // Persist (or clear) the tag on this device based on the checkbox.
+      const tag = playerTag.toUpperCase().replace('#', '');
       if (rememberMe) {
-        localStorage.setItem(REMEMBERED_TAG_KEY, playerTag.toUpperCase().replace('#', ''));
+        localStorage.setItem(REMEMBERED_TAG_KEY, tag);
       } else {
         localStorage.removeItem(REMEMBERED_TAG_KEY);
       }
 
-      router.push('/dashboard');
-    } catch (err: any) {
-      setError(err.message);
+      setChallenge({ id: data.challengeId, tag });
+      setCode('');
+      setResendIn(data.resendAfterSec ?? 60);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setLoading(false);
     }
+  };
+
+  // Step 2: exchange the code for a session.
+  const verifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!challenge) return;
+    setLoading(true);
+    setError('');
+
+    try {
+      const res = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeId: challenge.id, code }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCode('');
+        throw new Error(data.error || 'Login failed');
+      }
+      router.push('/dashboard');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed');
+      setLoading(false);
+    }
+  };
+
+  const backToTag = () => {
+    setChallenge(null);
+    setCode('');
+    setError('');
   };
 
   return (
@@ -83,7 +127,56 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <form onSubmit={handleLogin} style={{ textAlign: 'left' }}>
+        {challenge ? (
+        <form onSubmit={verifyCode} style={{ textAlign: 'left' }}>
+          <p className="text-muted" style={{ fontSize: '0.85rem', marginBottom: 'var(--space-lg)', textAlign: 'center' }}>
+            We sent a 6-digit code to your Discord DMs for <strong>#{challenge?.tag}</strong>.
+          </p>
+          <div style={{ marginBottom: 'var(--space-lg)' }}>
+            <label style={{ display: 'block', marginBottom: 'var(--space-sm)', fontSize: '0.8rem', fontWeight: '600', color: 'var(--color-muted)', textTransform: 'uppercase' }}>
+              Login Code
+            </label>
+            <input
+              type="text"
+              name="code"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
+              maxLength={7}
+              className="input"
+              placeholder="123456"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/[^\d]/g, '').slice(0, 6))}
+              style={{ letterSpacing: '0.4em', textAlign: 'center', fontSize: '1.25rem' }}
+              required
+            />
+            {error && <p className="text-danger" style={{ fontSize: '0.8rem', marginTop: 'var(--space-sm)' }}>{error}</p>}
+          </div>
+
+          <button
+            type="submit"
+            className="btn btn-primary"
+            style={{ width: '100%', height: '3.5rem' }}
+            disabled={loading || code.length !== 6}
+          >
+            {loading ? 'Verifying...' : (
+              <>
+                Log in <ChevronRight size={20} />
+              </>
+            )}
+          </button>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'var(--space-md)', fontSize: '0.8rem' }}>
+            <button type="button" className="btn-link text-muted" onClick={backToTag} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: 'none', border: 0, cursor: 'pointer' }}>
+              <ArrowLeft size={14} /> Different tag
+            </button>
+            <button type="button" className="btn-link text-muted" onClick={() => sendCode()} disabled={loading || resendIn > 0} style={{ background: 'none', border: 0, cursor: resendIn > 0 ? 'default' : 'pointer' }}>
+              {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
+            </button>
+          </div>
+        </form>
+        ) : (
+        <form onSubmit={sendCode} style={{ textAlign: 'left' }}>
           <div style={{ marginBottom: 'var(--space-lg)' }}>
             <label style={{ display: 'block', marginBottom: 'var(--space-sm)', fontSize: '0.8rem', fontWeight: '600', color: 'var(--color-muted)', textTransform: 'uppercase' }}>
               Your Player Tag
@@ -133,17 +226,18 @@ export default function LoginPage() {
             style={{ width: '100%', height: '3.5rem' }}
             disabled={loading}
           >
-            {loading ? 'Verifying...' : (
+            {loading ? 'Sending code...' : (
               <>
-                Initialize Access <ChevronRight size={20} />
+                Send code to Discord <ChevronRight size={20} />
               </>
             )}
           </button>
         </form>
+        )}
 
         <div style={{ marginTop: 'var(--space-xl)', padding: 'var(--space-md)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
           <p className="text-muted" style={{ fontSize: '0.75rem' }}>
-            No email. No password. Identity = player tag.
+            No password. Your player tag, confirmed by a code on Discord.
           </p>
         </div>
       </div>

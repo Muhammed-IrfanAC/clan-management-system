@@ -4,8 +4,7 @@ import { jwtVerify } from 'jose';
 import { AccessRole } from '@/types/database';
 import { ALL_CAPABILITIES, can } from '@/lib/permissions';
 import { loadCapabilityOverrides } from '@/lib/permissions-server';
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
+import { jwtSecret } from '@/lib/auth/jwtSecret';
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,7 +13,7 @@ export async function GET(request: NextRequest) {
     
     let decoded: any;
     try {
-      const { payload } = await jwtVerify(token, JWT_SECRET);
+      const { payload } = await jwtVerify(token, jwtSecret());
       decoded = payload;
     } catch (e) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });

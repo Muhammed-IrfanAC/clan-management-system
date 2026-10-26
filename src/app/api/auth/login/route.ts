@@ -1,67 +1,45 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
-import { SignJWT } from 'jose';
-import { AccessRole } from '@/types/database';
+import { startLoginChallenge } from '@/lib/auth/loginChallenge';
 
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
-
+/**
+ * Step 1 of login: send a one-time code to the Discord DMs of the person the tag belongs to. No
+ * session is issued here — a tag is public, so it only says WHO is trying to log in; the code sent
+ * to their Discord (step 2, /api/auth/verify) is what proves it is them.
+ *
+ * Access is a property of the PERSON (persons.access_role), so any account linked to an
+ * access-holding person can start a login, and the code goes to that person's Discord.
+ */
 export async function POST(request: Request) {
   try {
-    const { playerTag } = await request.json();
-
-    if (!playerTag) {
+    const { playerTag } = await request.json().catch(() => ({}));
+    if (typeof playerTag !== 'string' || !playerTag.trim()) {
       return NextResponse.json({ error: 'Player tag is required' }, { status: 400 });
     }
 
-    // Normalized tag (uppercase, remove # if present)
-    const normalizedTag = playerTag.startsWith('#') ? playerTag.toUpperCase() : `#${playerTag.toUpperCase()}`;
-
-    // Access is a property of the PERSON, not the account or the clan they currently sit in. We look
-    // up the account only to resolve its linked person, then gate purely on that person's access_role.
-    // Consequence (by design): ANY tag linked to an access-holding person can log in — including alts
-    // parked outside the family clans — and in-game rank / clan membership is no longer a login gate.
-    const { data: account } = await supabase
-      .from('player_accounts')
-      .select('*, person:persons(access_role)')
-      .eq('player_tag', normalizedTag)
-      .maybeSingle();
-
-    const accessRole =
-      (account as { person?: { access_role?: AccessRole | null } | null } | null)?.person?.access_role ?? null;
-
-    if (!account || !accessRole) {
-      // Either the tag isn't registered yet (accounts arrive via clan sync) or its person has not
-      // been granted access. Access is granted deliberately in Settings or directly in the DB.
-      return NextResponse.json({ error: 'This account has no dashboard access' }, { status: 403 });
+    const result = await startLoginChallenge(playerTag);
+    switch (result.kind) {
+      case 'sent':
+        return NextResponse.json({ challengeId: result.challengeId, expiresAt: result.expiresAt, resendAfterSec: result.resendAfterSec });
+      case 'no_access':
+        return NextResponse.json({ error: 'This account has no dashboard access' }, { status: 403 });
+      case 'no_discord':
+        return NextResponse.json(
+          { error: 'No Discord account is linked to you, so a login code cannot be sent. Ask a leader to link your Discord on your member page.' },
+          { status: 403 },
+        );
+      case 'rate_limited':
+        return NextResponse.json(
+          { error: `Too many codes requested. Try again in ${result.retryAfterSec}s.`, retryAfterSec: result.retryAfterSec },
+          { status: 429, headers: { 'Retry-After': String(result.retryAfterSec) } },
+        );
+      case 'dm_failed':
+        return NextResponse.json(
+          { error: "Couldn't DM you on Discord. Allow direct messages from members of the clan server (Server → Privacy Settings), then try again." },
+          { status: 502 },
+        );
     }
-
-    return createAuthResponse(account, accessRole);
-
-  } catch (error: any) {
+  } catch (error) {
     console.error('Auth error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
-}
-
-async function createAuthResponse(player: any, role: AccessRole) {
-  const token = await new SignJWT({
-    playerTag: player.player_tag,
-    role,
-  })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('30d')
-    .sign(JWT_SECRET);
-
-  const response = NextResponse.json({ success: true, user: player });
-
-  response.cookies.set('clanops-auth', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 30 // 30 days; middleware slides this forward on activity
-  });
-
-  return response;
 }

@@ -155,6 +155,22 @@ export async function discordBotRequest(
 }
 
 /**
+ * DM one user as the bot. Deliberately NOT subject to the routing override: a DM is addressed to one
+ * person — a login code most of all — and redirecting it to the shared test channel would hand it to
+ * everyone there. Fails (false) when the user does not share a server with the bot or has DMs from
+ * server members turned off. Never throws.
+ */
+export async function sendDirectMessage(userId: string, payload: DiscordMessage): Promise<boolean> {
+  const recipient = normalizeDiscordId(userId);
+  if (!recipient) return false;
+  const dm = await request(`${API}/users/@me/channels`, 'POST', { recipient_id: recipient }, { bot: true });
+  const channelId = (dm as { id?: string } | null)?.id;
+  if (!channelId) return false;
+  const body = payload.allowed_mentions ? { ...payload, allowed_mentions: sanitizeMentions(payload.allowed_mentions) } : payload;
+  return (await request(`${API}/channels/${channelId}/messages`, 'POST', body, { bot: true })) !== null;
+}
+
+/**
  * Fill in the reply to a DEFERRED interaction (the "thinking…" placeholder). Authenticated by the
  * interaction token rather than the bot token, valid for 15 minutes after the interaction arrived.
  * Not subject to the routing override: a reply belongs to the person who asked, wherever they asked.

@@ -7,7 +7,7 @@ vi.mock('./routing', () => ({
   fallbackDestination: () => null,
 }));
 
-import { postOrEditDiscordMessage, sendDiscordMessage } from './transport';
+import { postOrEditDiscordMessage, sendDirectMessage, sendDiscordMessage } from './transport';
 
 const CH = '111111111111111111';
 const USER = '123456789012345678';
@@ -109,5 +109,27 @@ describe('postOrEditDiscordMessage', () => {
     expect(id).toBe('m10');
     expect(calls.map((c) => c.method)).toEqual(['PATCH', 'POST']);
     expect(calls[1].body).not.toHaveProperty('username');
+  });
+});
+
+describe('sendDirectMessage', () => {
+  it('opens a DM channel and posts into it, ignoring the routing override', async () => {
+    h.override = { channelId: CH };
+    responses.push(new Response(JSON.stringify({ id: 'dm-channel' }), { status: 200 }));
+    expect(await sendDirectMessage(`<@${USER}>`, { content: 'code 123456' })).toBe(true);
+    expect(calls.map((c) => c.url)).toEqual([
+      'https://discord.com/api/v10/users/@me/channels',
+      'https://discord.com/api/v10/channels/dm-channel/messages',
+    ]);
+    expect(calls[0].body).toEqual({ recipient_id: USER });
+    expect(calls[1].body).toEqual({ content: 'code 123456' });
+  });
+
+  it('fails when the DM channel cannot be opened, or for a malformed user id', async () => {
+    responses.push(new Response('{"message":"Cannot send messages to this user"}', { status: 403 }));
+    expect(await sendDirectMessage(USER, { content: 'x' })).toBe(false);
+    expect(calls).toHaveLength(1);
+    expect(await sendDirectMessage('not-an-id', { content: 'x' })).toBe(false);
+    expect(calls).toHaveLength(1);
   });
 });
