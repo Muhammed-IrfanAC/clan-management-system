@@ -8,7 +8,7 @@ import DiscordRoutingCard from './DiscordRoutingCard';
 // takes to change what shows here.
 //
 // The one exception is the Discord routing override, which gets a hand-built card: its value is a
-// secret that never reaches this component (the store filters it out), so it cannot be rendered by
+// secret that never reaches this component (the settings view leaves it out), so it cannot be rendered by
 // the generic loop at all.
 export default function GeneralTab() {
   const appSettings = useSettingsStore((s) => s.appSettings);

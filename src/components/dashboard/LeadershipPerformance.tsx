@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabase';
 import { TrendingUp, ChevronLeft, Activity } from 'lucide-react';
 import LineChart, { ChartSeries } from '@/components/charts/LineChart';
 
@@ -71,17 +70,13 @@ export default function LeadershipPerformance({ selectedClanId }: { selectedClan
       const bkts = buildBuckets(granularity);
       const idxByKey = new Map(bkts.map((b, i) => [b.key, i]));
 
-      // Each leadership "action" = a warning logged OR a leadership note recorded,
-      // attributed to the actor's player_tag (logged_by) and timestamped (logged_at).
-      let warnReq = supabase
-        .from('warnings')
-        .select('logged_by, logged_at, player_account:player_accounts!inner(clan_id)');
-      if (selectedClanId !== 'all') warnReq = warnReq.eq('player_account.clan_id', selectedClanId);
-
-      let logReq = supabase.from('leadership_logs').select('logged_by, logged_at, clan_id');
-      if (selectedClanId !== 'all') logReq = logReq.eq('clan_id', selectedClanId);
-
-      const [{ data: warns }, { data: logs }] = await Promise.all([warnReq, logReq]);
+      // Each leadership "action" = a warning logged OR a leadership note recorded, attributed to the
+      // actor's player_tag (logged_by) and timestamped (logged_at). The route also names every actor.
+      const res = await fetch(`/api/views/leadership?clanId=${encodeURIComponent(selectedClanId)}`);
+      if (!res.ok) throw new Error(`Leadership activity load failed (${res.status})`);
+      const data = await res.json();
+      const actions = (data.actions as { logged_by: string | null; logged_at: string | null }[]) || [];
+      const nameByTag: Record<string, string> = data.names || {};
 
       const overallCounts = new Array(bkts.length).fill(0);
       const byTag = new Map<string, number[]>();
@@ -97,22 +92,9 @@ export default function LeadershipPerformance({ selectedClanId }: { selectedClan
           byTag.get(tag)![idx]++;
         }
       };
-      ingest(warns);
-      ingest(logs);
+      ingest(actions);
 
-      // Resolve actor tags -> person/leader names.
       const tags = Array.from(byTag.keys());
-      const nameByTag: Record<string, string> = {};
-      if (tags.length) {
-        const { data: accts } = await supabase
-          .from('player_accounts')
-          .select('player_tag, in_game_name, person:persons (display_name)')
-          .in('player_tag', tags);
-        type AcctRow = { player_tag: string; in_game_name: string | null; person: { display_name: string } | null };
-        for (const a of (accts as AcctRow[] | null) || []) {
-          nameByTag[a.player_tag] = a.person?.display_name || a.in_game_name || a.player_tag;
-        }
-      }
 
       const aggs: LeaderAgg[] = tags
         .map(tag => {

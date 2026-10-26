@@ -32,6 +32,7 @@ Create a `.env.local` file with the following:
 # Supabase
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_secret_key   # server-only; never NEXT_PUBLIC_
 
 # Auth
 JWT_SECRET=your_secure_random_string

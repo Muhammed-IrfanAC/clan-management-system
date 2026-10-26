@@ -4,8 +4,8 @@ import { authorizeActive } from '@/lib/auth-server';
 
 export async function GET(request: NextRequest) {
   try {
-    const token = request.cookies.get('clanops-auth')?.value;
-    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const auth = await authorizeActive(request);
+    if (auth.error) return auth.error;
     
     const { data: logs, error } = await supabase
       .from('leadership_logs')

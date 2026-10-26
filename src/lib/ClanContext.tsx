@@ -1,7 +1,6 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
 import { Clan } from '@/types/database';
 
 interface ClanContextType {
@@ -20,9 +19,15 @@ export function ClanProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     async function fetchClans() {
-      const { data } = await supabase.from('clans').select('*').order('display_order');
-      setClans(data || []);
-      setLoading(false);
+      try {
+        const res = await fetch('/api/clans');
+        const data = res.ok ? await res.json() : [];
+        setClans(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error('Error loading clans:', err);
+      } finally {
+        setLoading(false);
+      }
     }
     fetchClans();
   }, []);
