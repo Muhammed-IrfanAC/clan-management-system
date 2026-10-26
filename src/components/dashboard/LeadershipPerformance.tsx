@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { TrendingUp, ChevronLeft, Activity } from 'lucide-react';
 import LineChart, { ChartSeries } from '@/components/charts/LineChart';
 
 type Granularity = 'weekly' | 'monthly';
+type Action = { logged_by: string | null; logged_at: string | null };
 
 type LeaderAgg = {
   tag: string;
@@ -59,67 +60,57 @@ function bucketKeyFor(date: Date, granularity: Granularity) {
 export default function LeadershipPerformance({ selectedClanId }: { selectedClanId: string }) {
   const [granularity, setGranularity] = useState<Granularity>('weekly');
   const [loading, setLoading] = useState(true);
-  const [buckets, setBuckets] = useState<{ key: string; label: string }[]>([]);
-  const [overall, setOverall] = useState<number[]>([]);
-  const [leaders, setLeaders] = useState<LeaderAgg[]>([]);
+  const [raw, setRaw] = useState<{ actions: Action[]; names: Record<string, string> }>({ actions: [], names: {} });
   const [selected, setSelected] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const bkts = buildBuckets(granularity);
-      const idxByKey = new Map(bkts.map((b, i) => [b.key, i]));
-
-      // Each leadership "action" = a warning logged OR a leadership note recorded, attributed to the
-      // actor's player_tag (logged_by) and timestamped (logged_at). The route also names every actor.
-      const res = await fetch(`/api/views/leadership?clanId=${encodeURIComponent(selectedClanId)}`);
-      if (!res.ok) throw new Error(`Leadership activity load failed (${res.status})`);
-      const data = await res.json();
-      const actions = (data.actions as { logged_by: string | null; logged_at: string | null }[]) || [];
-      const nameByTag: Record<string, string> = data.names || {};
-
-      const overallCounts = new Array(bkts.length).fill(0);
-      const byTag = new Map<string, number[]>();
-
-      const ingest = (rows: { logged_by: string | null; logged_at: string | null }[] | null) => {
-        for (const r of rows || []) {
-          const tag = r.logged_by;
-          if (!tag || !r.logged_at) continue;
-          const idx = idxByKey.get(bucketKeyFor(new Date(r.logged_at), granularity));
-          if (idx === undefined) continue;
-          overallCounts[idx]++;
-          if (!byTag.has(tag)) byTag.set(tag, new Array(bkts.length).fill(0));
-          byTag.get(tag)![idx]++;
-        }
-      };
-      ingest(actions);
-
-      const tags = Array.from(byTag.keys());
-
-      const aggs: LeaderAgg[] = tags
-        .map(tag => {
-          const counts = byTag.get(tag)!;
-          return { tag, name: nameByTag[tag] || tag, color: '', total: counts.reduce((a, b) => a + b, 0), counts };
-        })
-        .sort((a, b) => b.total - a.total)
-        .map((l, i) => ({ ...l, color: LEADER_COLORS[i % LEADER_COLORS.length] }));
-
-      setBuckets(bkts);
-      setOverall(overallCounts);
-      setLeaders(aggs);
-      // Drop a stale drill-down selection if that leader is no longer present.
-      setSelected(prev => (prev && aggs.some(a => a.tag === prev) ? prev : null));
-    } catch (err) {
-      console.error('Leadership performance error:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedClanId, granularity]);
-
+  // The fetch depends on the clan only; bucketing is derived below, so the 12W / 6M toggle re-buckets
+  // what is already loaded instead of downloading it again.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch on mount / clan / granularity change
-    fetchData();
-  }, [fetchData]);
+    let current = true;
+    (async () => {
+      setLoading(true);
+      try {
+        // Each leadership "action" = a warning logged, attributed to the actor's player_tag (logged_by)
+        // and timestamped (logged_at). The route also names every actor.
+        const res = await fetch(`/api/views/leadership?clanId=${encodeURIComponent(selectedClanId)}`);
+        if (!res.ok) throw new Error(`Leadership activity load failed (${res.status})`);
+        const data = await res.json();
+        if (current) setRaw({ actions: (data.actions as Action[]) || [], names: data.names || {} });
+      } catch (err) {
+        console.error('Leadership performance error:', err);
+      } finally {
+        if (current) setLoading(false);
+      }
+    })();
+    return () => { current = false; };
+  }, [selectedClanId]);
+
+  const { buckets, overall, leaders } = useMemo(() => {
+    const bkts = buildBuckets(granularity);
+    const idxByKey = new Map(bkts.map((b, i) => [b.key, i]));
+    const overallCounts = new Array(bkts.length).fill(0);
+    const byTag = new Map<string, number[]>();
+
+    for (const r of raw.actions) {
+      const tag = r.logged_by;
+      if (!tag || !r.logged_at) continue;
+      const idx = idxByKey.get(bucketKeyFor(new Date(r.logged_at), granularity));
+      if (idx === undefined) continue;
+      overallCounts[idx]++;
+      if (!byTag.has(tag)) byTag.set(tag, new Array(bkts.length).fill(0));
+      byTag.get(tag)![idx]++;
+    }
+
+    const aggs: LeaderAgg[] = Array.from(byTag.keys())
+      .map(tag => {
+        const counts = byTag.get(tag)!;
+        return { tag, name: raw.names[tag] || tag, color: '', total: counts.reduce((a, b) => a + b, 0), counts };
+      })
+      .sort((a, b) => b.total - a.total)
+      .map((l, i) => ({ ...l, color: LEADER_COLORS[i % LEADER_COLORS.length] }));
+
+    return { buckets: bkts, overall: overallCounts, leaders: aggs };
+  }, [raw, granularity]);
 
   const selectedLeader = leaders.find(l => l.tag === selected) || null;
 
@@ -157,7 +148,7 @@ export default function LeadershipPerformance({ selectedClanId }: { selectedClan
               <ChevronLeft size={13} /> All leaders <span style={{ color: 'var(--color-text)' }}>›&nbsp;{selectedLeader.name}</span>
             </button>
           ) : (
-            <p className="text-muted" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>Warnings logged &amp; leadership notes over time. Click a leader to drill in.</p>
+            <p className="text-muted" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>Warnings logged over time. Click a leader to drill in.</p>
           )}
         </div>
 

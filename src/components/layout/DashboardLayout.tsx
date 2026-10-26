@@ -7,7 +7,6 @@ import {
   LayoutDashboard, 
   Users, 
   AlertTriangle, 
-  History, 
   Settings,
   LogOut,
   ChevronDown,
@@ -19,6 +18,7 @@ import {
   Ban
 } from 'lucide-react';
 import { useClan } from '@/lib/ClanContext';
+import { fetchCurrentUser } from '@/lib/currentUser';
 
 interface SidebarItemProps {
   href: string;
@@ -100,9 +100,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     async function fetchUser() {
       try {
-        const res = await fetch('/api/auth/me');
-        if (res.ok) {
-          const data = await res.json();
+        const data = await fetchCurrentUser();
+        if (data) {
           setUser(data.user);
           setRole(data.role ?? null);
         }
@@ -146,7 +145,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <SidebarItem href="/dashboard/strikes" icon={<AlertTriangle size={20} />} label="Strikes" active={pathname === '/dashboard/strikes'} />
           <SidebarItem href="/dashboard/kicks" icon={<Ban size={20} />} label="Kick List" active={pathname === '/dashboard/kicks'} />
           <SidebarItem href="/dashboard/cwl" icon={<Swords size={20} />} label="Clan War League" active={pathname.startsWith('/dashboard/cwl')} />
-          <SidebarItem href="/dashboard/activity" icon={<History size={20} />} label="Activity Log" active={pathname === '/dashboard/activity'} />
           <SidebarItem href="/dashboard/settings" icon={<Settings size={20} />} label="Settings" active={pathname === '/dashboard/settings'} />
         </nav>
       </aside>

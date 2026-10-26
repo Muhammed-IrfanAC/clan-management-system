@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useDeferredValue } from 'react';
 import { Search } from 'lucide-react';
 import { useMembersStore, type AccountWithClan } from '@/lib/stores/membersStore';
 import { useClan } from '@/lib/ClanContext';
@@ -37,15 +37,22 @@ export default function MembersPage() {
     if (f === 'all' || f === 'discord_unlinked') setFilterType(f);
   }, []);
 
-  const filteredMembers = members.filter((m) => {
-    const matchesSearch =
-      m.display_name.toLowerCase().includes(search.toLowerCase()) ||
-      m.player_accounts.some((pa) => pa.in_game_name.toLowerCase().includes(search.toLowerCase()) || pa.player_tag.includes(search.toUpperCase()));
-    const matchesType = filterType === 'all' || !m.discord_user_id;
-    return matchesSearch && matchesType;
-  });
+  // The list filters on a deferred copy of the search, so the input stays responsive while React
+  // re-renders the matching cards behind it.
+  const deferredSearch = useDeferredValue(search);
+  const filteredMembers = useMemo(() => {
+    const lower = deferredSearch.toLowerCase();
+    const upper = deferredSearch.toUpperCase();
+    return members.filter((m) => {
+      const matchesSearch =
+        m.display_name.toLowerCase().includes(lower) ||
+        m.player_accounts.some((pa) => pa.in_game_name.toLowerCase().includes(lower) || pa.player_tag.includes(upper));
+      const matchesType = filterType === 'all' || !m.discord_user_id;
+      return matchesSearch && matchesType;
+    });
+  }, [members, deferredSearch, filterType]);
 
-  const discordUnlinkedCount = members.filter((m) => !m.discord_user_id).length;
+  const discordUnlinkedCount = useMemo(() => members.filter((m) => !m.discord_user_id).length, [members]);
 
   return (
     <div>

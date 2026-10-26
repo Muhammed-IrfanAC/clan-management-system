@@ -22,8 +22,6 @@ CREATE TABLE IF NOT EXISTS persons (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     display_name TEXT NOT NULL,
     notes TEXT,
-    is_baby BOOLEAN NOT NULL DEFAULT FALSE,
-    baby_started_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -79,10 +77,10 @@ CREATE TABLE IF NOT EXISTS leadership_logs (
     pinned BOOLEAN DEFAULT FALSE
 );
 
--- 8. BABY COMMENTS
--- Threaded leader notes attached to a baby (probationary) persona. Editable only while
--- persons.is_baby = true; frozen after promotion. Cascade-deleted if the persona is removed.
-CREATE TABLE IF NOT EXISTS baby_comments (
+-- 8. MEMBER NOTES
+-- Threaded leader notes attached to a person; only the author person can edit/delete.
+-- Cascade-deleted if the person is removed.
+CREATE TABLE IF NOT EXISTS member_notes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     person_id UUID NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     author_tag TEXT NOT NULL,
@@ -91,15 +89,14 @@ CREATE TABLE IF NOT EXISTS baby_comments (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_baby_comments_person_id ON baby_comments(person_id);
+CREATE INDEX IF NOT EXISTS idx_member_notes_person_id ON member_notes(person_id);
 
 -- SEED INITIAL DATA
 INSERT INTO settings (key, value, description) VALUES 
 ('sync_interval_minutes', '5', 'Min minutes between auto-syncs'),
 ('sync_auto_enabled', 'true', 'Whether to sync on dashboard load'),
 ('warning_escalation_days', '3', 'Days until warning becomes HIGH'),
-('cross_clan_warning_visibility', 'true', 'All leaders see all warnings'),
-('baby_trial_days', '4', 'Days a new "baby" member has to be promoted before the system auto-unlinks them')
+('cross_clan_warning_visibility', 'true', 'All leaders see all warnings')
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO rules (name, description, logging_guidance) VALUES 

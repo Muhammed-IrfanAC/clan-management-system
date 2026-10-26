@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
@@ -35,17 +35,24 @@ export default function DashboardPage() {
   });
   const [loading, setLoading] = useState(true);
 
+  // Only the newest load may land: a clan switch while one is in flight must not let the older
+  // response overwrite the clan now selected.
+  const latestFetch = useRef(0);
+
   useEffect(() => {
     fetchData();
   }, [selectedClanId]);
 
   async function fetchData() {
+    const request = ++latestFetch.current;
+    const isCurrent = () => request === latestFetch.current;
     setLoading(true);
     try {
       // Member/unlinked counts and the strike rows, in one round trip (the route reads them in parallel).
       const res = await fetch(`/api/views/overview?clanId=${encodeURIComponent(selectedClanId)}`);
       if (!res.ok) throw new Error(`Overview load failed (${res.status})`);
       const data = await res.json();
+      if (!isCurrent()) return;
 
       // Strike-derived counts: war-ineligible (active unresolved) and removal-flagged (3+ active).
       // Derived client-side via the same pure engine the Strikes page uses — grouped per ACCOUNT — so
@@ -63,7 +70,7 @@ export default function DashboardPage() {
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 

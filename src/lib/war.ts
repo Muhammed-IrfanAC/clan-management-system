@@ -115,17 +115,20 @@ export async function syncWarState(): Promise<{ clansPolled: number; warsUpserte
     .select('id, clan_tag')
     .eq('active', true);
 
-  let clansPolled = 0;
-  let warsUpserted = 0;
-
-  for (const clan of (clans as { id: string; clan_tag: string }[] | null) || []) {
-    try {
-      warsUpserted += await ingestClan(clan.id, clan.clan_tag);
-      clansPolled++;
-    } catch (err) {
-      console.error(`Regular war ingest failed for clan ${clan.clan_tag}:`, err);
-    }
-  }
+  // Each clan's war is its own; poll them together, isolating failures per clan.
+  const results = await Promise.all(
+    ((clans as { id: string; clan_tag: string }[] | null) || []).map(async (clan) => {
+      try {
+        return await ingestClan(clan.id, clan.clan_tag);
+      } catch (err) {
+        console.error(`Regular war ingest failed for clan ${clan.clan_tag}:`, err);
+        return null;
+      }
+    }),
+  );
+  const polled = results.filter((n): n is number => n !== null);
+  const clansPolled = polled.length;
+  const warsUpserted = polled.reduce((a, n) => a + n, 0);
 
   // Sweep any past-due wars that we missed transitioning to 'warEnded' (e.g. because a new war
   // was immediately declared and fetchCurrentWar now only returns the new one).

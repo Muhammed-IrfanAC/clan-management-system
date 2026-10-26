@@ -1,28 +1,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { hasCapability, authorizeActive as authorize } from '@/lib/auth-server';
+import { canModifyAuthored, authorizeActive as authorize } from '@/lib/auth-server';
 import { buildStrikeStatusUpdate, type StrikeStatusPatch } from '@/lib/strikes/mutations';
-
-// Resolve a player_tag to the person it is linked to, if any.
-async function personIdForTag(tag: string): Promise<string | null> {
-  const { data } = await supabase
-    .from('player_accounts')
-    .select('person_id')
-    .eq('player_tag', tag)
-    .maybeSingle();
-  return data?.person_id ?? null;
-}
-
-// Authorship at the PERSON level: the strike's logger and the actor are each mapped to their
-// person, and editing is allowed when they match — so any alt of the original author can edit too.
-async function isAuthor(loggedBy: string, actorTag: string): Promise<boolean> {
-  if (loggedBy === actorTag) return true;
-  const [authorPerson, actorPerson] = await Promise.all([
-    personIdForTag(loggedBy),
-    personIdForTag(actorTag),
-  ]);
-  return !!authorPerson && !!actorPerson && authorPerson === actorPerson;
-}
 
 /** GET one strike with everything the Player Dossier needs. */
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -75,7 +54,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     // Editing the strike's own notes is authored content — gate it author-or-override.
     if (body.notes !== undefined) {
-      if (!(await isAuthor(existing.logged_by, auth.actorTag!)) && !(await hasCapability(auth.actorTag!, 'content.override'))) {
+      if (!(await canModifyAuthored(auth, existing.logged_by))) {
         return NextResponse.json({ error: 'Only the strike author can edit its notes' }, { status: 403 });
       }
     }
@@ -111,7 +90,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
       .eq('id', id)
       .maybeSingle();
     if (!existing) return NextResponse.json({ error: 'Strike not found' }, { status: 404 });
-    if (!(await isAuthor(existing.logged_by, auth.actorTag!)) && !(await hasCapability(auth.actorTag!, 'content.override'))) {
+    if (!(await canModifyAuthored(auth, existing.logged_by))) {
       return NextResponse.json({ error: 'Only the strike author can delete it' }, { status: 403 });
     }
 

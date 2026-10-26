@@ -10,6 +10,14 @@ import { alertUnlinkedArrivals, settleUnlinkedJoinAlerts } from './unlinked/join
 import { syncTownHallRoles } from './members/thRoleSync';
 import type { ClanArrival } from './kicks/watch';
 
+/**
+ * How long a sync may run before it stops starting new work. Both sync routes allow 60s; the margin is
+ * for the response and for a step already under way when the deadline passes.
+ */
+const SYNC_DEADLINE_MS = 50_000;
+/** A lease older than this belongs to a sync whose function was killed — take it over. */
+const LEASE_STALE_MS = 2 * 60 * 1000;
+
 export async function syncClan(clanId: string) {
   try {
     // 1. Get clan details from DB
@@ -275,13 +283,30 @@ async function safeScanViolations() {
  * (`members/thRoleSync.ts` gates itself). Runs last, after the roster is settled. Fail-safe like the
  * other post-roster steps. Returns null on any error.
  */
-async function safeSyncTownHallRoles() {
+async function safeSyncTownHallRoles(syncStartedAt: number) {
   try {
-    return await syncTownHallRoles();
+    return await syncTownHallRoles({ deadline: syncStartedAt + SYNC_DEADLINE_MS });
   } catch (err) {
     console.error('TH role sync error (non-fatal):', err);
     return null;
   }
+}
+
+/**
+ * Everything that runs once the rosters are reconciled, staged by what each step reads. The transfer
+ * check and the two arrival alerts are independent of one another; CWL and regular war ingestion are
+ * independent of one another but wait for the transfer check, because CWL's signup sync settles the
+ * same pending transfers; and the rule scan reads what both war steps wrote. Every step is fail-safe.
+ */
+async function runPostRosterSteps(arrivals: ClanArrival[], unlinkedArrivals: ClanArrival[]) {
+  const [transfers, kickList, unlinked] = await Promise.all([
+    safeDetectTransfers(),
+    safeAlertKickedArrivals(arrivals),
+    safeAlertUnlinkedArrivals(unlinkedArrivals),
+  ]);
+  const [cwl, war] = await Promise.all([safeCwlSync(), safeWarSync()]);
+  const violations = await safeScanViolations();
+  return { transfers, kickList, unlinked, cwl, war, violations };
 }
 
 /**
@@ -291,15 +316,49 @@ async function safeSyncTownHallRoles() {
  * responsibility — this function performs no authorization.
  */
 export async function runFullSync(clanId?: string) {
+  const lease = await claimSyncLease();
+  if (lease === 'held') return { success: true, skipped: 'another sync is running' };
+  try {
+    return await runSyncPass(clanId);
+  } finally {
+    if (lease === 'claimed') await releaseSyncLease();
+  }
+}
+
+/**
+ * Claim the single-row `sync_lease` (migration 044) so the cron and a dashboard sync cannot run the
+ * pipeline at the same time — doubling every CoC and Discord call, and racing the once-per-round
+ * lineup notice into posting twice. The read only happens when the claim fails, to tell a held lease
+ * from a missing row; with no row (migration not applied) the sync runs unguarded rather than never.
+ */
+async function claimSyncLease(): Promise<'claimed' | 'held' | 'unguarded'> {
+  const now = Date.now();
+  const { data: claimed, error } = await supabase
+    .from('sync_lease')
+    .update({ claimed_at: new Date(now).toISOString() })
+    .eq('id', true)
+    .lt('claimed_at', new Date(now - LEASE_STALE_MS).toISOString())
+    .select('id');
+  if (error) {
+    console.error('Sync lease claim failed (running unguarded):', error);
+    return 'unguarded';
+  }
+  if (claimed?.length) return 'claimed';
+  const { data: row } = await supabase.from('sync_lease').select('id').eq('id', true).maybeSingle();
+  return row ? 'held' : 'unguarded';
+}
+
+async function releaseSyncLease() {
+  const { error } = await supabase.from('sync_lease').update({ claimed_at: new Date(0).toISOString() }).eq('id', true);
+  if (error) console.error('Sync lease release failed (expires on its own):', error);
+}
+
+async function runSyncPass(clanId?: string) {
+  const syncStartedAt = Date.now();
   if (clanId) {
     const { arrivals, firstSync, ...result } = await syncClan(clanId);
-    const transfers = await safeDetectTransfers();
-    const kickList = await safeAlertKickedArrivals(arrivals);
-    const unlinked = await safeAlertUnlinkedArrivals(firstSync ? [] : arrivals);
-    const cwl = await safeCwlSync();
-    const war = await safeWarSync();
-    const violations = await safeScanViolations();
-    return { ...result, transfers, kickList, unlinked, cwl, war, violations };
+    const steps = await runPostRosterSteps(arrivals, firstSync ? [] : arrivals);
+    return { ...result, ...steps };
   }
 
   const { data: clans } = await supabase.from('clans').select('id').eq('active', true);
@@ -307,24 +366,17 @@ export async function runFullSync(clanId?: string) {
 
   const results = await Promise.all(clans.map(c => syncClan(c.id)));
 
-  const transfers = await safeDetectTransfers();
-  const kickList = await safeAlertKickedArrivals(results.flatMap((r) => r.arrivals));
-  const unlinked = await safeAlertUnlinkedArrivals(results.flatMap((r) => (r.firstSync ? [] : r.arrivals)));
-  const cwl = await safeCwlSync();
-  const war = await safeWarSync();
-  const violations = await safeScanViolations();
-  const thRoles = await safeSyncTownHallRoles();
+  const steps = await runPostRosterSteps(
+    results.flatMap((r) => r.arrivals),
+    results.flatMap((r) => (r.firstSync ? [] : r.arrivals)),
+  );
+  const thRoles = await safeSyncTownHallRoles(syncStartedAt);
 
   return {
     success: true,
     clansSynced: results.length,
     totalUpdated: results.reduce((acc, r) => acc + r.count, 0),
-    transfers,
-    kickList,
-    unlinked,
-    cwl,
-    war,
-    violations,
+    ...steps,
     thRoles,
   };
 }

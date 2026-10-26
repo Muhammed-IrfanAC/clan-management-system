@@ -10,7 +10,6 @@ import Toast from '@/components/ui/Toast';
 import PersonCard from '@/components/members/dossier/PersonCard';
 import MemberNotes from '@/components/members/dossier/MemberNotes';
 import StrikeHistory from '@/components/members/dossier/StrikeHistory';
-import ActivityHistory from '@/components/members/dossier/ActivityHistory';
 
 export default function PersonProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -92,7 +91,6 @@ export default function PersonProfilePage({ params }: { params: Promise<{ id: st
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
           <MemberNotes />
           <StrikeHistory />
-          <ActivityHistory />
         </div>
       </div>
 

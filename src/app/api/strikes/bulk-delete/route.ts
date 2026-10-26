@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { hasCapability, authorizeActive as authorize } from '@/lib/auth-server';
+import { roleCan, authorizeActive as authorize } from '@/lib/auth-server';
 
 /**
  * Bulk-delete strikes (each cascades to its violations/notes). Unlike single delete — which the
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
     const auth = await authorize(request);
     if (auth.error) return auth.error;
 
-    if (!(await hasCapability(auth.actorTag!, 'content.override'))) {
+    if (!(await roleCan(auth.role, 'content.override'))) {
       return NextResponse.json(
         { error: 'Only leaders and super admins can bulk-delete strikes' },
         { status: 403 },

@@ -1,28 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { hasCapability, authorizeActive as authorize } from '@/lib/auth-server';
-
-// Resolve a player_tag to the persona it is linked to, if any.
-async function personIdForTag(tag: string): Promise<string | null> {
-  const { data } = await supabase
-    .from('player_accounts')
-    .select('person_id')
-    .eq('player_tag', tag)
-    .maybeSingle();
-  return data?.person_id ?? null;
-}
-
-// Authorship is resolved at the PERSON level, not the account level: the warning's logger
-// (warnings.logged_by) and the actor are each mapped to their persona, and editing is
-// allowed when they match — so any alt of the original author can edit too.
-async function isAuthor(loggedBy: string, actorTag: string): Promise<boolean> {
-  if (loggedBy === actorTag) return true;
-  const [authorPerson, actorPerson] = await Promise.all([
-    personIdForTag(loggedBy),
-    personIdForTag(actorTag),
-  ]);
-  return !!authorPerson && !!actorPerson && authorPerson === actorPerson;
-}
+import { canModifyAuthored, authorizeActive as authorize } from '@/lib/auth-server';
 
 export async function PATCH(
   request: NextRequest,
@@ -59,7 +37,7 @@ export async function PATCH(
     if (!existing) return NextResponse.json({ error: 'Warning not found' }, { status: 404 });
 
     // Author-only, unless the actor holds the override capability (leaders / super admin).
-    if (!(await isAuthor(existing.logged_by, auth.actorTag!)) && !(await hasCapability(auth.actorTag!, 'content.override'))) {
+    if (!(await canModifyAuthored(auth, existing.logged_by))) {
       return NextResponse.json({ error: 'Only the warning author can edit it' }, { status: 403 });
     }
 
@@ -116,7 +94,7 @@ export async function DELETE(
       .eq('id', id)
       .maybeSingle();
     if (!existing) return NextResponse.json({ error: 'Warning not found' }, { status: 404 });
-    if (!(await isAuthor(existing.logged_by, auth.actorTag!)) && !(await hasCapability(auth.actorTag!, 'content.override'))) {
+    if (!(await canModifyAuthored(auth, existing.logged_by))) {
       return NextResponse.json({ error: 'Only the warning author can delete it' }, { status: 403 });
     }
 

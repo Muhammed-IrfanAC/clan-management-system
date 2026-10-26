@@ -44,7 +44,11 @@ export type ThRoleSyncResult =
 
 type RawMember = { user?: { id?: string; bot?: boolean }; roles?: string[] };
 
-export async function syncTownHallRoles(opts: { now?: Date; force?: boolean } = {}): Promise<ThRoleSyncResult> {
+/**
+ * `deadline` (epoch ms) caps the pass below its own budget when the caller has already spent time —
+ * the sync passes its overall deadline so this last step cannot push the function past its limit.
+ */
+export async function syncTownHallRoles(opts: { now?: Date; force?: boolean; deadline?: number } = {}): Promise<ThRoleSyncResult> {
   const guildId = process.env.DISCORD_GUILD_ID?.trim();
   if (!guildId || !process.env.DISCORD_BOT_TOKEN?.trim()) return { skipped: 'DISCORD_GUILD_ID / DISCORD_BOT_TOKEN not set' };
 
@@ -69,7 +73,7 @@ export async function syncTownHallRoles(opts: { now?: Date; force?: boolean } = 
   if (!claimed?.length) return { skipped: 'another pass is running' };
 
   try {
-    const result = await runPass(guildId);
+    const result = await runPass(guildId, opts.deadline);
     if (result.complete) {
       const { error } = await supabase.from('discord_th_role_sync').update({ completed_at: now.toISOString() }).eq('id', true);
       if (error) throw error;
@@ -80,9 +84,9 @@ export async function syncTownHallRoles(opts: { now?: Date; force?: boolean } = 
   }
 }
 
-async function runPass(guildId: string) {
+async function runPass(guildId: string, callerDeadline?: number) {
   // Real elapsed time, not the caller's `now` (which only decides what day it is).
-  const deadline = Date.now() + BUDGET_MS;
+  const deadline = Math.min(Date.now() + BUDGET_MS, callerDeadline ?? Infinity);
   const outOfTime = () => Date.now() >= deadline;
 
   // Flat selects joined here, so the pass runs on fakeSupabase (which does not resolve embeds).
@@ -134,14 +138,15 @@ async function runPass(guildId: string) {
   }
 
   const desired = desiredLevels(accounts, discordByPerson);
-  const members = (await listMembers(guildId)) ?? (await lookupMembers(guildId, [...new Set(discordByPerson.values())]));
+  const members = (await listMembers(guildId)) ?? (await lookupMembers(guildId, [...new Set(discordByPerson.values())], outOfTime));
 
   let added = 0;
   let removed = 0;
   let failed = 0;
   // A failed request (missing permission, a member above the bot) is retried tomorrow, not every
-  // sync; only running out of time leaves the pass open.
-  let complete = true;
+  // sync; only running out of time leaves the pass open — including during the member lookups, which
+  // then return a partial list.
+  let complete = !outOfTime();
   for (const change of planRoleChanges(members, desired, roleIds)) {
     if (outOfTime()) {
       complete = false;
@@ -178,11 +183,11 @@ async function listMembers(guildId: string): Promise<GuildMember[] | null> {
 }
 
 /** The members behind the given Discord ids, one lookup each; ids not in the server are skipped. */
-async function lookupMembers(guildId: string, ids: (string | null)[]): Promise<GuildMember[]> {
+async function lookupMembers(guildId: string, ids: (string | null)[], outOfTime: () => boolean): Promise<GuildMember[]> {
   const queue = [...new Set(ids.map(normalizeDiscordId).filter((id): id is string => !!id))];
   const out: GuildMember[] = [];
   const worker = async () => {
-    for (let id = queue.shift(); id; id = queue.shift()) {
+    for (let id = queue.shift(); id && !outOfTime(); id = queue.shift()) {
       const m = (await discordBotRequest('GET', `/guilds/${guildId}/members/${id}`)) as RawMember | null;
       if (m?.user?.id) out.push({ userId: m.user.id, roles: m.roles ?? [] });
     }

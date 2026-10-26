@@ -1,12 +1,14 @@
 'use client';
 
+import { memo } from 'react';
 import Link from 'next/link';
 import { User, ChevronRight } from 'lucide-react';
 import type { PersonWithAccounts } from '@/lib/stores/membersStore';
 
 // One registry row: identity avatar, name, linked-account chips, and a
-// link into the dossier. Purely presentational — all state lives in the store/page.
-export default function MemberCard({ member }: { member: PersonWithAccounts }) {
+// link into the dossier. Purely presentational — all state lives in the store/page. Memoised so a
+// search keystroke re-renders only the cards that changed, not the whole registry.
+export default memo(function MemberCard({ member }: { member: PersonWithAccounts }) {
   return (
     <div className="card" style={{ cursor: 'default' }}>
       <div className="member-card-content">
@@ -37,4 +39,4 @@ export default function MemberCard({ member }: { member: PersonWithAccounts }) {
       </div>
     </div>
   );
-}
+});

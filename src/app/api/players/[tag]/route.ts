@@ -1,6 +1,6 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { requireAuth, requireCapability, authErrorResponse, authorizeActive, hasCapability } from '@/lib/auth-server';
+import { requireAuth, requireCapability, authErrorResponse, authorizeActive, roleCan } from '@/lib/auth-server';
 import { isKicked } from '@/lib/kicks/kickList';
 
 /**
@@ -45,7 +45,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     if (isLastAccount) {
       // Same bar as deleting the person outright.
-      if (!(await hasCapability(auth.actorTag, 'leader.manage'))) {
+      if (!(await roleCan(auth.role, 'leader.manage'))) {
         return NextResponse.json(
           { error: 'This is their only account — unlinking it would delete the member. That needs leader permission; ask a leader or use Delete Person.' },
           { status: 403 }

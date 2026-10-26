@@ -1,4 +1,4 @@
-import { NextResponse, NextRequest } from 'next/server';
+import { NextResponse, NextRequest, after } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
 import { postSeasonRoster, postTransferCall } from '@/lib/cwl/rosterPostNotify';
@@ -31,7 +31,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const { error } = await supabase.from('cwl_seasons').update(patch).eq('id', id);
     if (error) throw error;
 
-    if (patch.status && patch.status !== before?.status) await announceStatus(id, patch.status);
+    // Announced after the response: posting every clan's roster edits several messages in turn, and
+    // the status change has already succeeded whatever Discord does.
+    const status = patch.status;
+    if (status && status !== before?.status) after(() => announceStatus(id, status));
     return NextResponse.json({ success: true });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { PlayerAccount, AccessRole } from '@/types/database';
 import type { Capability } from '@/lib/permissions';
+import { fetchCurrentUser } from '@/lib/currentUser';
 
 /**
  * Client hook for the logged-in leader. Reads /api/auth/me (which resolves the LIVE access_role of
@@ -21,14 +22,11 @@ export function useCurrentUser() {
     let active = true;
     (async () => {
       try {
-        const res = await fetch('/api/auth/me');
-        if (res.ok) {
-          const data = await res.json();
-          if (active) {
-            setUser(data.user);
-            setRole((data.role as AccessRole | null) ?? null);
-            setCapabilities((data.capabilities as Capability[] | undefined) ?? []);
-          }
+        const data = await fetchCurrentUser<{ user: PlayerAccount; role?: AccessRole | null; capabilities?: Capability[] }>();
+        if (data && active) {
+          setUser(data.user);
+          setRole(data.role ?? null);
+          setCapabilities(data.capabilities ?? []);
         }
       } catch {
         // Non-fatal: fall back to no-capabilities (buttons hidden) until reload.

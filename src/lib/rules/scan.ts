@@ -31,15 +31,16 @@ type AutomatedRule = {
 };
 
 export async function scanRuleViolations(): Promise<{ detected: number; logged: number; queued: number }> {
-  const { data: rules } = await supabase
-    .from('rules')
-    .select('id, name, automation_key, automation_config')
-    .eq('automation_enabled', true)
-    .not('automation_key', 'is', null);
-
   // Per-clan automation scope: a clan may opt its wars out of automation, or limit it to CWL. Load
   // once and apply to every detector's output so the choice is enforced uniformly across all rules.
-  const { data: clanRows } = await supabase.from('clans').select('id, rule_automation_mode');
+  const [{ data: rules }, { data: clanRows }] = await Promise.all([
+    supabase
+      .from('rules')
+      .select('id, name, automation_key, automation_config')
+      .eq('automation_enabled', true)
+      .not('automation_key', 'is', null),
+    supabase.from('clans').select('id, rule_automation_mode'),
+  ]);
   const modeByClan = new Map<string, RuleAutomationMode>(
     (clanRows as { id: string; rule_automation_mode: string | null }[] | null)?.map((c) => [
       c.id,
@@ -47,24 +48,34 @@ export async function scanRuleViolations(): Promise<{ detected: number; logged: 
     ]) || [],
   );
 
+  // Detection only reads, so every detector runs at once. Committing stays sequential, in rule
+  // order: two rules can fold into the same (account, war) strike, and concurrent commits would race
+  // on its strike_key.
+  const runnable = ((rules as AutomatedRule[] | null) || []).flatMap((rule) => {
+    const detector = DETECTORS[rule.automation_key];
+    const meta = detectorMeta(rule.automation_key);
+    if (!detector || !meta) return []; // enabled rule pointing at an unknown detector — skip safely
+    return [{ rule, detector, meta }];
+  });
+  const detections = await Promise.all(
+    runnable.map(async ({ rule, detector }) => {
+      try {
+        return await detector(rule.automation_config || {});
+      } catch (err) {
+        console.error(`Detector ${rule.automation_key} failed:`, err);
+        return null;
+      }
+    }),
+  );
+
   let detected = 0;
   let logged = 0;
   let queued = 0;
 
-  for (const rule of (rules as AutomatedRule[] | null) || []) {
-    const detector = DETECTORS[rule.automation_key];
-    const meta = detectorMeta(rule.automation_key);
-    if (!detector || !meta) continue; // enabled rule pointing at an unknown detector — skip safely
-
-    let violations;
-    try {
-      violations = await detector(rule.automation_config || {});
-    } catch (err) {
-      console.error(`Detector ${rule.automation_key} failed:`, err);
-      continue;
-    }
+  for (const [i, { rule, meta }] of runnable.entries()) {
+    if (!detections[i]) continue;
     // Drop violations from clans that have opted this war type out of automation.
-    violations = filterViolationsByClanMode(violations, modeByClan);
+    const violations = filterViolationsByClanMode(detections[i], modeByClan);
     detected += violations.length;
     if (!violations.length) continue;
 

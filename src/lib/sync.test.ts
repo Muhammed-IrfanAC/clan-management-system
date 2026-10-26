@@ -465,3 +465,33 @@ describe('persons', () => {
     expect(h.db.find('persons', 'p-bob')).toBeDefined();
   });
 });
+
+describe('sync lease (no overlapping passes)', () => {
+  it('skips a pass while another holds the lease, and runs once it is free', async () => {
+    h.coc.setRoster('#MAIN', [member('#A1')]);
+    h.coc.setRoster('#FEED', [member('#F1')]);
+    h.db.seed('sync_lease', [{ id: true, claimed_at: new Date(Date.now() - 30_000).toISOString() }]);
+
+    expect(await runFullSync()).toEqual({ success: true, skipped: 'another sync is running' });
+    expect(account('#A1')).toBeUndefined();
+
+    h.db.find('sync_lease', true)!.claimed_at = new Date(0).toISOString();
+    expect(await runFullSync()).toMatchObject({ success: true, clansSynced: 2 });
+    expect(account('#A1')).toBeDefined();
+    // Released for the next pass.
+    expect(h.db.find('sync_lease', true)!.claimed_at).toBe(new Date(0).toISOString());
+  });
+
+  it('takes over a stale lease left by a pass that was killed', async () => {
+    h.coc.setRoster('#MAIN', [member('#A1')]);
+    h.coc.setRoster('#FEED', [member('#F1')]);
+    h.db.seed('sync_lease', [{ id: true, claimed_at: new Date(Date.now() - 10 * 60_000).toISOString() }]);
+    expect(await runFullSync()).toMatchObject({ success: true, clansSynced: 2 });
+  });
+
+  it('runs unguarded when the lease row does not exist (migration not applied)', async () => {
+    h.coc.setRoster('#MAIN', [member('#A1')]);
+    h.coc.setRoster('#FEED', [member('#F1')]);
+    expect(await runFullSync()).toMatchObject({ success: true, clansSynced: 2 });
+  });
+});
