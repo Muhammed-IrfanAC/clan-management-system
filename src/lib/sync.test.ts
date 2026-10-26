@@ -25,6 +25,7 @@ vi.mock('@/lib/cwl/roster', () => ({ detectCompletedTransfers: vi.fn(async () =>
 vi.mock('@/lib/war', () => ({ syncWarState: vi.fn(async () => null) }));
 vi.mock('@/lib/rules/scan', () => ({ scanRuleViolations: vi.fn(async () => null) }));
 vi.mock('@/lib/members/thRoleSync', () => ({ syncTownHallRoles: vi.fn(async () => null) }));
+vi.mock('@/lib/warStats/weeklyPost', () => ({ postWeeklyStats: vi.fn(async () => null) }));
 // The kick-list alert runs for real; only the Discord transport is replaced, so a test can count and
 // read the messages it would have sent.
 vi.mock('@/lib/discord', () => ({

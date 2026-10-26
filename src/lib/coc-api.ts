@@ -109,6 +109,62 @@ export async function fetchCurrentWar(clanTag: string): Promise<CoCCurrentWar | 
   );
 }
 
+/**
+ * A player's official per-week Ranked League results, one item per week they played (oldest first).
+ * The current week is not in it until the week has ended; results appear a few minutes after the
+ * Monday 05:00 UTC reset. 404s for an unknown tag, which reads as "no history".
+ */
+export async function fetchLeagueHistory(playerTag: string): Promise<CoCLeagueHistoryEntry[] | null> {
+  const res = await fetchFromCoCOptional<{ items: CoCLeagueHistoryEntry[] }>(
+    `/players/${encodeURIComponent(playerTag)}/leaguehistory`
+  );
+  return res ? res.items ?? [] : null;
+}
+
+/**
+ * A player's most recent battles (about 50, newest last), ranked and multiplayer mixed. The only
+ * source of per-attack stars for ranked battles, since the league history's `attackStars` is always 0.
+ */
+export async function fetchBattleLog(playerTag: string): Promise<CoCBattle[] | null> {
+  const res = await fetchFromCoCOptional<{ items: CoCBattle[] }>(
+    `/players/${encodeURIComponent(playerTag)}/battlelog`
+  );
+  return res ? res.items ?? [] : null;
+}
+
+export interface CoCLeagueHistoryEntry {
+  /** The week's start as Unix seconds (a Monday, 05:00 UTC). */
+  leagueSeasonId: number;
+  leagueTrophies: number;
+  leagueTierId: number;
+  /** Final position in the player's league group. */
+  placement: number;
+  /** Ranked attacks made (a "win" is any attack that scored). */
+  attackWins: number;
+  attackLosses: number;
+  /** Always 0 in practice; per-attack stars come from the battle log instead. */
+  attackStars: number;
+  defenseWins: number;
+  defenseLosses: number;
+  /** Stars conceded across all defences. */
+  defenseStars: number;
+  /** The tier's attack allowance for the week. */
+  maxBattles: number;
+}
+
+export interface CoCBattle {
+  battleType: string; // 'ranked' | 'homeVillage' | …
+  attack: boolean;
+  opponentPlayerTag: string;
+  opponentName: string;
+  opponentTownHallLevel: number;
+  stars: number;
+  destructionPercentage: number;
+  battleTime: number;
+  /** Compact CoC timestamp — see `cocTime.ts`. */
+  battleTimestamp: string;
+}
+
 export interface CoCPlayer {
   tag: string;
   name: string;
