@@ -16,7 +16,6 @@
  */
 
 import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
 import type {
   CWLAllocationStatus,
   CWLConstraints,
@@ -65,16 +64,6 @@ type TransferRow = {
     account: { in_game_name: string | null } | null;
   } | null;
 };
-
-const TRANSFER_SELECT =
-  'id, status, from_clan_id, to_clan_id, allocation:cwl_allocations!inner(season_id, player_account_tag, ' +
-  'person:persons(display_name), account:player_accounts(in_game_name))';
-
-const ALLOCATION_SELECT =
-  // `note` carries the engine's reason for excluding an account — the roster board's callout reads
-  // it, so it has to travel with the row rather than being re-derived in the client.
-  'id, player_account_tag, person_id, recommended_clan_id, actual_clan_id, status, is_bench, note, ' +
-  'person:persons(display_name), account:player_accounts(in_game_name, th_level, league, league_tier_id)';
 
 /** Map a transfer row + its embeds into the panel's view model. */
 function toTransferItem(row: TransferRow): TransferItem {
@@ -192,8 +181,9 @@ export const useCWLStore = create<CWLState>((set, get) => ({
   selectSeason: (id) => set({ selectedSeasonId: id }),
 
   loadSeasons: async (selectAfter) => {
-    const { data } = await supabase.from('cwl_seasons').select('*').order('created_at', { ascending: false });
-    const rows = (data as CWLSeason[]) || [];
+    const res = await fetch('/api/views/cwl/seasons').catch(() => null);
+    const data = res?.ok ? await res.json() : [];
+    const rows: CWLSeason[] = Array.isArray(data) ? data : [];
     const prev = get().selectedSeasonId;
     set({
       seasons: rows,
@@ -205,17 +195,17 @@ export const useCWLStore = create<CWLState>((set, get) => ({
   loadSeason: async (seasonId) => {
     set({ loadingSeason: true });
     try {
-      const [{ data: clanRows }, { data: allocRows }, { data: transferRows }, { data: roundRows }, { data: optoutRows }] =
-        await Promise.all([
-          supabase.from('cwl_season_clans').select('clan_id, war_size, priority').eq('season_id', seasonId),
-          supabase.from('cwl_allocations').select(ALLOCATION_SELECT).eq('season_id', seasonId),
-          supabase.from('cwl_transfers').select(TRANSFER_SELECT).eq('allocation.season_id', seasonId),
-          supabase.from('cwl_rounds').select('*').eq('season_id', seasonId),
-          supabase
-            .from('cwl_season_optouts')
-            .select('player_account_tag, unavailable_from_round, unavailable_to_round')
-            .eq('season_id', seasonId),
-        ]);
+      // One round trip: the route reads the season's tables in parallel.
+      const res = await fetch(`/api/views/cwl/seasons/${encodeURIComponent(seasonId)}`);
+      if (!res.ok) throw new Error(`Season load failed (${res.status})`);
+      const {
+        clans: clanRows,
+        allocations: allocRows,
+        transfers: transferRows,
+        rounds: roundRows,
+        optouts: optoutRows,
+        warMembers: memberRows,
+      } = await res.json();
 
       const allocations = (allocRows as unknown as AllocationRow[]) || [];
       // Read separately from the allocations because it is not part of one: the opt-out is an input
@@ -235,14 +225,7 @@ export const useCWLStore = create<CWLState>((set, get) => ({
 
       // Live rounds + their lineups (populated by sync).
       const liveRounds = (roundRows as CWLRound[]) || [];
-      let liveMembers: CWLWarMember[] = [];
-      if (liveRounds.length) {
-        const { data: memberRows } = await supabase
-          .from('cwl_war_members')
-          .select('*')
-          .in('round_id', liveRounds.map((r) => r.id));
-        liveMembers = (memberRows as CWLWarMember[]) || [];
-      }
+      const liveMembers = (memberRows as CWLWarMember[]) || [];
 
       set({
         seasonClans: ((clanRows as SeasonClanRow[]) || [])
@@ -473,6 +456,8 @@ export const useCWLStore = create<CWLState>((set, get) => ({
 
 /** Re-read just the season's transfer list (used after a move retargets or clears one). */
 async function refreshTransfers(seasonId: string, set: (partial: Partial<CWLState>) => void) {
-  const { data } = await supabase.from('cwl_transfers').select(TRANSFER_SELECT).eq('allocation.season_id', seasonId);
-  set({ transfers: ((data as unknown as TransferRow[]) || []).map(toTransferItem) });
+  const res = await fetch(`/api/views/cwl/seasons/${encodeURIComponent(seasonId)}?part=transfers`);
+  if (!res.ok) return;
+  const { transfers } = await res.json();
+  set({ transfers: ((transfers as TransferRow[]) || []).map(toTransferItem) });
 }

@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
 import type { Clan, Rule, Setting, AccessRole, RuleAutomationMode } from '@/types/database';
 import type { Capability } from '@/lib/permissions';
 import type { ToastState } from '@/components/ui/Toast';
@@ -71,49 +70,28 @@ function byPerson(accts: AcctRow[]): Map<string, LeaderRow> {
   return map;
 }
 
-// Read every server slice the Settings screen needs in one shot. Kept separate from the actions so
-// both the initial load (with a loading flash) and post-mutation refreshes (silent) can reuse it.
-// Discord channel routing is configured through its own API route, not the generic settings blob,
-// which validates each channel id and drops the transport's routing cache. These keys are filtered
-// out here and rendered by their own control.
-export const DISCORD_ROUTE_KEYS = [
-  'discord_override_enabled',
-  'discord_override_channel_id',
-  'discord_announcement_channel_id',
-  'discord_leadership_channel_id',
-  'discord_unlinked_channel_id',
-];
-
+// Read every server slice the Settings screen needs in one shot (/api/views/settings, which runs the
+// reads in parallel). Kept separate from the actions so both the initial load (with a loading flash)
+// and post-mutation refreshes (silent) can reuse it. Discord channel routing is configured through its
+// own API route, which validates each channel id and drops the transport's routing cache, so the view
+// leaves those keys out and they are rendered by their own control.
 async function loadAll() {
-  const { data: s } = await supabase
-    .from('settings')
-    .select('*')
-    .not('key', 'in', `(${DISCORD_ROUTE_KEYS.join(',')})`);
-  const { data: c } = await supabase.from('clans').select('*').order('display_order');
-  const { data: r } = await supabase.from('rules').select('*');
+  const res = await fetch('/api/views/settings');
+  if (!res.ok) throw new Error(`Settings load failed (${res.status})`);
+  const data = await res.json();
 
   // Access-holders = persons with a non-null access_role, addressed via a representative account tag.
-  const { data: accts } = await supabase
-    .from('player_accounts')
-    .select('player_tag, is_main_account, person_id, person:persons!inner(access_role, display_name)')
-    .not('person.access_role', 'is', null);
-  const leaders = [...byPerson((accts || []) as unknown as AcctRow[]).values()];
+  const leaders = [...byPerson((data.leaderAccounts || []) as AcctRow[]).values()];
 
   // Candidate persons for the "Add Leader" picker: registry persons who do NOT yet hold access.
-  const { data: candAccts } = await supabase
-    .from('player_accounts')
-    .select('player_tag, is_main_account, person_id, person:persons!inner(access_role, display_name)')
-    .is('person.access_role', null)
-    // A person whose every account is inactive has left the family; they are not a candidate.
-    .neq('status', 'inactive');
-  const personOptions = [...byPerson((candAccts || []) as unknown as AcctRow[]).values()]
+  const personOptions = [...byPerson((data.candidateAccounts || []) as AcctRow[]).values()]
     .map((l) => ({ person_id: l.person_id, display_name: l.display_name, player_tag: l.player_tag }))
     .sort((x, y) => x.display_name.localeCompare(y.display_name));
 
   return {
-    appSettings: (s || []) as Setting[],
-    clans: (c || []) as Clan[],
-    rules: (r || []) as Rule[],
+    appSettings: (data.settings || []) as Setting[],
+    clans: (data.clans || []) as Clan[],
+    rules: (data.rules || []) as Rule[],
     leaders,
     personOptions,
   };
@@ -224,14 +202,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const prev = get().appSettings;
     set({ appSettings: prev.map((s) => (s.key === key ? { ...s, value } : s)) });
     try {
-      const { error } = await supabase.from('settings').update({ value }).eq('key', key);
-      if (error) throw error;
+      const res = await fetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value }),
+      });
+      if (!res.ok) throw new Error(`Setting update failed (${res.status})`);
     } catch {
       set({ appSettings: prev, toast: { message: 'Error updating setting.', type: 'error' } });
     }
   },
 
-  // Routed through /api/settings/discord-route rather than PostgREST — see DISCORD_ROUTE_KEYS. A
+  // Routed through /api/settings/discord-route rather than /api/settings — see loadAll. A
   // non-leader simply gets no control (the GET 403s).
   async fetchDiscordRoute() {
     try {

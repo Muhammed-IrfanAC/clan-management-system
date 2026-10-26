@@ -17,7 +17,6 @@
  */
 
 import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
 import type { LeadershipLog, Clan, Person, ActivityNote } from '@/types/database';
 import type { ToastState } from '@/components/ui/Toast';
 
@@ -160,54 +159,17 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   async fetchData(clanId) {
     set({ loading: true });
     try {
-      let req = supabase
-        .from('leadership_logs')
-        .select(
-          `
-          *,
-          clan:clans (*),
-          person:persons (*),
-          activity_notes (*)
-        `,
-        )
-        .order('pinned', { ascending: false })
-        .order('logged_at', { ascending: false });
-
-      if (clanId !== 'all') req = req.eq('clan_id', clanId);
-
-      const { data } = await req;
-      const logRows = (data as ExtendedLog[]) || [];
-      set({ logs: logRows });
-
-      // Resolve player_tags (entry loggers + note authors) to a display name and persona.
-      const loggerTags = Array.from(
-        new Set(
-          logRows
-            .flatMap((l) => [l.logged_by, ...((l.activity_notes || []).map((n) => n.author_tag))])
-            .filter(Boolean) as string[],
-        ),
-      );
-      if (loggerTags.length) {
-        const { data: loggers } = await supabase
-          .from('player_accounts')
-          .select('player_tag, person_id, in_game_name, person:persons (display_name)')
-          .in('player_tag', loggerTags);
-        const names: Record<string, string> = {};
-        const persons: Record<string, string | null> = {};
-        for (const l of (loggers as any[]) || []) {
-          names[l.player_tag] = l.person?.display_name || l.in_game_name || l.player_tag;
-          persons[l.player_tag] = l.person_id ?? null;
-        }
-        set({ loggerNames: names, authorPersons: persons });
-      } else {
-        set({ loggerNames: {}, authorPersons: {} });
-      }
-
-      const { data: clansData } = await supabase.from('clans').select('*');
-      set({ clans: (clansData as Clan[]) || [] });
-
-      const { data: personsData } = await supabase.from('persons').select('*').order('display_name');
-      set({ persons: (personsData as Person[]) || [] });
+      // One round trip: the route loads the feed and the form's option lists in parallel.
+      const res = await fetch(`/api/views/activity?clanId=${encodeURIComponent(clanId)}`);
+      if (!res.ok) throw new Error(`Activity load failed (${res.status})`);
+      const data = await res.json();
+      set({
+        logs: (data.logs as ExtendedLog[]) || [],
+        loggerNames: data.loggerNames || {},
+        authorPersons: data.authorPersons || {},
+        clans: (data.clans as Clan[]) || [],
+        persons: (data.persons as Person[]) || [],
+      });
     } catch (err) {
       console.error('Error fetching logs:', err);
     } finally {

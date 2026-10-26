@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { History, ArrowLeft, Activity } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import type { CWLSeason, CWLRound, CWLWarMember } from '@/types/database';
 import { computeCareerStats, type CareerHistory } from '@/lib/cwl/history';
 import HistoryView from '@/components/cwl/HistoryView';
@@ -15,27 +14,17 @@ export default function CWLHistoryPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: seasonRows } = await supabase.from('cwl_seasons').select('*').order('created_at', { ascending: true });
-      const seasons = (seasonRows as CWLSeason[]) || [];
-
-      let rounds: CWLRound[] = [];
-      let members: CWLWarMember[] = [];
-
-      if (seasons.length) {
-        const { data: roundRows } = await supabase.from('cwl_rounds').select('*').in('season_id', seasons.map((s) => s.id));
-        rounds = (roundRows as CWLRound[]) || [];
-
-        if (rounds.length) {
-          const { data: memberRows } = await supabase.from('cwl_war_members').select('*').in('round_id', rounds.map((r) => r.id));
-          members = (memberRows as CWLWarMember[]) || [];
-
-          // The in-game ACCOUNT name is left alone. This used to overwrite it with the linked
-          // person's display name, which read fine while the career table merged a person's alts
-          // into one row — but the table is now one row per account, and the override made every
-          // alt of a person carry the same name, three identical-looking rows distinguishable only
-          // by tag. The account name is the identity of the thing each row is actually counting.
-        }
-      }
+      const res = await fetch('/api/views/cwl/history');
+      if (!res.ok) throw new Error(`CWL history load failed (${res.status})`);
+      const data = await res.json();
+      const seasons = (data.seasons as CWLSeason[]) || [];
+      const rounds = (data.rounds as CWLRound[]) || [];
+      // The in-game ACCOUNT name is left alone. This used to overwrite it with the linked
+      // person's display name, which read fine while the career table merged a person's alts
+      // into one row — but the table is now one row per account, and the override made every
+      // alt of a person carry the same name, three identical-looking rows distinguishable only
+      // by tag. The account name is the identity of the thing each row is actually counting.
+      const members = (data.members as CWLWarMember[]) || [];
 
       setHistory(computeCareerStats(seasons, rounds, members));
     } catch (err) {

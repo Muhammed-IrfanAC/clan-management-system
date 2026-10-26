@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
 import type { Person, PlayerAccount, Clan } from '@/types/database';
 import type { ToastState } from '@/components/ui/Toast';
 
@@ -43,32 +42,15 @@ export const useMembersStore = create<MembersState>((set) => ({
   async fetchData(selectedClanId) {
     set({ loading: true });
     try {
-      // Persons with their linked accounts. The clan filter narrows the *person list* only
-      // (a person appearing in the selected clan keeps all their alts on the card). Inactive accounts
-      // are left off the cards, and through the inner join a person with nothing else drops off too.
-      const { data: personsData } = await supabase
-        .from('persons')
-        .select('*, player_accounts!inner (*, clan:clans (*))')
-        .neq('player_accounts.status', 'inactive')
-        .order('display_name');
-
-      let members = (personsData as PersonWithAccounts[]) || [];
-      if (selectedClanId !== 'all') {
-        members = members.filter((p) => p.player_accounts.some((acc) => acc.clan_id === selectedClanId));
-      }
-
-      // Active accounts not yet tied to a person — the roster-review queue.
-      let unlinkedReq = supabase
-        .from('player_accounts')
-        .select('*, clan:clans (*)')
-        .is('person_id', null)
-        .eq('status', 'active');
-      if (selectedClanId !== 'all') unlinkedReq = unlinkedReq.eq('clan_id', selectedClanId);
-      const { data: unlinkedData } = await unlinkedReq;
-
+      // Persons with their linked accounts plus the unlinked roster-review queue, in one round trip.
+      // The clan filter narrows the *person list* only (a person appearing in the selected clan keeps
+      // all their alts on the card); the server applies it.
+      const res = await fetch(`/api/views/members?clanId=${encodeURIComponent(selectedClanId)}`);
+      if (!res.ok) throw new Error(`Members load failed (${res.status})`);
+      const data = await res.json();
       set({
-        members,
-        unlinkedAccounts: (unlinkedData as AccountWithClan[]) || [],
+        members: (data.members as PersonWithAccounts[]) || [],
+        unlinkedAccounts: (data.unlinkedAccounts as AccountWithClan[]) || [],
         loading: false,
       });
     } catch (err) {
@@ -94,14 +76,8 @@ export const useMembersStore = create<MembersState>((set) => ({
       // person (with accounts) and splice it in — no full-registry reload / flash. This
       // one path covers both "link to existing" and "created a new person".
       if (personId) {
-        const { data: personRow } = await supabase
-          .from('persons')
-          .select('*, player_accounts!inner (*, clan:clans (*))')
-          .neq('player_accounts.status', 'inactive')
-          .eq('id', personId)
-          .single();
-
-        const person = personRow as PersonWithAccounts | null;
+        const pres = await fetch(`/api/views/members?personId=${encodeURIComponent(personId)}`);
+        const person = pres.ok ? ((await pres.json()).person as PersonWithAccounts | null) : null;
         set((s) => {
           const unlinkedAccounts = s.unlinkedAccounts.filter((a) => a.player_tag !== payload.playerTag);
           if (!person) return { unlinkedAccounts };

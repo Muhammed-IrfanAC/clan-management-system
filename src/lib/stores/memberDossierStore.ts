@@ -14,7 +14,6 @@
  */
 
 import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
 import type {
   Person,
   PlayerAccount,
@@ -129,59 +128,16 @@ export const useMemberDossierStore = create<DossierState>((set, get) => ({
   async fetchPerson(id) {
     set({ loading: true, personId: id });
     try {
-      const { data: pData, error: pError } = await supabase
-        .from('persons')
-        .select(
-          `
-          *,
-          player_accounts (
-            *,
-            clan:clans (*)
-          ),
-          strikes (
-            *,
-            rule:rules (*),
-            strike_violations (*)
-          ),
-          activity_logs:leadership_logs (*),
-          member_notes (*)
-        `,
-        )
-        .eq('id', id)
-        .single();
-
-      if (pError) throw pError;
-      const person = pData as FullPerson;
-      set({ person, kickedTags: [] });
-
-      const accountTags = (person?.player_accounts || []).map((a) => a.player_tag);
-      if (accountTags.length) {
-        const { data: kicked } = await supabase.from('kicked_accounts').select('player_tag').in('player_tag', accountTags);
-        set({ kickedTags: ((kicked as { player_tag: string }[]) || []).map((k) => k.player_tag) });
-      }
-
-      // Resolve player_tags (strike loggers + note authors) to display names.
-      const loggerTags = Array.from(
-        new Set(
-          [
-            ...(person?.strikes || []).map((s) => s.logged_by),
-            ...(person?.member_notes || []).map((c) => c.author_tag),
-          ].filter(Boolean) as string[],
-        ),
-      );
-      if (loggerTags.length) {
-        const { data: loggers } = await supabase
-          .from('player_accounts')
-          .select('player_tag, person_id, in_game_name, person:persons (display_name)')
-          .in('player_tag', loggerTags);
-        const names: Record<string, string> = {};
-        const persons: Record<string, string | null> = {};
-        for (const l of (loggers as any[]) || []) {
-          names[l.player_tag] = l.person?.display_name || l.in_game_name || l.player_tag;
-          persons[l.player_tag] = l.person_id ?? null;
-        }
-        set({ loggerNames: names, authorPersons: persons });
-      }
+      // One round trip: the person, their kick-list flags and the author name lookup.
+      const res = await fetch(`/api/views/members/${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error(`Person load failed (${res.status})`);
+      const data = await res.json();
+      set({
+        person: data.person as FullPerson,
+        kickedTags: (data.kickedTags as string[]) || [],
+        loggerNames: data.loggerNames || {},
+        authorPersons: data.authorPersons || {},
+      });
     } catch (err) {
       console.error('Error fetching person:', err);
     } finally {

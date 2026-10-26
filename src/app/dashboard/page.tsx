@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
 import {
   AlertTriangle,
   Users,
@@ -43,52 +42,23 @@ export default function DashboardPage() {
   async function fetchData() {
     setLoading(true);
     try {
-      // Person count (needs to be joined with player_accounts if filtering by clan). Only persons with
-      // an account that is not inactive count, matching the registry.
-      const personQuery = supabase
-        .from('persons')
-        .select('id, player_accounts!inner(status)', { count: 'exact', head: true })
-        .neq('player_accounts.status', 'inactive');
-      if (selectedClanId !== 'all') {
-          // This is tricky with exact count on persons. Let's count distinct person_id in player_accounts
-          const { count } = await supabase
-            .from('player_accounts')
-            .select('person_id', { count: 'exact', head: true })
-            .eq('clan_id', selectedClanId)
-            .neq('status', 'inactive')
-            .not('person_id', 'is', null);
-          setStats(s => ({ ...s, totalMembers: count || 0 }));
-      } else {
-          const { count } = await personQuery;
-          setStats(s => ({ ...s, totalMembers: count || 0 }));
-      }
-
-      // Unlinked accounts
-      let unlinkedQuery = supabase
-        .from('player_accounts')
-        .select('*', { count: 'exact', head: true })
-        .is('person_id', null)
-        .eq('status', 'active');
-      if (selectedClanId !== 'all') unlinkedQuery = unlinkedQuery.eq('clan_id', selectedClanId);
-      const { count: unlinkedCount } = await unlinkedQuery;
+      // Member/unlinked counts and the strike rows, in one round trip (the route reads them in parallel).
+      const res = await fetch(`/api/views/overview?clanId=${encodeURIComponent(selectedClanId)}`);
+      if (!res.ok) throw new Error(`Overview load failed (${res.status})`);
+      const data = await res.json();
 
       // Strike-derived counts: war-ineligible (active unresolved) and removal-flagged (3+ active).
       // Derived client-side via the same pure engine the Strikes page uses — grouped per ACCOUNT — so
       // the numbers agree with the Strikes screen.
-      let strikeQuery = supabase
-        .from('strikes')
-        .select('person_id, player_account_tag, issued_at, leadership_approved, clan_id, person:persons(id, display_name), player_account:player_accounts(in_game_name)');
-      if (selectedClanId !== 'all') strikeQuery = strikeQuery.eq('clan_id', selectedClanId);
-      const { data: strikeRows } = await strikeQuery;
-      const dossiers = buildDossiers((strikeRows as unknown as StrikeWithContext[]) || [], new Date());
+      const dossiers = buildDossiers((data.strikes as StrikeWithContext[]) || [], new Date());
       const worklist = buildWorklist(dossiers, new Date());
 
-      setStats(prev => ({
-        ...prev,
+      setStats({
+        totalMembers: data.totalMembers || 0,
         warIneligible: worklist.unresolved.length,
         removalFlagged: worklist.removalFlagged.length,
-        unlinkedAccounts: unlinkedCount || 0
-      }));
+        unlinkedAccounts: data.unlinkedAccounts || 0
+      });
 
     } catch (err) {
       console.error('Error fetching dashboard data:', err);

@@ -19,7 +19,6 @@ import {
   Ban
 } from 'lucide-react';
 import { useClan } from '@/lib/ClanContext';
-import { supabase } from '@/lib/supabase';
 
 interface SidebarItemProps {
   href: string;

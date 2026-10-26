@@ -10,8 +10,8 @@ import { botConfigured, invalidateDiscordRouteCache, normalizeChannelId } from '
  * channel (migration 035) that leadership-only alerts go to, and the UNLINKED-JOIN channel (migration
  * 036) that the unlinked-player join alert goes to. Each is a bot channel id (migration 037).
  *
- * A route rather than the General tab's direct PostgREST writes because these keys belong to one
- * control (the store filters them out of the settings blob), each id must parse before it is stored —
+ * A route of its own rather than the General tab's /api/settings because these keys belong to one
+ * control (/api/views/settings leaves them out of the settings blob), each id must parse before it is stored —
  * a stored id Discord rejects would silently send that route's traffic nowhere — and every write must
  * drop the transport's routing cache. Gated on `leader.manage`, the same capability that governs the
  * rest of system configuration.

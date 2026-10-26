@@ -12,7 +12,6 @@
  */
 
 import { create } from 'zustand';
-import { supabase } from '@/lib/supabase';
 import type { Person, PlayerAccount, Rule, StrikeSuggestion } from '@/types/database';
 import type { StrikeWithContext } from '@/lib/strikes/dossier';
 
@@ -99,62 +98,20 @@ export const useStrikeStore = create<StrikeState>((set, get) => ({
   async fetchData(selectedClanId) {
     set({ loading: true });
     try {
-      const res = await fetch('/api/strikes');
-      const data: StrikeWithContext[] = res.ok ? await res.json() : [];
-      const list = Array.isArray(data) ? data : [];
-
-      // Resolve logger + note-author + approver tags to display names / personas (no FK to accounts).
-      const tags = Array.from(new Set(list.flatMap((s) => [
-        s.logged_by,
-        ...((s.strike_notes || []).map((n) => n.author_tag)),
-        ...(s.approved_by ? [s.approved_by] : []),
-      ]).filter(Boolean)));
-      const loggerNames: Record<string, string> = {};
-      const authorPersons: Record<string, string | null> = {};
-      if (tags.length) {
-        const { data: loggers } = await supabase
-          .from('player_accounts')
-          .select('player_tag, person_id, in_game_name, person:persons (display_name)')
-          .in('player_tag', tags);
-        type LoggerRow = {
-          player_tag: string;
-          person_id: string | null;
-          in_game_name: string | null;
-          person: { display_name: string } | null;
-        };
-        for (const l of (loggers as unknown as LoggerRow[]) || []) {
-          loggerNames[l.player_tag] = l.person?.display_name || l.in_game_name || l.player_tag;
-          authorPersons[l.player_tag] = l.person_id ?? null;
-        }
-      }
-
-      const { data: rulesData } = await supabase.from('rules').select('*');
-
-      // Pending review queue (hit-up). Best-effort — a failure must not blank the page.
-      let reviewItems: ReviewItem[] = [];
-      try {
-        const rres = await fetch('/api/rules/review');
-        const items = rres.ok ? await rres.json() : [];
-        const rlist: ReviewItem[] = Array.isArray(items) ? items : [];
-        reviewItems = selectedClanId === 'all' ? rlist : rlist.filter((i) => !i.clan_id || i.clan_id === selectedClanId);
-      } catch {
-        reviewItems = [];
-      }
-
-      const { data: accountsData } = await supabase
-        .from('player_accounts')
-        .select('*, person:persons (id, display_name)')
-        .eq('status', 'active')
-        .not('person_id', 'is', null)
-        .order('in_game_name');
+      // One round trip: the route runs the independent reads in parallel server-side.
+      const res = await fetch('/api/views/strikes');
+      if (!res.ok) throw new Error(`Strikes load failed (${res.status})`);
+      const data = await res.json();
+      const list: StrikeWithContext[] = Array.isArray(data.strikes) ? data.strikes : [];
+      const rlist: ReviewItem[] = Array.isArray(data.reviewItems) ? data.reviewItems : [];
 
       set({
         strikes: list,
-        loggerNames,
-        authorPersons,
-        rules: rulesData || [],
-        reviewItems,
-        accounts: (accountsData as AccountWithPerson[]) || [],
+        loggerNames: data.loggerNames || {},
+        authorPersons: data.authorPersons || {},
+        rules: (data.rules as Rule[]) || [],
+        reviewItems: selectedClanId === 'all' ? rlist : rlist.filter((i) => !i.clan_id || i.clan_id === selectedClanId),
+        accounts: (data.accounts as AccountWithPerson[]) || [],
       });
     } catch (err) {
       console.error('Error fetching strikes:', err);
