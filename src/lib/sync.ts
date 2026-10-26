@@ -8,6 +8,7 @@ import { scanRuleViolations } from './rules/scan';
 import { alertKickedArrivals } from './kicks/arrivals';
 import { alertUnlinkedArrivals, settleUnlinkedJoinAlerts } from './unlinked/joinAlert';
 import { syncTownHallRoles } from './members/thRoleSync';
+import { postWeeklyStats } from './warStats/weeklyPost';
 import type { ClanArrival } from './kicks/watch';
 
 /**
@@ -293,6 +294,20 @@ async function safeSyncTownHallRoles(syncStartedAt: number) {
 }
 
 /**
+ * The weekly stats post, once per clan after each Ranked League week ends (`warStats/weeklyPost.ts`
+ * gates itself to the day after the Monday reset and stamps each clan it posts). Runs after the war
+ * ingestion so the report includes the latest ended war. Fail-safe. Returns null on any error.
+ */
+async function safePostWeeklyStats(syncStartedAt: number) {
+  try {
+    return await postWeeklyStats({ deadline: syncStartedAt + SYNC_DEADLINE_MS });
+  } catch (err) {
+    console.error('Weekly stats post error (non-fatal):', err);
+    return null;
+  }
+}
+
+/**
  * Everything that runs once the rosters are reconciled, staged by what each step reads. The transfer
  * check and the two arrival alerts are independent of one another; CWL and regular war ingestion are
  * independent of one another but wait for the transfer check, because CWL's signup sync settles the
@@ -371,6 +386,7 @@ async function runSyncPass(clanId?: string) {
     results.flatMap((r) => (r.firstSync ? [] : r.arrivals)),
   );
   const thRoles = await safeSyncTownHallRoles(syncStartedAt);
+  const weeklyStats = await safePostWeeklyStats(syncStartedAt);
 
   return {
     success: true,
@@ -378,5 +394,6 @@ async function runSyncPass(clanId?: string) {
     totalUpdated: results.reduce((acc, r) => acc + r.count, 0),
     ...steps,
     thRoles,
+    weeklyStats,
   };
 }
