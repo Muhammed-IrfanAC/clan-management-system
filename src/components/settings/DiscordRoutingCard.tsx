@@ -151,6 +151,8 @@ function BotStatus() {
   const checkDiscordChannels = useSettingsStore((s) => s.checkDiscordChannels);
   const syncing = useSettingsStore((s) => s.syncingCommands);
   const syncDiscordCommands = useSettingsStore((s) => s.syncDiscordCommands);
+  const syncingThRoles = useSettingsStore((s) => s.syncingThRoles);
+  const syncThRoles = useSettingsStore((s) => s.syncThRoles);
   if (!route) return null;
 
   return (
@@ -179,6 +181,17 @@ function BotStatus() {
             onClick={syncDiscordCommands}
           >
             {syncing ? 'Syncing…' : 'Sync slash commands'}
+          </button>
+        )}
+        {route.botConfigured && (
+          <button
+            className="btn btn-outline"
+            style={{ fontSize: '0.7rem' }}
+            disabled={syncingThRoles}
+            title="Create any missing TH9+ roles and give every linked member the TH roles of their accounts — normally done once a day by the sync"
+            onClick={syncThRoles}
+          >
+            {syncingThRoles ? 'Syncing roles…' : 'Sync TH roles'}
           </button>
         )}
       </div>

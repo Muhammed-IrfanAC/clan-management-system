@@ -7,6 +7,7 @@ import { syncWarState } from './war';
 import { scanRuleViolations } from './rules/scan';
 import { alertKickedArrivals } from './kicks/arrivals';
 import { alertUnlinkedArrivals, settleUnlinkedJoinAlerts } from './unlinked/joinAlert';
+import { syncTownHallRoles } from './members/thRoleSync';
 import type { ClanArrival } from './kicks/watch';
 
 export async function syncClan(clanId: string) {
@@ -270,6 +271,20 @@ async function safeScanViolations() {
 }
 
 /**
+ * Keep the family Discord's TH roles in step with the accounts — at most one finished pass a day
+ * (`members/thRoleSync.ts` gates itself). Runs last, after the roster is settled. Fail-safe like the
+ * other post-roster steps. Returns null on any error.
+ */
+async function safeSyncTownHallRoles() {
+  try {
+    return await syncTownHallRoles();
+  } catch (err) {
+    console.error('TH role sync error (non-fatal):', err);
+    return null;
+  }
+}
+
+/**
  * The full sync flow, shared by the cookie-auth route (`/api/sync`) and the machine-auth cron
  * route (`/api/cron/sync`) so both run identical logic. Pass a `clanId` to sync one clan, or omit
  * it to reconcile every active clan and refresh CWL. Auth is the caller's
@@ -298,6 +313,7 @@ export async function runFullSync(clanId?: string) {
   const cwl = await safeCwlSync();
   const war = await safeWarSync();
   const violations = await safeScanViolations();
+  const thRoles = await safeSyncTownHallRoles();
 
   return {
     success: true,
@@ -309,5 +325,6 @@ export async function runFullSync(clanId?: string) {
     cwl,
     war,
     violations,
+    thRoles,
   };
 }

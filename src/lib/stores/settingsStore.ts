@@ -152,6 +152,8 @@ type SettingsState = {
   checkDiscordChannels: () => Promise<void>;
   syncingCommands: boolean;
   syncDiscordCommands: () => Promise<void>;
+  syncingThRoles: boolean;
+  syncThRoles: () => Promise<void>;
   updateClanChannel: (id: string, channelId: string, column?: ClanChannelColumn) => Promise<boolean>;
 
   addClan: (form: NewClan) => Promise<boolean>;
@@ -194,6 +196,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   discordCheck: null,
   checkingDiscord: false,
   syncingCommands: false,
+  syncingThRoles: false,
 
   setToast: (toast) => set({ toast }),
 
@@ -343,6 +346,29 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ toast: { message: err instanceof Error ? err.message : 'Error syncing slash commands', type: 'error' } });
     } finally {
       set({ syncingCommands: false });
+    }
+  },
+
+  // Run the TH role pass now (members/thRoleSync.ts) rather than waiting for the daily one.
+  async syncThRoles() {
+    if (get().syncingThRoles) return;
+    set({ syncingThRoles: true });
+    try {
+      const res = await fetch('/api/discord/th-roles', { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || 'Error syncing TH roles');
+      const parts = [
+        body.created?.length ? `created ${(body.created as number[]).map((l) => `TH${l}`).join(', ')}` : null,
+        `${body.added} added`,
+        `${body.removed} removed`,
+        body.failed ? `${body.failed} failed (see server logs)` : null,
+      ].filter(Boolean);
+      const tail = body.complete ? '' : ' — not finished, the next sync carries on.';
+      set({ toast: { message: `TH roles: ${parts.join(', ')}.${tail}`, type: body.failed ? 'error' : 'success' } });
+    } catch (err) {
+      set({ toast: { message: err instanceof Error ? err.message : 'Error syncing TH roles', type: 'error' } });
+    } finally {
+      set({ syncingThRoles: false });
     }
   },
 
