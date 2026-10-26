@@ -1,19 +1,10 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { hasCapability, authorizeActive as authorize } from '@/lib/auth-server';
-
-async function personIdForTag(tag: string): Promise<string | null> {
-  const { data } = await supabase
-    .from('player_accounts')
-    .select('person_id')
-    .eq('player_tag', tag)
-    .maybeSingle();
-  return data?.person_id ?? null;
-}
+import { canModifyAuthored, authorizeActive as authorize, type ActiveAuth } from '@/lib/auth-server';
 
 // Only the note's AUTHOR PERSON may modify it (any alt of that person qualifies), unless the actor
 // holds the content.override capability.
-async function guardEditable(noteId: string, actorTag: string) {
+async function guardEditable(noteId: string, auth: ActiveAuth) {
   const { data: note } = await supabase
     .from('strike_notes')
     .select('id, author_tag')
@@ -21,14 +12,8 @@ async function guardEditable(noteId: string, actorTag: string) {
     .maybeSingle();
   if (!note) return { error: NextResponse.json({ error: 'Note not found' }, { status: 404 }) };
 
-  if (note.author_tag !== actorTag) {
-    const [authorPerson, actorPerson] = await Promise.all([
-      personIdForTag(note.author_tag),
-      personIdForTag(actorTag),
-    ]);
-    if ((!authorPerson || !actorPerson || authorPerson !== actorPerson) && !(await hasCapability(actorTag, 'content.override'))) {
-      return { error: NextResponse.json({ error: 'Only the note author can modify this note' }, { status: 403 }) };
-    }
+  if (!(await canModifyAuthored(auth, note.author_tag))) {
+    return { error: NextResponse.json({ error: 'Only the note author can modify this note' }, { status: 403 }) };
   }
   return { note };
 }
@@ -42,7 +27,7 @@ export async function PATCH(
     const auth = await authorize(request);
     if (auth.error) return auth.error;
 
-    const guard = await guardEditable(noteId, auth.actorTag!);
+    const guard = await guardEditable(noteId, auth);
     if (guard.error) return guard.error;
 
     const { body } = await request.json();
@@ -71,7 +56,7 @@ export async function DELETE(
     const auth = await authorize(request);
     if (auth.error) return auth.error;
 
-    const guard = await guardEditable(noteId, auth.actorTag!);
+    const guard = await guardEditable(noteId, auth);
     if (guard.error) return guard.error;
 
     const { error } = await supabase.from('strike_notes').delete().eq('id', noteId);

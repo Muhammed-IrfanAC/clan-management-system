@@ -30,6 +30,8 @@ type MembersState = {
   linkAccount: (payload: LinkPayload) => Promise<boolean>;
 };
 
+let latestFetch = 0;
+
 export const useMembersStore = create<MembersState>((set) => ({
   members: [],
   unlinkedAccounts: [],
@@ -40,7 +42,10 @@ export const useMembersStore = create<MembersState>((set) => ({
   setToast: (toast) => set({ toast }),
 
   async fetchData(selectedClanId) {
-    set({ loading: true });
+    // Only the newest request may land: switching clans quickly must not let a slower, older
+    // response overwrite the clan now selected. The current list stays on screen while it loads.
+    const request = ++latestFetch;
+    set((s) => ({ loading: s.members.length === 0 }));
     try {
       // Persons with their linked accounts plus the unlinked roster-review queue, in one round trip.
       // The clan filter narrows the *person list* only (a person appearing in the selected clan keeps
@@ -48,6 +53,7 @@ export const useMembersStore = create<MembersState>((set) => ({
       const res = await fetch(`/api/views/members?clanId=${encodeURIComponent(selectedClanId)}`);
       if (!res.ok) throw new Error(`Members load failed (${res.status})`);
       const data = await res.json();
+      if (request !== latestFetch) return;
       set({
         members: (data.members as PersonWithAccounts[]) || [],
         unlinkedAccounts: (data.unlinkedAccounts as AccountWithClan[]) || [],
@@ -55,6 +61,7 @@ export const useMembersStore = create<MembersState>((set) => ({
       });
     } catch (err) {
       console.error('Error fetching members:', err);
+      if (request !== latestFetch) return;
       set({ loading: false, toast: { message: 'Failed to load registry.', type: 'error' } });
     }
   },

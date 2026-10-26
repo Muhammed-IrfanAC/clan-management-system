@@ -30,6 +30,8 @@ const TEST_LABEL = 'ClanOps · test routing';
 
 /** A 429 asking us to wait longer than this is not retried — a sync should not stall on Discord. */
 const MAX_RETRY_WAIT_MS = 5_000;
+// Every send is best-effort; a stalled connection must not hold the sync or the request behind it.
+const DISCORD_TIMEOUT_MS = 10_000;
 
 /**
  * Last line of defence before an `allowed_mentions` block reaches Discord: a malformed id, a
@@ -242,6 +244,7 @@ async function request(
       method,
       headers,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(DISCORD_TIMEOUT_MS),
     });
     if (res.status === 429 && !opts.retried) {
       const info = (await res.json().catch(() => ({}))) as { retry_after?: number };

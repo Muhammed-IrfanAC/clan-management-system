@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
-import { pollLeagueState, type TaggedLeagueWar } from './api';
-import { UNREVEALED_WAR_TAG, type CoCLeagueWarClan } from '@/lib/coc-api';
+import { pollLeagueState, type KnownRound, type TaggedLeagueWar } from './api';
+import { fetchLeagueWar, UNREVEALED_WAR_TAG, type CoCLeagueWar, type CoCLeagueWarClan } from '@/lib/coc-api';
 import { buildLineup, persistWarAttacks } from '@/lib/warAttacks';
 import { parseCoCTime } from '@/lib/cocTime';
 import { notifyLineupIfRevealed, recordLineupChange } from './lineupNotify';
@@ -50,16 +50,46 @@ function ourSide(war: TaggedLeagueWar, clanTag: string): { us: CoCLeagueWarClan;
   return null;
 }
 
-/** What one clan's poll produced: its rounds, plus the in-game signup list to reconcile against. */
+/**
+ * What one clan's poll produced: the rounds it wrote, how many of the clan's rounds are revealed at
+ * all (written this poll or already stored as ended), and the in-game signup list to reconcile.
+ */
 interface ClanIngest {
   upserted: number;
+  revealed: number;
   signup: ClanSignup | null;
 }
 
+/**
+ * The rounds this clan already has stored, keyed by round number. A round stored as `warEnded` is
+ * final — its members, attacks and notices were all written when it was live — so the poll skips it
+ * rather than re-fetching and re-writing seven finished wars every five minutes by the end of the week.
+ */
+async function loadKnownRounds(seasonId: string, clanId: string): Promise<Map<number, KnownRound>> {
+  const { data, error } = await supabase
+    .from('cwl_rounds')
+    .select('round_number, war_tag, state')
+    .eq('season_id', seasonId)
+    .eq('clan_id', clanId);
+  // Without the hint the poll just does the full work, so a failed read costs time, not correctness.
+  if (error) console.error('CWL known-round read failed (polling every round):', error);
+  const known = new Map<number, KnownRound>();
+  for (const r of (data as { round_number: number; war_tag: string | null; state: string | null }[] | null) || []) {
+    if (r.war_tag) known.set(r.round_number, { warTag: r.war_tag, ended: r.state === 'warEnded' });
+  }
+  return known;
+}
+
 /** Ingest one family clan's league state into cwl_rounds + cwl_war_members. */
-async function ingestClan(seasonId: string, clanId: string, clanTag: string): Promise<ClanIngest> {
-  const snap = await pollLeagueState(clanTag);
-  if (!snap) return { upserted: 0, signup: null }; // off-season for this clan
+async function ingestClan(
+  seasonId: string,
+  clanId: string,
+  clanTag: string,
+  fetchWar: (warTag: string) => Promise<CoCLeagueWar>,
+): Promise<ClanIngest> {
+  const known = await loadKnownRounds(seasonId, clanId);
+  const snap = await pollLeagueState(clanTag, { known, fetchWar });
+  if (!snap) return { upserted: 0, revealed: 0, signup: null }; // off-season for this clan
 
   const warByTag = new Map(snap.wars.map((w) => [w.warTag, w] as const));
   let upserted = 0;
@@ -221,6 +251,8 @@ async function ingestClan(seasonId: string, clanId: string, clanTag: string): Pr
     });
   }
 
+  const revealed = upserted + snap.settledRounds.length;
+
   // `group.clans[].members` is the clan's authoritative CWL signup list — who leadership actually
   // signed in, available from prep day regardless of which round has been revealed. It is the input
   // the roster board is reconciled against (see signupReconcile.ts).
@@ -233,11 +265,11 @@ async function ingestClan(seasonId: string, clanId: string, clanTag: string): Pr
           name: m.name,
           thLevel: m.townHallLevel ?? null,
         })),
-        lineupRevealed: upserted > 0,
+        lineupRevealed: revealed > 0,
       }
     : null;
 
-  return { upserted, signup };
+  return { upserted, revealed, signup };
 }
 
 export async function syncCwlLiveState(): Promise<{ seasonsPolled: number; roundsUpserted: number }> {
@@ -248,6 +280,12 @@ export async function syncCwlLiveState(): Promise<{ seasonsPolled: number; round
 
   let seasonsPolled = 0;
   let roundsUpserted = 0;
+  // One fetch per war tag for the whole pass: two family clans in one group share their wars.
+  const warFetches = new Map<string, Promise<CoCLeagueWar>>();
+  const fetchWar = (warTag: string) => {
+    if (!warFetches.has(warTag)) warFetches.set(warTag, fetchLeagueWar(warTag));
+    return warFetches.get(warTag)!;
+  };
 
   for (const season of (seasons as { id: string; status: string }[] | null) || []) {
     try {
@@ -256,22 +294,24 @@ export async function syncCwlLiveState(): Promise<{ seasonsPolled: number; round
         .select('clan_id, clan:clans(id, clan_tag)')
         .eq('season_id', season.id);
 
-      let anyPolled = false;
-      let seasonRounds = 0;
-      const signups: ClanSignup[] = [];
-      for (const row of (sc as unknown as SeasonClanRow[]) || []) {
-        const tag = row.clan?.clan_tag;
-        if (!tag) continue;
-        try {
-          const { upserted, signup } = await ingestClan(season.id, row.clan_id, tag);
-          seasonRounds += upserted;
-          roundsUpserted += upserted;
-          if (signup) signups.push(signup);
-          anyPolled = true;
-        } catch (err) {
-          console.error(`CWL live ingest failed for clan ${tag}:`, err);
-        }
-      }
+      // Clans are independent until the signup reconcile below, so they are polled together.
+      const results = await Promise.all(
+        ((sc as unknown as SeasonClanRow[]) || []).map(async (row) => {
+          const tag = row.clan?.clan_tag;
+          if (!tag) return null;
+          try {
+            return await ingestClan(season.id, row.clan_id, tag, fetchWar);
+          } catch (err) {
+            console.error(`CWL live ingest failed for clan ${tag}:`, err);
+            return null;
+          }
+        }),
+      );
+      const polled = results.filter((r): r is ClanIngest => !!r);
+      const anyPolled = polled.length > 0;
+      const seasonRevealed = polled.reduce((n, r) => n + r.revealed, 0);
+      roundsUpserted += polled.reduce((n, r) => n + r.upserted, 0);
+      const signups = polled.flatMap((r) => (r.signup ? [r.signup] : []));
 
       // Reconcile ONCE per season, after every clan is polled — an account that moved between two
       // family clans is only judged correctly when both signup lists are in hand, exactly as
@@ -290,7 +330,7 @@ export async function syncCwlLiveState(): Promise<{ seasonsPolled: number; round
         // A revealed round is CWL having actually started. The status dropdown is a leader's planning
         // marker and routinely lags that, so the game moves it forward — never backwards, and never
         // out of 'completed'.
-        if (seasonRounds > 0 && PRE_LIVE_STATUSES.includes(season.status)) update.status = 'in_progress';
+        if (seasonRevealed > 0 && PRE_LIVE_STATUSES.includes(season.status)) update.status = 'in_progress';
         await supabase.from('cwl_seasons').update(update).eq('id', season.id);
       }
     } catch (err) {

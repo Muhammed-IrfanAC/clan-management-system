@@ -1,4 +1,4 @@
-import { NextResponse, NextRequest } from 'next/server';
+import { NextResponse, NextRequest, after } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
 import { sendDiscordMessage, destinationForClan, discordUserIdForPerson } from '@/lib/discord';
@@ -98,25 +98,32 @@ export async function POST(request: NextRequest) {
       if (vErr) console.error('Manual strike-violation insert failed (non-fatal):', vErr);
     }
 
-    // Best-effort Discord ping to the member's clan channel (never blocks the log).
-    try {
-      const { data: rule } = ruleId
-        ? await supabase.from('rules').select('name').eq('id', ruleId).maybeSingle()
-        : { data: null };
-      const ctx = await loadStrikeNotifyContext(playerTag);
-      await sendDiscordMessage(renderStrikePost({
-        memberName: account?.in_game_name,
-        playerTag,
-        ruleName: rule?.name ?? null,
-        reasons: descriptionText ? [descriptionText] : [],
-        strikeNumber: ctx.strikeNumber,
-        level: ctx.level,
-        activeStrikes: ctx.activeStrikes,
-        mentionDiscordId: await discordUserIdForPerson(personId),
-      }), await destinationForClan(account?.clan_id));
-    } catch (notifyErr) {
-      console.error('Manual strike Discord notification failed (non-fatal):', notifyErr);
-    }
+    // Best-effort Discord ping to the member's clan channel. Runs after the response is sent, so the
+    // log is never held on Discord or on the lookups behind the message.
+    after(async () => {
+      try {
+        const [{ data: rule }, ctx, mentionDiscordId, destination] = await Promise.all([
+          ruleId
+            ? supabase.from('rules').select('name').eq('id', ruleId).maybeSingle()
+            : Promise.resolve({ data: null as { name: string } | null }),
+          loadStrikeNotifyContext(playerTag),
+          discordUserIdForPerson(personId),
+          destinationForClan(account?.clan_id),
+        ]);
+        await sendDiscordMessage(renderStrikePost({
+          memberName: account?.in_game_name,
+          playerTag,
+          ruleName: rule?.name ?? null,
+          reasons: descriptionText ? [descriptionText] : [],
+          strikeNumber: ctx.strikeNumber,
+          level: ctx.level,
+          activeStrikes: ctx.activeStrikes,
+          mentionDiscordId,
+        }), destination);
+      } catch (notifyErr) {
+        console.error('Manual strike Discord notification failed (non-fatal):', notifyErr);
+      }
+    });
 
     return NextResponse.json(strike);
   } catch (error: any) {

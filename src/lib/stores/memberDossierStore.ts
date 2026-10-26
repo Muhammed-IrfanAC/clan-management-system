@@ -1,7 +1,7 @@
 /**
  * Zustand store for the Member Dossier screen (`/dashboard/members/[id]`).
  *
- * Why a store: the profile is a deep object (accounts + strikes + activity + notes) that several
+ * Why a store: the profile is a deep object (accounts + strikes + notes) that several
  * sibling cards render. Previously every mutation on the page — post a note, save a Discord id —
  * re-fetched the ENTIRE profile, which flashed the
  * whole page. The store instead applies each mutation GRANULARLY (splice the changed slice of
@@ -19,18 +19,17 @@ import type {
   PlayerAccount,
   Strike,
   StrikeViolation,
-  LeadershipLog,
   Clan,
   Rule,
   MemberNote,
 } from '@/types/database';
 import type { Capability } from '@/lib/permissions';
+import { fetchCurrentUser } from '@/lib/currentUser';
 import type { ToastState } from '@/components/ui/Toast';
 
 export type FullPerson = Person & {
   player_accounts: (PlayerAccount & { clan: Clan })[];
   strikes: (Strike & { rule: Rule | null; strike_violations: StrikeViolation[] })[];
-  activity_logs: LeadershipLog[];
   member_notes: MemberNote[];
 };
 
@@ -112,8 +111,7 @@ export const useMemberDossierStore = create<DossierState>((set, get) => ({
     // Identify the acting leader (and their persona) so cards can show edit/delete on content
     // authored by them or any of their alts (same person_id).
     try {
-      const r = await fetch('/api/auth/me');
-      const d = r.ok ? await r.json() : null;
+      const d = await fetchCurrentUser();
       set({
         currentUserTag: d?.user?.player_tag ?? null,
         currentUserName: d?.user?.in_game_name ?? null,

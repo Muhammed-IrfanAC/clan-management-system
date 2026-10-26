@@ -2,6 +2,9 @@ import { NextResponse, NextRequest } from 'next/server';
 import { runFullSync } from '@/lib/sync';
 import { authorizeActive } from '@/lib/auth-server';
 
+// Same pipeline as /api/cron/sync, so the same budget (lib/sync.ts stops starting work at 50s).
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   try {
     // 1. Auth check (identity + live dashboard access)

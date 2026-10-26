@@ -6,7 +6,7 @@
  * allocations, the transfers, every round and every war member, then re-rendered all of it — which
  * on a 3-clan family is four round-trips and a full-board flash to tick one checkbox.
  *
- * This store follows the same contract as strikeStore/activityStore: it holds SERVER TRUTH plus the
+ * This store follows the same contract as strikeStore/memberDossierStore: it holds SERVER TRUTH plus the
  * transient in-flight flags, and every mutation applies a GRANULAR, id-keyed splice of the row the
  * API returns, so only the affected card re-renders. The one deliberate exception is re-allocation,
  * which regenerates the whole roster by design and therefore does reload the season.

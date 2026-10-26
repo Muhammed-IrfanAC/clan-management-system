@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
   CheckCircle,
   Plus,
@@ -117,7 +117,7 @@ export default function StrikesPage() {
   // approving trust no longer re-fetches and flashes the whole page.
   const strikes = useStrikeStore((s) => s.strikes);
   const loading = useStrikeStore((s) => s.loading);
-  const reviewItems = useStrikeStore((s) => s.reviewItems);
+  const allReviewItems = useStrikeStore((s) => s.reviewItems);
   const rules = useStrikeStore((s) => s.rules);
   const accounts = useStrikeStore((s) => s.accounts);
   const actingReviewId = useStrikeStore((s) => s.actingReviewId);
@@ -157,13 +157,6 @@ export default function StrikesPage() {
   const [issuedAt, setIssuedAt] = useState('');
   const [logging, setLogging] = useState(false);
 
-  // Removal editor (per strike): rejoin date draft.
-  const [rejoinDrafts, setRejoinDrafts] = useState<Record<string, string>>({});
-
-  // Notes state.
-  const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({});
-  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
-
   // Summary builder.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showSummary, setShowSummary] = useState(false);
@@ -173,7 +166,8 @@ export default function StrikesPage() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => { loadIdentity(); }, [loadIdentity]);
-  useEffect(() => { fetchData(selectedClanId); }, [selectedClanId, fetchData]);
+  // The view is family-wide and scoped below, so it loads once rather than on every clan switch.
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   useEffect(() => {
     const f = new URLSearchParams(window.location.search).get('filter') as WorklistKey | null;
@@ -181,6 +175,11 @@ export default function StrikesPage() {
       setWorklistFilter(f);
     }
   }, []);
+
+  const reviewItems = useMemo(
+    () => allReviewItems.filter((i) => selectedClanId === 'all' || !i.clan_id || i.clan_id === selectedClanId),
+    [allReviewItems, selectedClanId],
+  );
 
   // Clan-scope the strike list; keep clan-less (manual) strikes visible under any filter.
   const scopedStrikes = useMemo(
@@ -216,7 +215,6 @@ export default function StrikesPage() {
         description,
         issuedAt: backdate && issuedAt ? dateToNoonIso(issuedAt) : null,
       },
-      selectedClanId,
     );
     setLogging(false);
     if (ok) {
@@ -259,13 +257,20 @@ export default function StrikesPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [showSummary]);
 
-  function toggleSelect(id: string) {
+  // Stable callbacks, so a memoised DossierCard is not re-rendered just because the page was.
+  const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  }
+  }, []);
+  const toggleExpanded = useCallback((tag: string) => setExpanded((p) => ({ ...p, [tag]: !p[tag] })), []);
+  const requestDelete = useCallback(
+    (id: string, name: string) =>
+      setConfirmConfig({ isOpen: true, id, title: 'Delete Strike', message: `Permanently remove this strike for ${name}? This cannot be undone.` }),
+    [],
+  );
   // Select-all operates on what's currently on screen (respecting the active worklist filter).
   const visibleStrikeIds = useMemo(
     () => visibleDossiers.flatMap((d) => d.strikes.map((s) => s.id)),
@@ -425,10 +430,10 @@ export default function StrikesPage() {
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-                    <button className="btn btn-primary" style={{ padding: '0.4rem 0.9rem', fontSize: '0.75rem' }} disabled={actingReviewId === r.id} onClick={() => actOnReviewAction(r.id, 'confirm', selectedClanId)}>
+                    <button className="btn btn-primary" style={{ padding: '0.4rem 0.9rem', fontSize: '0.75rem' }} disabled={actingReviewId === r.id} onClick={() => actOnReviewAction(r.id, 'confirm')}>
                       <Check size={15} /> Confirm
                     </button>
-                    <button className="btn btn-outline" style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-muted)', padding: '0.4rem 0.9rem', fontSize: '0.75rem' }} disabled={actingReviewId === r.id} onClick={() => actOnReviewAction(r.id, 'dismiss', selectedClanId)}>
+                    <button className="btn btn-outline" style={{ border: '1px solid rgba(255,255,255,0.1)', color: 'var(--color-muted)', padding: '0.4rem 0.9rem', fontSize: '0.75rem' }} disabled={actingReviewId === r.id} onClick={() => actOnReviewAction(r.id, 'dismiss')}>
                       <X size={15} /> Dismiss
                     </button>
                   </div>
@@ -453,16 +458,10 @@ export default function StrikesPage() {
               key={d.accountTag}
               d={d}
               open={!!expanded[d.accountTag]}
-              onToggle={() => setExpanded((p) => ({ ...p, [d.accountTag]: !p[d.accountTag] }))}
+              onToggle={toggleExpanded}
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
-              rejoinDrafts={rejoinDrafts}
-              setRejoinDrafts={setRejoinDrafts}
-              openNotes={openNotes}
-              setOpenNotes={setOpenNotes}
-              noteDrafts={noteDrafts}
-              setNoteDrafts={setNoteDrafts}
-              onRequestDelete={(id, name) => setConfirmConfig({ isOpen: true, id, title: 'Delete Strike', message: `Permanently remove this strike for ${name}? This cannot be undone.` })}
+              onRequestDelete={requestDelete}
             />
           ))
         )}
@@ -599,30 +598,52 @@ export default function StrikesPage() {
 // Dossier card — one per ACCOUNT: header shows colour/level/count/eligibility (account name as title,
 // the person it belongs to as subtitle); body lists each strike with its violations, a single
 // trust-restoration approval, removal bookkeeping, and notes. It reads server data + mutation actions
-// straight from the store; only UI-local drafts are passed.
+// straight from the store, and keeps its own drafts (notes, rejoin dates), so typing in one card
+// re-renders only that card.
+//
+// Memoised on the dossier's strikes: every strike patch rebuilds every dossier object, but a patch
+// replaces only the one strike row it changed (mergeStrike), so a card whose strikes are all the same
+// objects shows the same thing and is skipped.
 // ------------------------------------------------------------------------------------------------
 
-function DossierCard(props: {
+type DossierCardProps = {
   d: AccountDossier;
   open: boolean;
-  onToggle: () => void;
+  onToggle: (accountTag: string) => void;
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
-  rejoinDrafts: Record<string, string>;
-  setRejoinDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  openNotes: Record<string, boolean>;
-  setOpenNotes: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-  noteDrafts: Record<string, string>;
-  setNoteDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   onRequestDelete: (id: string, name: string) => void;
-}) {
+};
+
+function sameDossierCard(a: DossierCardProps, b: DossierCardProps) {
+  return (
+    a.open === b.open &&
+    a.onToggle === b.onToggle &&
+    a.selectedIds === b.selectedIds &&
+    a.onToggleSelect === b.onToggleSelect &&
+    a.onRequestDelete === b.onRequestDelete &&
+    a.d.accountTag === b.d.accountTag &&
+    a.d.strikes.length === b.d.strikes.length &&
+    a.d.strikes.every((s, i) => s === b.d.strikes[i])
+  );
+}
+
+const DossierCard = memo(function DossierCard(props: DossierCardProps) {
   const { d, open, onToggle, selectedIds, onToggleSelect } = props;
 
+  const [rejoinDrafts, setRejoinDrafts] = useState<Record<string, string>>({});
+  const [openNotes, setOpenNotes] = useState<Record<string, boolean>>({});
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+
+  // In-flight flags narrowed to this card, so a save elsewhere does not re-render it.
+  const owns = (strikeId: string | null) => !!strikeId && d.strikes.some((x) => x.id === strikeId);
   const loggerNames = useStrikeStore((s) => s.loggerNames);
-  const savingStrikeId = useStrikeStore((s) => s.savingStrikeId);
-  const savingAction = useStrikeStore((s) => s.savingAction);
-  const postingNote = useStrikeStore((s) => s.postingNote);
-  const deletingNoteId = useStrikeStore((s) => s.deletingNoteId);
+  const savingStrikeId = useStrikeStore((s) => (owns(s.savingStrikeId) ? s.savingStrikeId : null));
+  const savingAction = useStrikeStore((s) => (owns(s.savingStrikeId) ? s.savingAction : null));
+  const postingNote = useStrikeStore((s) => (owns(s.postingNote) ? s.postingNote : null));
+  const deletingNoteId = useStrikeStore((s) =>
+    s.deletingNoteId && d.strikes.some((x) => (x.strike_notes || []).some((n) => n.id === s.deletingNoteId)) ? s.deletingNoteId : null,
+  );
   const onPatch = useStrikeStore((s) => s.patchStrike);
   const addNote = useStrikeStore((s) => s.addNote);
   const deleteNote = useStrikeStore((s) => s.deleteNote);
@@ -633,15 +654,15 @@ function DossierCard(props: {
   const activeIds = new Set(d.activeStrikes.map((s) => s.id));
 
   async function handleAddNote(strikeId: string) {
-    const ok = await addNote(strikeId, props.noteDrafts[strikeId] || '');
-    if (ok) props.setNoteDrafts((p) => ({ ...p, [strikeId]: '' }));
+    const ok = await addNote(strikeId, noteDrafts[strikeId] || '');
+    if (ok) setNoteDrafts((p) => ({ ...p, [strikeId]: '' }));
   }
 
   return (
     <div className="card" style={{ borderLeft: `4px solid ${color}`, padding: 0 }}>
       {/* Header */}
       <button
-        onClick={onToggle}
+        onClick={() => onToggle(d.accountTag)}
         style={{ width: '100%', textAlign: 'left', background: 'transparent', cursor: 'pointer', padding: 'var(--space-lg)', display: 'flex', alignItems: 'center', gap: 'var(--space-md)', flexWrap: 'wrap' }}
       >
         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '2rem', height: '2rem', borderRadius: '50%', background: color, color: '#111', fontWeight: 800, fontSize: '1rem', flexShrink: 0 }}>
@@ -669,7 +690,7 @@ function DossierCard(props: {
           {d.strikes.map((s, i) => {
             const active = activeIds.has(s.id);
             const saving = savingStrikeId === s.id;
-            const notesOpen = !!props.openNotes[s.id];
+            const notesOpen = !!openNotes[s.id];
             const notes = [...(s.strike_notes || [])].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
             return (
               <div key={s.id} style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', border: '1px solid rgba(255,255,255,0.05)', opacity: active ? 1 : 0.65 }}>
@@ -763,8 +784,8 @@ function DossierCard(props: {
                       <input
                         type="date"
                         className="input"
-                        value={props.rejoinDrafts[s.id] || ''}
-                        onChange={(e) => props.setRejoinDrafts((p) => ({ ...p, [s.id]: e.target.value }))}
+                        value={rejoinDrafts[s.id] || ''}
+                        onChange={(e) => setRejoinDrafts((p) => ({ ...p, [s.id]: e.target.value }))}
                         style={{ width: 'auto', padding: '0.35rem 0.5rem', fontSize: '0.78rem' }}
                         title="Optional earliest rejoin date"
                       />
@@ -772,7 +793,7 @@ function DossierCard(props: {
                         className="btn btn-outline"
                         style={{ border: '1px solid var(--color-danger)', color: 'var(--color-danger)', padding: '0.35rem 0.8rem', fontSize: '0.75rem' }}
                         disabled={saving}
-                        onClick={() => onPatch(s.id, { markRemoved: true, rejoinAt: props.rejoinDrafts[s.id] ? dateToNoonIso(props.rejoinDrafts[s.id]) : null }, 'removal')}
+                        onClick={() => onPatch(s.id, { markRemoved: true, rejoinAt: rejoinDrafts[s.id] ? dateToNoonIso(rejoinDrafts[s.id]) : null }, 'removal')}
                       >
                         <UserMinus size={15} /> {saving && savingAction === 'removal' ? 'Marking...' : 'Mark removed'}
                       </button>
@@ -783,7 +804,7 @@ function DossierCard(props: {
 
                 {/* Notes */}
                 <div style={{ marginTop: 'var(--space-md)', paddingTop: 'var(--space-md)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                  <button onClick={() => props.setOpenNotes((p) => ({ ...p, [s.id]: !p[s.id] }))} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
+                  <button onClick={() => setOpenNotes((p) => ({ ...p, [s.id]: !p[s.id] }))} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', background: 'transparent', color: 'var(--color-muted)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
                     <MessageSquare size={15} /> Notes {notes.length > 0 ? `(${notes.length})` : ''}
                     <ChevronDown size={14} style={{ transform: notesOpen ? 'rotate(180deg)' : 'none', transition: 'transform 200ms ease' }} />
                   </button>
@@ -809,8 +830,8 @@ function DossierCard(props: {
                         </div>
                       )}
                       <div style={{ display: 'flex', gap: 'var(--space-sm)', alignItems: 'flex-end' }}>
-                        <textarea className="input" rows={1} placeholder="Add a progress note..." value={props.noteDrafts[s.id] || ''} onChange={(e) => props.setNoteDrafts((p) => ({ ...p, [s.id]: e.target.value }))} style={{ resize: 'vertical', flex: 1 }} />
-                        <button onClick={() => handleAddNote(s.id)} disabled={postingNote === s.id || !(props.noteDrafts[s.id] || '').trim()} className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                        <textarea className="input" rows={1} placeholder="Add a progress note..." value={noteDrafts[s.id] || ''} onChange={(e) => setNoteDrafts((p) => ({ ...p, [s.id]: e.target.value }))} style={{ resize: 'vertical', flex: 1 }} />
+                        <button onClick={() => handleAddNote(s.id)} disabled={postingNote === s.id || !(noteDrafts[s.id] || '').trim()} className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
                           <Send size={14} /> {postingNote === s.id ? 'Posting...' : 'Post'}
                         </button>
                       </div>
@@ -824,4 +845,4 @@ function DossierCard(props: {
       )}
     </div>
   );
-}
+}, sameDossierCard);

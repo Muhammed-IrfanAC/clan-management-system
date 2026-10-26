@@ -14,6 +14,7 @@
 import { create } from 'zustand';
 import type { Person, PlayerAccount, Rule, StrikeSuggestion } from '@/types/database';
 import type { StrikeWithContext } from '@/lib/strikes/dossier';
+import { fetchCurrentUser } from '@/lib/currentUser';
 
 // An account joined with the person it's linked to, so selecting the account resolves the person.
 export type AccountWithPerson = PlayerAccount & { person: Pick<Person, 'id' | 'display_name'> | null };
@@ -52,14 +53,19 @@ type StrikeState = {
   actingReviewId: string | null;
 
   loadIdentity: () => Promise<void>;
-  fetchData: (selectedClanId: string) => Promise<void>;
+  /**
+   * Load the whole strikes view. It is family-wide — the page scopes it to the selected clan — so a
+   * clan switch needs no refetch. `background` keeps the current list on screen while refreshing
+   * after a mutation, instead of swapping it for the loading state.
+   */
+  fetchData: (opts?: { background?: boolean }) => Promise<void>;
   patchStrike: (id: string, patch: Record<string, unknown>, action?: string) => Promise<boolean>;
   addNote: (strikeId: string, body: string) => Promise<boolean>;
   deleteNote: (strikeId: string, noteId: string) => Promise<boolean>;
   deleteStrike: (id: string) => Promise<boolean>;
   deleteStrikes: (ids: string[]) => Promise<boolean>;
-  logStrike: (input: LogStrikeInput, selectedClanId: string) => Promise<boolean>;
-  actOnReview: (id: string, action: 'confirm' | 'dismiss', selectedClanId: string) => Promise<boolean>;
+  logStrike: (input: LogStrikeInput) => Promise<boolean>;
+  actOnReview: (id: string, action: 'confirm' | 'dismiss') => Promise<boolean>;
   isAuthoredByMe: (authorTag: string) => boolean;
 };
 
@@ -87,16 +93,15 @@ export const useStrikeStore = create<StrikeState>((set, get) => ({
 
   async loadIdentity() {
     try {
-      const r = await fetch('/api/auth/me');
-      const d = r.ok ? await r.json() : null;
+      const d = await fetchCurrentUser();
       set({ currentUserTag: d?.user?.player_tag ?? null, myPersonId: d?.user?.person_id ?? null });
     } catch {
       /* identity is best-effort; note-ownership just falls back to tag equality */
     }
   },
 
-  async fetchData(selectedClanId) {
-    set({ loading: true });
+  async fetchData(opts) {
+    if (!opts?.background) set({ loading: true });
     try {
       // One round trip: the route runs the independent reads in parallel server-side.
       const res = await fetch('/api/views/strikes');
@@ -110,7 +115,7 @@ export const useStrikeStore = create<StrikeState>((set, get) => ({
         loggerNames: data.loggerNames || {},
         authorPersons: data.authorPersons || {},
         rules: (data.rules as Rule[]) || [],
-        reviewItems: selectedClanId === 'all' ? rlist : rlist.filter((i) => !i.clan_id || i.clan_id === selectedClanId),
+        reviewItems: rlist,
         accounts: (data.accounts as AccountWithPerson[]) || [],
       });
     } catch (err) {
@@ -239,7 +244,7 @@ export const useStrikeStore = create<StrikeState>((set, get) => ({
     }
   },
 
-  async logStrike(input, selectedClanId) {
+  async logStrike(input) {
     try {
       const res = await fetch('/api/strikes', {
         method: 'POST',
@@ -248,7 +253,7 @@ export const useStrikeStore = create<StrikeState>((set, get) => ({
       });
       if (res.ok) {
         // A new strike arrives without its embeds resolved; refetch to pull person/rule/violations.
-        await get().fetchData(selectedClanId);
+        await get().fetchData({ background: true });
         return true;
       }
       const d = await res.json().catch(() => ({}));
@@ -260,7 +265,7 @@ export const useStrikeStore = create<StrikeState>((set, get) => ({
     }
   },
 
-  async actOnReview(id, action, selectedClanId) {
+  async actOnReview(id, action) {
     set({ actingReviewId: id });
     try {
       const res = await fetch(`/api/rules/review/${id}`, {
@@ -271,7 +276,7 @@ export const useStrikeStore = create<StrikeState>((set, get) => ({
       if (res.ok) {
         set((s) => ({ reviewItems: s.reviewItems.filter((i) => i.id !== id) }));
         // A confirm folds the suggestion into a war strike (possibly a brand-new one) — refetch strikes.
-        if (action === 'confirm') await get().fetchData(selectedClanId);
+        if (action === 'confirm') await get().fetchData({ background: true });
         return true;
       }
       const d = await res.json().catch(() => ({}));

@@ -4,7 +4,7 @@ import { supabase } from './supabase';
  * Resolve player tags (loggers, note authors, approvers — columns with no FK to accounts) to a
  * display name and the person each belongs to. The name prefers the linked person's display name,
  * then the in-game name, then the tag itself; `authorPersons` is what lets an author's alts inherit
- * their edit/delete controls. Shared by the read routes behind the strikes, activity and dossier
+ * their edit/delete controls. Shared by the read routes behind the strikes and dossier
  * screens and the leadership chart, which each used to run this lookup from the browser.
  */
 export async function resolveTagNames(tags: Iterable<string | null | undefined>): Promise<{

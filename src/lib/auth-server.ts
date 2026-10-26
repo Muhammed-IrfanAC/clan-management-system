@@ -46,19 +46,24 @@ export async function requireAuth(request: NextRequest): Promise<AuthContext> {
 }
 
 /**
- * Fetch the LIVE dashboard role for an account, resolved through its linked person's access_role.
- * Returns null if the account is missing, unlinked, or the person holds no access (revoked/never
- * granted). One query via the person_id FK embed.
+ * Fetch the LIVE dashboard role for an account, resolved through its linked person's access_role,
+ * together with that person's id (so author checks need not look the actor up again). `role` is null
+ * if the account is missing, unlinked, or the person holds no access (revoked/never granted). One
+ * query via the person_id FK embed.
  */
-async function liveRole(playerTag: string): Promise<AccessRole | null> {
+async function liveAccess(playerTag: string): Promise<{ role: AccessRole | null; personId: string | null }> {
   const { data } = await supabase
     .from('player_accounts')
-    .select('person:persons(access_role)')
+    .select('person_id, person:persons(access_role)')
     .eq('player_tag', playerTag)
     .maybeSingle();
   // person:persons(...) resolves the to-one relation; may be an object or null when unlinked.
-  const person = (data as { person?: { access_role?: AccessRole | null } | null } | null)?.person;
-  return person?.access_role ?? null;
+  const row = data as { person_id?: string | null; person?: { access_role?: AccessRole | null } | null } | null;
+  return { role: row?.person?.access_role ?? null, personId: row?.person_id ?? null };
+}
+
+async function liveRole(playerTag: string): Promise<AccessRole | null> {
+  return (await liveAccess(playerTag)).role;
 }
 
 /**
@@ -71,6 +76,33 @@ export async function requireCapability(auth: AuthContext, cap: Capability): Pro
   const overrides = await loadCapabilityOverrides();
   if (!can(role, cap, overrides)) throw new AuthError('You do not have permission to perform this action', 403);
   return role;
+}
+
+/**
+ * Capability check for a role the caller has ALREADY read live — the role `authorizeActive` returns.
+ * Costs no query (the overrides are cached), unlike `hasCapability`, which re-reads the role.
+ */
+export async function roleCan(role: AccessRole, cap: Capability): Promise<boolean> {
+  return can(role, cap, await loadCapabilityOverrides());
+}
+
+/**
+ * Whether the actor may change content authored by `authorTag`: the author themselves, any alt of
+ * the same person (authorship is at the person level), or a holder of `content.override`. The
+ * actor's person and role come from `authorizeActive`, so this is at most one lookup — the author's.
+ */
+export async function canModifyAuthored(auth: ActiveAuth, authorTag: string | null): Promise<boolean> {
+  if (authorTag && authorTag === auth.actorTag) return true;
+  const [authorPerson, override] = await Promise.all([
+    authorTag ? personIdForTag(authorTag) : Promise.resolve(null),
+    roleCan(auth.role, 'content.override'),
+  ]);
+  return override || (!!authorPerson && !!auth.personId && authorPerson === auth.personId);
+}
+
+async function personIdForTag(tag: string): Promise<string | null> {
+  const { data } = await supabase.from('player_accounts').select('person_id').eq('player_tag', tag).maybeSingle();
+  return (data as { person_id: string | null } | null)?.person_id ?? null;
 }
 
 /** Non-throwing capability probe (live DB role + runtime overrides). Widens author-only checks. */
@@ -95,8 +127,8 @@ export function authErrorResponse(e: unknown): NextResponse | null {
 export async function authorizeActive(
   request: NextRequest,
 ): Promise<
-  | { actorTag: string; role: AccessRole; error?: undefined }
-  | { error: NextResponse; actorTag?: undefined; role?: undefined }
+  | (ActiveAuth & { error?: undefined })
+  | { error: NextResponse; actorTag?: undefined; role?: undefined; personId?: undefined }
 > {
   let auth: AuthContext;
   try {
@@ -104,7 +136,35 @@ export async function authorizeActive(
   } catch (e) {
     return { error: authErrorResponse(e) ?? NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
   }
-  const role = await liveRole(auth.playerTag);
+  const { role, personId } = await liveAccess(auth.playerTag);
   if (!role) return { error: NextResponse.json({ error: 'Access has been revoked' }, { status: 403 }) };
-  return { actorTag: auth.playerTag, role };
+  return { actorTag: auth.playerTag, role, personId };
+}
+
+/** An actor `authorizeActive` has verified: identity, LIVE role, and the person the account links to. */
+export interface ActiveAuth {
+  actorTag: string;
+  role: AccessRole;
+  personId: string | null;
+}
+
+/**
+ * `authorizeActive` for a read-only view, overlapped with the view's own queries. The session cookie
+ * is verified first — no database work for an unauthenticated caller — and then the live role check
+ * runs alongside `load`, saving the round trip a page load otherwise spends waiting on it. If access
+ * has been revoked the loaded data is discarded, never returned. Only for loads with no side effects.
+ */
+export async function authorizeActiveView<T>(
+  request: NextRequest,
+  load: () => Promise<T>,
+): Promise<{ data: T; auth: ActiveAuth; error?: undefined } | { error: NextResponse; data?: undefined; auth?: undefined }> {
+  let auth: AuthContext;
+  try {
+    auth = await requireAuth(request);
+  } catch (e) {
+    return { error: authErrorResponse(e) ?? NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
+  }
+  const [access, data] = await Promise.all([liveAccess(auth.playerTag), load()]);
+  if (!access.role) return { error: NextResponse.json({ error: 'Access has been revoked' }, { status: 403 }) };
+  return { data, auth: { actorTag: auth.playerTag, role: access.role, personId: access.personId } };
 }

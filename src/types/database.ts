@@ -9,7 +9,6 @@ export type PlayerStatus = 'active' | 'left' | 'removed' | 'inactive';
 export type ClanType = 'main' | 'feeder';
 // Scope of automated rule detection for a clan: both war types, CWL only, or off entirely.
 export type RuleAutomationMode = 'always' | 'cwl_only' | 'never';
-export type LogCategory = 'promotion' | 'demotion' | 'war' | 'recruitment' | 'capital' | 'general';
 
 export interface Clan {
   id: string;
@@ -80,27 +79,6 @@ export interface Warning {
 export interface WarningNote {
   id: string;
   warning_id: string;
-  author_tag: string;
-  body: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface LeadershipLog {
-  id: string;
-  logged_by: string;
-  logged_at: string;
-  category: LogCategory;
-  clan_id: string | null;
-  related_person_id: string | null;
-  description: string;
-  pinned: boolean;
-  edited_at: string | null;
-}
-
-export interface ActivityNote {
-  id: string;
-  log_id: string;
   author_tag: string;
   body: string;
   created_at: string;

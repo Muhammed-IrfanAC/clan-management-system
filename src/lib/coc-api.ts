@@ -5,6 +5,8 @@
 
 const COC_API_BASE = process.env.COC_API_PROXY_URL || 'https://api.clashofclans.com/v1';
 const COC_API_TOKEN = process.env.COC_API_TOKEN;
+// A hung proxy connection would otherwise hold the whole sync until the function is killed.
+const COC_TIMEOUT_MS = 10_000;
 
 export async function fetchFromCoC<T>(endpoint: string): Promise<T> {
   const url = `${COC_API_BASE}${endpoint}`;
@@ -15,7 +17,10 @@ export async function fetchFromCoC<T>(endpoint: string): Promise<T> {
       'Authorization': `Bearer ${COC_API_TOKEN}`,
       'Accept': 'application/json',
     },
-    next: { revalidate: 300 }
+    // Live game state, never cached: a cached war read would delay every attack's first-seen
+    // timestamp (late-snipe timing) by up to the cache lifetime.
+    cache: 'no-store',
+    signal: AbortSignal.timeout(COC_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -47,7 +52,10 @@ export async function fetchFromCoCOptional<T>(endpoint: string): Promise<T | nul
       'Authorization': `Bearer ${COC_API_TOKEN}`,
       'Accept': 'application/json',
     },
-    next: { revalidate: 300 }
+    // Live game state, never cached: a cached war read would delay every attack's first-seen
+    // timestamp (late-snipe timing) by up to the cache lifetime.
+    cache: 'no-store',
+    signal: AbortSignal.timeout(COC_TIMEOUT_MS),
   });
 
   if (response.status === 404) return null;

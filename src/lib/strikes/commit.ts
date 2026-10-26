@@ -209,9 +209,23 @@ export async function commitReviewStrike(params: {
 }
 
 async function notifyNewStrikes(rule: StrikeRule, newStrikes: PlannedStrike[]): Promise<void> {
-  for (const p of newStrikes) {
+  // A war that ends with a dozen misses lands here all at once. The per-strike lookups are independent,
+  // so they run together, and each clan's destination is resolved once. Sends stay one at a time, in
+  // order, inside Discord's per-channel rate limit.
+  const destinations = new Map<string | null, ReturnType<typeof destinationForClan>>();
+  const destinationFor = (clanId: string | null) => {
+    if (!destinations.has(clanId)) destinations.set(clanId, destinationForClan(clanId));
+    return destinations.get(clanId)!;
+  };
+  const prepared = newStrikes.map((p) =>
+    Promise.all([loadStrikeNotifyContext(p.playerTag), discordUserIdForPerson(p.personId), destinationFor(p.clanId)]),
+  );
+  // Settled up front so a failed lookup is not an unhandled rejection while earlier sends are awaited.
+  prepared.forEach((pr) => pr.catch(() => {}));
+
+  for (const [i, p] of newStrikes.entries()) {
     try {
-      const ctx = await loadStrikeNotifyContext(p.playerTag);
+      const [ctx, mentionDiscordId, destination] = await prepared[i];
       await sendDiscordMessage(renderStrikePost({
         memberName: p.violations[0]?.memberName ?? null,
         playerTag: p.playerTag,
@@ -224,8 +238,8 @@ async function notifyNewStrikes(rule: StrikeRule, newStrikes: PlannedStrike[]): 
         strikeNumber: ctx.strikeNumber,
         level: ctx.level,
         activeStrikes: ctx.activeStrikes,
-        mentionDiscordId: await discordUserIdForPerson(p.personId),
-      }), await destinationForClan(p.clanId));
+        mentionDiscordId,
+      }), destination);
     } catch (err) {
       console.error('Strike Discord notify failed (non-fatal):', err);
     }
