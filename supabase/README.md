@@ -62,6 +62,16 @@ The project ref is not secret and lives in the workflow.
 
 ## Grants
 
-A normal Supabase project auto-grants new `public` tables to the API roles, so migrations
-need no `GRANT`. (The separate `npm run db:grant` exists only for the free **testing**
-project, which was provisioned without those default privileges.)
+Only `service_role` (the secret key every API route uses) may touch the database. Since
+migration 042 the public API roles `anon` and `authenticated` hold nothing, every table has
+RLS enabled with no policies, and default privileges keep new objects that way. So a new
+table in a migration needs:
+
+```sql
+ALTER TABLE my_table ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON my_table TO service_role;
+```
+
+Never grant to `anon` or `authenticated`: the publishable key is public, and anything granted
+to it is readable and writable by anyone. (`npm run db:grant` re-applies the same grants on
+the free **testing** project, which was provisioned without default privileges.)
