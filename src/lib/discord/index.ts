@@ -12,5 +12,5 @@ export { normalizeChannelId, normalizeDiscordId } from './format';
 export { botConfigured, destinationForClan, invalidateDiscordRouteCache } from './routing';
 export { discordIdsForAccountTags, discordUserIdForPerson } from './identity';
 export {
-  discordBotRequest, editInteractionReply, postDiscordMessage, postOrEditDiscordMessage, sendDiscordMessage, sendInteractionFollowUp,
+  discordBotRequest, editInteractionReply, postDiscordMessage, postOrEditDiscordMessage, sendDirectMessage, sendDiscordMessage, sendInteractionFollowUp,
 } from './transport';

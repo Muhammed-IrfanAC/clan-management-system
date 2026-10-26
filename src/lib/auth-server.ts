@@ -4,6 +4,7 @@ import { supabase } from './supabase';
 import { AccessRole } from '@/types/database';
 import { Capability, can } from './permissions';
 import { loadCapabilityOverrides } from './permissions-server';
+import { jwtSecret } from './auth/jwtSecret';
 
 /**
  * Server-side auth + authorization helpers, shared by every API route.
@@ -14,8 +15,6 @@ import { loadCapabilityOverrides } from './permissions-server';
  *    so a demotion or a revoked access takes effect immediately, not on the next login. The JWT's
  *    role is only a hint. Because access lives on the person, revoking it blocks ALL of their alts.
  */
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
 
 export interface AuthContext {
   playerTag: string;
@@ -36,7 +35,7 @@ export async function requireAuth(request: NextRequest): Promise<AuthContext> {
   const token = request.cookies.get('clanops-auth')?.value;
   if (!token) throw new AuthError('Unauthorized', 401);
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
+    const { payload } = await jwtVerify(token, jwtSecret());
     const playerTag = payload.playerTag as string | undefined;
     if (!playerTag) throw new AuthError('Invalid token', 401);
     return { playerTag, role: (payload.role as AccessRole) ?? 'co_leader' };

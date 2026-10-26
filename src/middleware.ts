@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify, SignJWT } from 'jose';
-
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback-secret-for-dev-only');
+import { jwtSecret } from '@/lib/auth/jwtSecret';
 
 const SESSION_DAYS = 30;
 const SESSION_MAX_AGE = 60 * 60 * 24 * SESSION_DAYS;
@@ -16,7 +15,7 @@ async function issueToken(payload: { playerTag: string; role?: string }) {
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_DAYS}d`)
-    .sign(JWT_SECRET);
+    .sign(jwtSecret());
 }
 
 function setAuthCookie(response: NextResponse, token: string) {
@@ -39,7 +38,7 @@ export async function middleware(request: NextRequest) {
     }
 
     try {
-      const { payload } = await jwtVerify(token, JWT_SECRET);
+      const { payload } = await jwtVerify(token, jwtSecret());
       const response = NextResponse.next();
 
       // Sliding session: refresh the cookie when it's nearing expiry.
@@ -60,7 +59,7 @@ export async function middleware(request: NextRequest) {
 
   if (request.nextUrl.pathname === '/login' && token) {
     try {
-      await jwtVerify(token, JWT_SECRET);
+      await jwtVerify(token, jwtSecret());
       return NextResponse.redirect(new URL('/dashboard', request.url));
     } catch (err) {
       // Token invalid, allow login
