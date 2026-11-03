@@ -43,8 +43,10 @@ jobs:
       - name: Link to production project
         run: supabase link --project-ref "$PROJECT_ID"
 
+      # Newer CLIs target the local Docker stack unless told otherwise; --remote
+      # points both commands at the linked production project.
       - name: Show pending migrations
-        run: supabase migration list
+        run: supabase migration list --remote
 
       - name: Apply migrations
-        run: supabase db push
+        run: supabase db push --remote
