@@ -141,24 +141,22 @@ function inPriorityOrder(clans: PoolClan[]): PoolClan[] {
  * @param clans    the participating clans with their war size and fill priority.
  * @param constraints  the season's frozen rule set (default + per-clan overrides), including each
  *                     clan's minThLevel / minLeagueTier gates and its maxBench limit.
- * @param warIneligibleAccountTags  accounts pulled from CWL because they hold an active, unresolved
- *                     strike (war eligibility removed by the Strike system). Strikes are per-account,
- *                     so a struck alt never holds out its owner's other accounts. Struck accounts are
- *                     surfaced as 'removed' with an explaining note rather than silently dropped, so
- *                     a leader can override in the rare case they want to field one.
+ * @param bannedAccountTags  accounts leadership has BANNED from CWL (cwl_player_flags, migration
+ *                     036). Per account, so a banned alt never holds out its owner's other accounts.
+ *                     Surfaced as 'removed' with an explaining note rather than silently dropped.
  * @param optedOutAccountTags  accounts a leader has marked NOT PARTICIPATING this season (migration
  *                     031). This is the "willing" half of eligibility, which the engine cannot infer
  *                     from any game stat: a player on holiday or an alt nobody wants to run for a
  *                     week is perfectly eligible and must still be left out. It is passed in rather
  *                     than filtered out by the caller so the account keeps a visible row with a
- *                     reason, exactly like a struck one — a body missing from the board with no
+ *                     reason, exactly like a banned one — a body missing from the board with no
  *                     explanation is how a leader ends up regenerating the roster to find out why.
  */
 export function allocate(
   players: EligiblePlayer[],
   clans: PoolClan[],
   constraints: CWLConstraints,
-  warIneligibleAccountTags: ReadonlySet<string> = new Set(),
+  bannedAccountTags: ReadonlySet<string> = new Set(),
   optedOutAccountTags: ReadonlySet<string> = new Set(),
 ): AllocationDraft[] {
   const order = inPriorityOrder(clans);
@@ -171,15 +169,14 @@ export function allocate(
 
   // Pull the two "not available" sets out of the pool up front — neither is ever placed.
   //
-  // A struck account that is ALSO opted out is reported as struck: both facts exclude it, but only
-  // the strike is something a leader can act on (trust restoration), and the opt-out is surfaced on
-  // the board in its own right anyway.
-  const warIneligible = players.filter((p) => warIneligibleAccountTags.has(p.playerTag));
+  // A banned account that is ALSO opted out is reported as banned: the ban is the standing fact,
+  // and the opt-out is surfaced on the board in its own right anyway.
+  const banned = players.filter((p) => bannedAccountTags.has(p.playerTag));
   const optedOut = players.filter(
-    (p) => !warIneligibleAccountTags.has(p.playerTag) && optedOutAccountTags.has(p.playerTag),
+    (p) => !bannedAccountTags.has(p.playerTag) && optedOutAccountTags.has(p.playerTag),
   );
   const remaining = players.filter(
-    (p) => !warIneligibleAccountTags.has(p.playerTag) && !optedOutAccountTags.has(p.playerTag),
+    (p) => !bannedAccountTags.has(p.playerTag) && !optedOutAccountTags.has(p.playerTag),
   );
 
   const placed = new Set<string>();
@@ -244,8 +241,8 @@ export function allocate(
       ),
     );
   }
-  for (const player of warIneligible) {
-    drafts.push(unplaced(player, 'War-ineligible — active strike (trust restoration required)'));
+  for (const player of banned) {
+    drafts.push(unplaced(player, 'Banned from CWL (leadership flag)'));
   }
   for (const player of optedOut) {
     drafts.push(unplaced(player, 'Not participating this season (marked by leadership)'));

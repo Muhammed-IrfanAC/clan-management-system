@@ -15,7 +15,7 @@
  *
  * This is the one place that difference is computed, feeding both the round-reveal Discord notice
  * and the planned-vs-actual strip on the round card. Pure and side-effect free, in the same shape as
- * allocation.ts / rotation.ts — the classification rules are the fiddly part, so they get tests.
+ * allocation.ts / planner.ts — the classification rules are the fiddly part, so they get tests.
  */
 
 /** One account the plan assigned to this clan for the season. */

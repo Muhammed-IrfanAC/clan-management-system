@@ -6,10 +6,9 @@ import { useClan } from '@/lib/ClanContext';
 import { useCWLStore } from '@/lib/stores/cwlStore';
 import { tierLabel, tierOrder } from '@/lib/cwl/leagues';
 import { benchReason, groupExclusions } from '@/lib/cwl/rosterReason';
-import { SEASON_ROUNDS, afterRound, describeAvailability, isFullSeason, untilRound } from '@/lib/cwl/availability';
 import { useClanName } from './useClanName';
 import { useCwlScope } from './useCwlScope';
-import type { RosterPlayer, MoveAction, MoveOptions } from './types';
+import type { RosterPlayer, MoveAction } from './types';
 
 // Strongest-first, matching the engine's ordering, so the board reads consistently after edits.
 function byStrength(a: RosterPlayer, b: RosterPlayer): number {
@@ -29,9 +28,6 @@ function PlayerRow({
   reason?: string; // why this account is not in the fighting lineup, shown under the name
 }) {
   const [open, setOpen] = useState(false);
-  // Which round picker is expanded, if any. Kept in the menu rather than opened as a modal: picking
-  // a round is a single click and a dialog would put a confirmation step in front of it.
-  const [picking, setPicking] = useState<'until' | 'after' | null>(null);
   const { clans } = useClan();
   const seasonClans = useCWLStore((s) => s.seasonClans);
   const moveAllocation = useCWLStore((s) => s.moveAllocation);
@@ -40,10 +36,9 @@ function PlayerRow({
   const poolClans = clans.filter((c) => seasonClans.some((sc) => sc.clanId === c.id));
   const otherClans = poolClans.filter((c) => c.id !== currentClanId);
 
-  const act = (action: MoveAction, clanId?: string, options?: MoveOptions) => {
+  const act = (action: MoveAction, clanId?: string) => {
     setOpen(false);
-    setPicking(null);
-    moveAllocation(player.allocationId, action, clanId, options);
+    moveAllocation(player.allocationId, action, clanId);
   };
 
   return (
@@ -59,22 +54,14 @@ function PlayerRow({
           <span className="text-muted" style={{ fontSize: '0.65rem' }}> · {player.personName}</span>
         )}
       </span>
-      {/* A full-season opt-out is off the roster entirely; a windowed one is still fighting most of
-          the season, so it gets a softer marker naming the rounds rather than "NOT PLAYING". */}
-      {player.unavailable && (
+      {/* Opted out of the season: off the roster entirely. Missing a single war is a per-war
+          override on the clan's planner page instead. */}
+      {player.optedOut && (
         <span
-          title={
-            isFullSeason(player.unavailable)
-              ? 'Marked as not participating this season — the roster engine leaves this account out on every re-allocation'
-              : `${describeAvailability(player.unavailable)} — still rostered for the rounds they can play, and the rotation will not plan them into the ones they cannot`
-          }
+          title="Marked as not participating this season — the roster engine leaves this account out on every re-allocation"
           style={{ fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.04em', color: 'var(--color-muted)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 999, padding: '1px 6px', whiteSpace: 'nowrap' }}
         >
-          {isFullSeason(player.unavailable)
-            ? 'NOT PLAYING'
-            : player.unavailable.fromRound === 1
-              ? `FROM R${player.unavailable.toRound! + 1}`
-              : `TO R${player.unavailable.fromRound! - 1}`}
+          NOT PLAYING
         </span>
       )}
       <span className="text-muted" style={{ fontSize: '0.65rem', fontVariantNumeric: 'tabular-nums' }}>TH{player.thLevel}</span>
@@ -99,25 +86,10 @@ function PlayerRow({
               {/* "Remove" is a one-off edit to this roster; "not participating" is a statement about
                   the player that the engine re-reads, so it survives a re-allocation. Both are
                   offered because they answer different questions. */}
-              {player.unavailable ? (
+              {player.optedOut ? (
                 <MenuItem label="Mark as available" onClick={() => act('opt_in')} />
-              ) : picking ? (
-                <RoundPicker
-                  mode={picking}
-                  onPick={(round) =>
-                    act('opt_out', undefined, picking === 'until' ? untilRound(round) : afterRound(round))
-                  }
-                  onCancel={() => setPicking(null)}
-                />
               ) : (
-                <>
-                  <MenuItem label="Not playing (whole season)" onClick={() => act('opt_out')} />
-                  {/* The partial cases are the common ones — away for the first war days, or gone
-                      before the last. Spending a full opt-out on either throws away rounds the
-                      account could have fought. */}
-                  <MenuItem label="Unavailable until round…" onClick={() => setPicking('until')} />
-                  <MenuItem label="Unavailable after round…" onClick={() => setPicking('after')} />
-                </>
+                <MenuItem label="Not playing (whole season)" onClick={() => act('opt_out')} />
               )}
               {currentClanId && <MenuItem label="Remove from season" danger onClick={() => act('remove')} />}
             </div>
@@ -133,52 +105,6 @@ function PlayerRow({
         {reason}
       </div>
     )}
-    </div>
-  );
-}
-
-/**
- * Round chooser inside the account menu.
- *
- * "Until" offers rounds 2-7 and "after" offers 1-6: "unavailable until round 1" and "after round 7"
- * are empty windows — the account is simply available — so offering them would only produce a marker
- * standing for no missed rounds (availability.ts rejects them outright).
- */
-function RoundPicker({
-  mode,
-  onPick,
-  onCancel,
-}: {
-  mode: 'until' | 'after';
-  onPick: (round: number) => void;
-  onCancel: () => void;
-}) {
-  const rounds =
-    mode === 'until'
-      ? Array.from({ length: SEASON_ROUNDS - 1 }, (_, i) => i + 2)
-      : Array.from({ length: SEASON_ROUNDS - 1 }, (_, i) => i + 1);
-  return (
-    <div style={{ padding: '4px 8px 8px' }}>
-      <div className="text-muted" style={{ fontSize: '0.66rem', padding: '2px 4px 6px' }}>
-        {mode === 'until' ? 'Back in for round…' : 'Last round they play…'}
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-        {rounds.map((n) => (
-          <button
-            key={n}
-            onClick={() => onPick(n)}
-            style={{ flex: '0 0 auto', minWidth: 30, padding: '4px 0', fontSize: '0.75rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text)', cursor: 'pointer' }}
-          >
-            {n}
-          </button>
-        ))}
-      </div>
-      <button
-        onClick={onCancel}
-        style={{ marginTop: 6, background: 'transparent', border: 'none', padding: '2px 4px', fontSize: '0.7rem', color: 'var(--color-muted)', cursor: 'pointer' }}
-      >
-        Cancel
-      </button>
     </div>
   );
 }

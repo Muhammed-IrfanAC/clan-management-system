@@ -8,6 +8,7 @@ import { useCWLStore } from '@/lib/stores/cwlStore';
 import Toast from '@/components/ui/Toast';
 import CreateSeasonForm from '@/components/cwl/CreateSeasonForm';
 import SeasonView from '@/components/cwl/SeasonView';
+import { useSeasonLabel } from '@/components/cwl/useSeasonLabel';
 
 /**
  * Thin 'use client' orchestrator over cwlStore: season list, create-vs-view mode, mount-time load.
@@ -24,6 +25,7 @@ export default function CWLPage() {
   const setToast = useCWLStore((s) => s.setToast);
 
   const [mode, setMode] = useState<'view' | 'create'>('view');
+  const seasonLabel = useSeasonLabel();
 
   useEffect(() => {
     loadSeasons();
@@ -45,7 +47,7 @@ export default function CWLPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
           {mode === 'view' && seasons.length > 0 && (
             <select className="input" style={{ width: 'auto', padding: '8px 12px' }} value={selectedSeasonId ?? ''} onChange={(e) => selectSeason(e.target.value)}>
-              {seasons.map((s) => <option key={s.id} value={s.id}>CWL {s.label}</option>)}
+              {seasons.map((s) => <option key={s.id} value={s.id}>{seasonLabel(s)}</option>)}
             </select>
           )}
           {mode === 'view' && (

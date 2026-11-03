@@ -3,7 +3,7 @@
  * callout. No DB, no React, unit-tested like allocation.ts / lineup.ts.
  *
  * The allocation engine already writes a reason onto every account it EXCLUDES (`cwl_allocations.
- * note`: no eligible clan, family full, active strike, marked not participating). That column was
+ * note`: no eligible clan, family full, banned from CWL, marked not participating). That column was
  * never read by the UI, so the board showed a name sitting in the Unassigned pile with no way to
  * find out why short of re-reading the engine's source. Surfacing it is most of the work here.
  *

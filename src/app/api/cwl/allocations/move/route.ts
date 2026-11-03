@@ -2,7 +2,6 @@ import { NextResponse, NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { authorizeActive } from '@/lib/auth-server';
 import { resyncTransfer } from '@/lib/cwl/roster';
-import { describeAvailability } from '@/lib/cwl/availability';
 
 /**
  * Apply a leader's manual edit to one allocation and keep its transfer record consistent.
@@ -12,9 +11,8 @@ import { describeAvailability } from '@/lib/cwl/availability';
  *    actual clan (matches | transfer_required) and the pending transfer resynced.
  *  - bench / unbench:   toggle the player between bench and fighting roster within their clan.
  *  - remove:            pull the player from the season (status 'removed', pending transfer cleared).
- *  - opt_out / opt_in:  mark the ACCOUNT as not participating, and undo that. An optional
- *    { fromRound, toRound } window narrows it to a span of rounds (migration 032) — a partially
- *    available account KEEPS its roster place, since it still fights the rounds it can.
+ *  - opt_out / opt_in:  mark the ACCOUNT as not participating this season, and undo that. Missing
+ *    a single war is not an opt-out: it is a per-war override on the planner (migration 046).
  *
  * opt_out is 'remove' plus a durable record. 'remove' only writes status onto the allocation row,
  * and every allocation row is deleted and rebuilt by a re-allocation — so a leader who sat someone
@@ -31,7 +29,7 @@ export async function POST(request: NextRequest) {
     const auth = await authorizeActive(request);
     if (auth.error) return auth.error;
 
-    const { allocationId, action, clanId, reason, fromRound, toRound } = await request.json();
+    const { allocationId, action, clanId, reason } = await request.json();
     if (!allocationId || !action) {
       return NextResponse.json({ error: 'allocationId and action are required' }, { status: 400 });
     }
@@ -77,16 +75,9 @@ export async function POST(request: NextRequest) {
         break;
       }
       case 'opt_out': {
-        // A window (migration 032) narrows this to a span of rounds. Validate it here rather than
-        // leaning on the CHECK constraint, so a bad request reads as a 400 and not a 500.
-        const partial = fromRound != null || toRound != null;
-        if (partial && !(Number.isInteger(fromRound) && Number.isInteger(toRound) && fromRound >= 1 && toRound >= fromRound)) {
-          return NextResponse.json({ error: 'An unavailability window needs both ends, with toRound >= fromRound >= 1' }, { status: 400 });
-        }
         // Record the decision first — if the allocation update fails the account is still marked,
         // which is the safe direction: over-excluding is visible on the board, under-excluding puts
         // someone in a war they said they could not play.
-        const window = partial ? { fromRound, toRound } : { fromRound: null, toRound: null };
         const { error: optErr } = await supabase
           .from('cwl_season_optouts')
           .upsert(
@@ -95,28 +86,22 @@ export async function POST(request: NextRequest) {
               player_account_tag: alloc.player_account_tag,
               reason: typeof reason === 'string' && reason.trim() ? reason.trim() : null,
               created_by: auth.actorTag,
-              unavailable_from_round: window.fromRound,
-              unavailable_to_round: window.toRound,
             },
             { onConflict: 'season_id,player_account_tag' },
           );
         if (optErr) throw optErr;
-        // A PARTIAL window leaves the allocation alone: the account still fights the rounds it is
-        // available for, so it has to keep its clan. Pulling it off the roster would cost the clan a
-        // body all season to solve a problem that lasts two rounds. Only the note changes, so the
-        // board can say what the marker means; the constraint itself is the rotation's to honour.
-        const update = partial
-          ? { note: describeAvailability(window) }
-          : {
-              recommended_clan_id: null,
-              is_bench: false,
-              status: 'removed' as const,
-              rank: null,
-              note: 'Not participating this season (marked by leadership)',
-            };
-        const { error } = await supabase.from('cwl_allocations').update(update).eq('id', allocationId);
+        const { error } = await supabase
+          .from('cwl_allocations')
+          .update({
+            recommended_clan_id: null,
+            is_bench: false,
+            status: 'removed',
+            rank: null,
+            note: 'Not participating this season (marked by leadership)',
+          })
+          .eq('id', allocationId);
         if (error) throw error;
-        if (!partial) await resyncTransfer(allocationId, alloc.actual_clan_id, null);
+        await resyncTransfer(allocationId, alloc.actual_clan_id, null);
         break;
       }
       case 'opt_in': {

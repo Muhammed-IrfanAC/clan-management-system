@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Trash2, Activity, Megaphone } from 'lucide-react';
+import Link from 'next/link';
+import { Trash2, Activity, Megaphone, CalendarRange } from 'lucide-react';
 import type { CWLSeason, CWLSeasonStatus } from '@/types/database';
 import ConfirmationModal from '@/components/ui/ConfirmationModal';
 import { useCWLStore } from '@/lib/stores/cwlStore';
@@ -11,13 +12,12 @@ import RosterBoard from './RosterBoard';
 import ClanPriorityPanel from './ClanPriorityPanel';
 import TransfersPanel from './TransfersPanel';
 import LiveRoundsPanel from './LiveRoundsPanel';
-import RotationPanel from './RotationPanel';
 import PerformancePanel from './PerformancePanel';
 import RosterPostModal from './RosterPostModal';
 import CollapsibleSection from './CollapsibleSection';
 import { useClanName } from './useClanName';
 import { useCwlScope } from './useCwlScope';
-import { isFullSeason } from '@/lib/cwl/availability';
+import { useSeasonLabel } from './useSeasonLabel';
 
 const STATUS_FLOW: CWLSeasonStatus[] = ['planning', 'transfers_pending', 'signed_up', 'in_progress', 'completed'];
 const STATUS_LABEL: Record<CWLSeasonStatus, string> = {
@@ -39,6 +39,7 @@ export default function SeasonView({ season }: { season: CWLSeason }) {
   const seasonClans = useCWLStore((s) => s.seasonClans);
   const clanName = useClanName();
   const scope = useCwlScope();
+  const seasonLabel = useSeasonLabel();
 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [posting, setPosting] = useState(false);
@@ -65,9 +66,7 @@ export default function SeasonView({ season }: { season: CWLSeason }) {
   const allocated = players.filter((p) => p.status !== 'removed' && scope.includes(p.recommendedClanId));
   const benched = allocated.filter((p) => p.isBench).length;
   const openTransfers = scopedTransfers.filter((t) => t.status === 'pending').length;
-  // Only full-season opt-outs are 'not playing'. A windowed one is still on the roster fighting
-  // most of the season, so counting it here would understate the family's available strength.
-  const optedOut = players.filter((p) => p.unavailable && isFullSeason(p.unavailable)).length;
+  const optedOut = players.filter((p) => p.optedOut).length;
 
   const planning = (
     <>
@@ -110,11 +109,6 @@ export default function SeasonView({ season }: { season: CWLSeason }) {
   const live = (
     <>
       <div>
-        <h3 style={{ fontSize: '1rem', margin: '0 0 var(--space-sm)' }}>Bench Rotation</h3>
-        <p className="text-muted" style={{ fontSize: '0.75rem', margin: '0 0 var(--space-sm)' }}>Who to bench in the upcoming round, chosen to spread war days evenly. Refreshes as rounds sync.</p>
-        <RotationPanel />
-      </div>
-      <div>
         <h3 style={{ fontSize: '1rem', margin: '0 0 var(--space-sm)' }}>Live Rounds</h3>
         <LiveRoundsPanel />
       </div>
@@ -127,7 +121,7 @@ export default function SeasonView({ season }: { season: CWLSeason }) {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--space-md)' }}>
         <div>
-          <h2 style={{ fontSize: '1.5rem', margin: 0 }}>CWL {season.label}</h2>
+          <h2 style={{ fontSize: '1.5rem', margin: 0 }}>{seasonLabel(season)}</h2>
           <p className="text-muted" style={{ fontSize: '0.75rem', margin: '4px 0 0' }}>
             {season.last_polled_at ? `Live data as of ${new Date(season.last_polled_at).toLocaleString()}` : 'Planning — not yet polled against live CWL'}
           </p>
@@ -144,7 +138,14 @@ export default function SeasonView({ season }: { season: CWLSeason }) {
             )}
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+          {/* Lineup planning is one clan's business, so it lives on a page per clan. Linked from the
+              header so it is reachable whatever stage the season is at. */}
+          {seasonClans.filter((sc) => scope.includes(sc.clanId)).map((sc) => (
+            <Link key={sc.clanId} href={`/dashboard/cwl/${sc.clanId}?season=${season.id}`} className="btn btn-primary" style={{ textDecoration: 'none' }} title="Plan who plays each war — everyone to 8★ first, then the most clan stars">
+              <CalendarRange size={15} /> {scope.isFamily ? `Plan ${clanName(sc.clanId)}` : 'War Planner'}
+            </Link>
+          ))}
           {/* Advancing the status to Transfers Pending / Signed Up posts to Discord on its own; this
               button is the manual path — preview it first, or refresh it after a late roster change. */}
           <button className="btn btn-outline" onClick={() => setPosting(true)}>
