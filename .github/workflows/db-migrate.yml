@@ -44,9 +44,10 @@ jobs:
         run: supabase link --project-ref "$PROJECT_ID"
 
       # Newer CLIs target the local Docker stack unless told otherwise; --remote
-      # points both commands at the linked production project.
+      # points both commands at the linked production project. --yes answers the
+      # confirmation prompt, which a non-interactive runner cannot.
       - name: Show pending migrations
         run: supabase migration list --remote
 
       - name: Apply migrations
-        run: supabase db push --remote
+        run: supabase db push --remote --yes
