@@ -9,8 +9,8 @@
  *
  * The model:
  *  - Each war is played MIRROR: our base at map position k hits theirs at position k. Our map order
- *    is predicted as TH, then Ranked tier (the game's own ordering also weighs heroes, which we do
- *    not have, so this is an approximation). Because positions shift whenever the lineup changes,
+ *    is predicted as TH, then where the game placed each account in past lineups (warOrder.ts —
+ *    the API has no war weight), then Ranked tier. Because positions shift whenever the lineup changes,
  *    a round is always evaluated as a whole lineup, never one player at a time.
  *  - Per-attack expectation comes from starModel.ts (strength band × TH levels hit up).
  *  - The next war's opponent is known once its prep day starts; for later rounds we only know WHICH
@@ -65,6 +65,12 @@ export interface PlannerAccount {
   optedOut?: boolean;
   /** Rounds the account cannot fight (a season-level partial opt-out). */
   unavailableRounds?: ReadonlySet<number>;
+  /**
+   * Where the game has placed this account in past lineups (warOrder.ts): −1…+1, higher = nearer
+   * the top. Null/absent when it has never shared a lineup — it then sorts after the scored
+   * accounts of its town hall.
+   */
+  warOrder?: number | null;
 }
 
 export interface PlannerRound {
@@ -74,6 +80,11 @@ export interface PlannerRound {
   /** Leader overrides for THIS war only. */
   forceIn?: ReadonlySet<string>;
   forceOut?: ReadonlySet<string>;
+  /**
+   * Accounts whose in-game war preference is "out". Set on the NEXT war only — the toggle is a
+   * short-term request — and, like any availability, overridden by a leader's force-in.
+   */
+  preferenceOut?: ReadonlySet<string>;
 }
 
 export interface PlannerInput {
@@ -93,7 +104,7 @@ export interface PlannerInput {
 export type ExclusionReason = 'banned' | 'opted_out' | 'unranked';
 export type SlotReason = 'forced_in' | 'chasing' | 'strength';
 export type BenchReason = 'target_reached' | 'covered_elsewhere' | 'not_reachable';
-export type UnavailableReason = 'forced_out' | 'unavailable' | ExclusionReason;
+export type UnavailableReason = 'forced_out' | 'war_preference' | 'unavailable' | ExclusionReason;
 
 export interface PlannedSlot {
   playerTag: string;
@@ -172,9 +183,15 @@ interface Acc extends PlannerAccount {
   exclusion: ExclusionReason | null;
 }
 
-/** Predicted map order: TH, then Ranked tier, then name/tag for a stable result. */
+/** Predicted map order: TH, then observed war order, then Ranked tier, then name/tag for stability. */
 function byMapOrder(a: Acc, b: Acc): number {
   if (b.thLevel !== a.thLevel) return b.thLevel - a.thLevel;
+  // Within a town hall, the game's own past placements (warOrder.ts) — the only thing that predicts
+  // its war-weight order. Accounts it has never placed come after those it has.
+  const wa = a.warOrder ?? null;
+  const wb = b.warOrder ?? null;
+  if ((wa === null) !== (wb === null)) return wa === null ? 1 : -1;
+  if (wa !== null && wb !== null && wa !== wb) return wb - wa;
   const t = tierOrder(b.leagueTier) - tierOrder(a.leagueTier);
   if (t !== 0) return t;
   const n = a.name.localeCompare(b.name);
@@ -251,6 +268,7 @@ export function planSeason(input: PlannerInput): SeasonPlan {
       if (round.forceIn?.has(a.playerTag)) continue;
       let reason: UnavailableReason | null = null;
       if (round.forceOut?.has(a.playerTag)) reason = 'forced_out';
+      else if (round.preferenceOut?.has(a.playerTag)) reason = 'war_preference';
       else if (a.exclusion) reason = a.exclusion;
       else if (a.unavailableRounds?.has(round.roundNumber)) reason = 'unavailable';
       if (reason) unavailable.push({ playerTag: a.playerTag, name: a.name, thLevel: a.thLevel, reason });

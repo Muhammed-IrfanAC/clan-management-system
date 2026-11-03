@@ -184,4 +184,34 @@ describe('planSeason', () => {
     expect(plan.rounds[0].lineup.find((s) => s.playerTag === 'ghost')!.strength).toBe('medium');
     expect(plan.accounts.find((a) => a.playerTag === 'ghost')).toMatchObject({ untracked: true, excludedReason: null });
   });
+
+  it('keeps an in-game opt-out out of that war unless a leader forces them in', () => {
+    const plan = planSeason({
+      warSize: 1,
+      accounts: [acc('a'), acc('b', { starsSoFar: 8 }), acc('c', { starsSoFar: 8 })],
+      rounds: [
+        { roundNumber: 1, enemyLineup: null, preferenceOut: new Set(['a', 'c']), forceIn: new Set(['c']) },
+        { roundNumber: 2, enemyLineup: null },
+      ],
+      futureOpponents: [],
+    });
+    expect(plan.rounds[0].lineup[0]).toMatchObject({ playerTag: 'c', reason: 'forced_in' });
+    expect(plan.rounds[0].unavailable).toContainEqual(expect.objectContaining({ playerTag: 'a', reason: 'war_preference' }));
+    expect(plan.rounds[1].unavailable.some((u) => u.playerTag === 'a')).toBe(false);
+  });
+
+  it('orders a town hall by observed war order, with never-placed accounts last', () => {
+    const plan = planSeason({
+      warSize: 3,
+      accounts: [
+        acc('new', { warOrder: null, leagueTier: 36 }),
+        acc('low', { warOrder: -0.5 }),
+        acc('high', { warOrder: 0.8, leagueTier: 30 }),
+      ],
+      rounds: rounds(1),
+      futureOpponents: [],
+    });
+    expect(plan.rounds[0].lineup.map((s) => s.playerTag)).toEqual(['high', 'low', 'new']);
+    expect(plan.accounts.map((a) => a.playerTag)).toEqual(['high', 'low', 'new']);
+  });
 });

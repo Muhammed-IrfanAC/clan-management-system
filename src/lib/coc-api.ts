@@ -175,6 +175,8 @@ export interface CoCPlayer {
   bestTrophies: number;
   donations: number;
   donationsReceived: number;
+  /** The in-game war opt-in toggle. Only on the per-player profile, not the clan member list. */
+  warPreference?: 'in' | 'out';
   clan?: {
     tag: string;
     name: string;

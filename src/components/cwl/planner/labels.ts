@@ -15,6 +15,7 @@ export const BENCH_REASON: Record<BenchReason, string> = {
 
 export const UNAVAILABLE_REASON: Record<UnavailableReason, string> = {
   forced_out: 'Forced out of this war',
+  war_preference: 'Opted out in game (war preference)',
   unavailable: 'Unavailable',
   banned: 'Banned from CWL',
   opted_out: 'Not participating this season',

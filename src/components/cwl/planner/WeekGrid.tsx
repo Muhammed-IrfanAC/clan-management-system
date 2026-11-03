@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { MoreVertical } from 'lucide-react';
 import { useCwlPlannerStore } from '@/lib/stores/cwlPlannerStore';
-import { isSettled, livePendingStars, SEASON_ROUNDS } from '@/lib/cwl/plannerInput';
+import { isSettled, livePendingStars, optedOutInGame, SEASON_ROUNDS } from '@/lib/cwl/plannerInput';
 import { tierLabel } from '@/lib/cwl/leagues';
 import type { AccountOutlook } from '@/lib/cwl/planner';
 import { usePlan } from './usePlan';
@@ -39,6 +39,16 @@ export default function WeekGrid() {
   const setOverride = useCwlPlannerStore((s) => s.setOverride);
   const savingKey = useCwlPlannerStore((s) => s.savingOverrideKey);
   const roster = useCwlPlannerStore((s) => s.roster);
+  // Same freshness rule as the planner, so the chip never claims an opt-out the plan is ignoring.
+  const inGameOut = new Set(roster.filter((a) => optedOutInGame(a)).map((a) => a.playerTag));
+
+  // How fresh the in-game war preferences are: sync re-reads them every ~10 minutes during CWL.
+  const checkedTimes = roster
+    .map((a) => (a.warPreferenceCheckedAt ? new Date(a.warPreferenceCheckedAt).getTime() : null))
+    .filter((t): t is number => t != null);
+  const oldestCheck = checkedTimes.length ? Math.min(...checkedTimes) : null;
+  // eslint-disable-next-line react-hooks/purity -- a "minutes ago" label is meant to read the clock
+  const checkedAgoMin = oldestCheck != null ? Math.max(0, Math.round((Date.now() - oldestCheck) / 60_000)) : null;
 
   // Expected stars from the war still being fought — the attacks not made yet, each against its
   // mirror base. The planner already counts these; the grid shows them so a leader planning the next
@@ -100,9 +110,14 @@ export default function WeekGrid() {
       title = `Plays at #${slot.mapPosition}, ~${slot.expectedStars.toFixed(2)}★ — ${SLOT_REASON[slot.reason]}`;
       style = { background: 'rgba(34,197,94,0.14)', color: 'var(--color-text)' };
     } else if (out) {
-      content = out.reason === 'forced_out' ? 'OUT' : '—';
+      content = out.reason === 'forced_out' ? 'OUT' : out.reason === 'war_preference' ? 'OPT' : '—';
       title = UNAVAILABLE_REASON[out.reason];
-      style = out.reason === 'forced_out' ? { background: 'rgba(239,68,68,0.14)', color: 'var(--color-danger)' } : { color: 'var(--color-muted)' };
+      style =
+        out.reason === 'forced_out'
+          ? { background: 'rgba(239,68,68,0.14)', color: 'var(--color-danger)' }
+          : out.reason === 'war_preference'
+            ? { background: 'rgba(245,158,11,0.14)', color: 'var(--color-warning)' }
+            : { color: 'var(--color-muted)' };
     } else if (bench) {
       title = `Bench — ${BENCH_REASON[bench.reason]}`;
     }
@@ -127,7 +142,8 @@ export default function WeekGrid() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)' }}>
         <h3 style={{ fontSize: '1rem', margin: 0 }}>The week</h3>
         <span className="text-muted" style={{ fontSize: '0.72rem' }}>
-          Numbers are expected stars: ~italic for an attack still to come in the current war, plain in a planned war. Click an open war to force in → force out → back to the plan.
+          Numbers are expected stars: ~italic for an attack still to come in the current war, plain in a planned war. OPT = opted out in game (next war only). Click an open war to force in → force out → back to the plan.
+          {checkedAgoMin != null && <> War preferences checked {checkedAgoMin === 0 ? 'just now' : `${checkedAgoMin} min ago`}.</>}
         </span>
       </div>
       <div style={{ overflowX: 'auto' }}>
@@ -163,6 +179,11 @@ export default function WeekGrid() {
                     {isBanned && <Chip color="var(--color-danger)">BANNED</Chip>}
                     {isRb && <Chip color="var(--color-warning)">RULE BREAKER</Chip>}
                     {optedOut.has(a.playerTag) && <Chip color="var(--color-muted)">NOT PLAYING</Chip>}
+                    {inGameOut.has(a.playerTag) && (
+                      <Chip color="var(--color-warning)" title="War preference set to OUT in game — kept out of the next war only. Force them in to field them anyway.">
+                        OPTED OUT (IN GAME)
+                      </Chip>
+                    )}
                     {a.excludedReason === 'unranked' && <Chip color="var(--color-warning)">UNRANKED</Chip>}
                     {a.untracked && (
                       <Chip color="var(--color-muted)" title="Signed up, but not in our database — probably left the clan after sign-up. League unknown, so rated medium. Force them out if they are gone.">
