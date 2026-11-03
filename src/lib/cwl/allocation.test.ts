@@ -445,22 +445,22 @@ describe('allocate — ranking, capacity and removals', () => {
   });
 });
 
-describe('war-ineligible (struck) exclusion — matched on the account tag', () => {
-  it('pulls a war-ineligible account from the pool and marks it removed with a reason', () => {
+describe('CWL ban exclusion — matched on the account tag', () => {
+  it('pulls a banned account from the pool and marks it removed with a reason', () => {
     const players = [
       acct('clean', { currentClanId: 'A', thLevel: 16 }),
-      acct('struck', { currentClanId: 'A', thLevel: 15 }),
+      acct('banned', { currentClanId: 'A', thLevel: 15 }),
     ];
-    const drafts = byTag(allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#struck'])));
-    expect(drafts['#struck'].status).toBe('removed');
-    expect(drafts['#struck'].recommendedClanId).toBeNull();
-    expect(drafts['#struck'].rank).toBeNull();
-    expect(drafts['#struck'].note).toMatch(/war-ineligible/i);
+    const drafts = byTag(allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS, new Set(['#banned'])));
+    expect(drafts['#banned'].status).toBe('removed');
+    expect(drafts['#banned'].recommendedClanId).toBeNull();
+    expect(drafts['#banned'].rank).toBeNull();
+    expect(drafts['#banned'].note).toMatch(/banned from cwl/i);
     expect(drafts['#clean'].recommendedClanId).toBe('A');
   });
 
-  it('excludes only the struck alt, never its owner\'s other accounts', () => {
-    // Both accounts belong to one person; a strike is per account, so the clean main plays on.
+  it('excludes only the banned alt, never its owner\'s other accounts', () => {
+    // Both accounts belong to one person; a ban is per account, so the clean main plays on.
     const players = [
       acct('main', { personId: 'irfan', currentClanId: 'A', thLevel: 16 }),
       acct('alt', { personId: 'irfan', currentClanId: 'A', thLevel: 13 }),
@@ -471,7 +471,7 @@ describe('war-ineligible (struck) exclusion — matched on the account tag', () 
     expect(drafts['#alt'].status).toBe('removed');
   });
 
-  it('never fills a struck account into a war slot even when the clan has room', () => {
+  it('never fills a banned account into a war slot even when the clan has room', () => {
     const players = Array.from({ length: 3 }, (_, i) => acct(`p${i}`, { currentClanId: 'A', thLevel: 16 - i }));
     const drafts = allocate(players, [{ clanId: 'A', warSize: 3, priority: 0 }], NO_CONSTRAINTS, new Set(['#p2']));
     const placed = placedIn(drafts, 'A').map((d) => d.playerTag);
@@ -480,7 +480,7 @@ describe('war-ineligible (struck) exclusion — matched on the account tag', () 
     expect(byTag(drafts)['#p2'].status).toBe('removed');
   });
 
-  it('is a no-op when the ineligible set is empty (default arg)', () => {
+  it('is a no-op when the banned set is empty (default arg)', () => {
     const players = [acct('1', { currentClanId: 'A' }), acct('2', { currentClanId: 'B' })];
     expect(allocate(players, [CLAN_A, CLAN_B], NO_CONSTRAINTS).filter((d) => d.status === 'removed')).toHaveLength(0);
   });
@@ -537,13 +537,13 @@ describe('opt-out — accounts a leader marked as not participating', () => {
     expect(placedIn(drafts, 'A').map((d) => d.playerTag).sort()).toEqual(['#a', '#c']);
   });
 
-  it('reports an account that is both struck and opted out as struck (the actionable one)', () => {
+  it('reports an account that is both banned and opted out as banned', () => {
     const players = [acct('both', { currentClanId: 'A' })];
     const drafts = allocate(players, [CLAN_A], NO_CONSTRAINTS, new Set(['#both']), new Set(['#both']));
     // Exactly one row, never one per exclusion reason.
     expect(drafts).toHaveLength(1);
     expect(drafts[0].status).toBe('removed');
-    expect(drafts[0].note).toMatch(/war-ineligible/i);
+    expect(drafts[0].note).toMatch(/banned from cwl/i);
   });
 
   it('is a no-op when nobody has opted out (default arg)', () => {

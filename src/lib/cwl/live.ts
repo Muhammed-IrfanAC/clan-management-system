@@ -257,6 +257,27 @@ async function ingestClan(
   // signed in, available from prep day regardless of which round has been revealed. It is the input
   // the roster board is reconciled against (see signupReconcile.ts).
   const ourGroupClan = snap.group.clans.find((c) => c.tag === clanTag);
+
+  // Every clan in the group, with its signed roster (migration 046). The OTHER clans are the
+  // opponents still to come — each clan meets every other once, so the planner can score unrevealed
+  // rounds against them long before a round is drawn. Our OWN row is the signup list the planner
+  // builds its roster from, linked to a person or not. Best-effort: a failed write only leaves the
+  // planner with less to go on, never the round ingestion above.
+  const groupRows = snap.group.clans.map((c) => ({
+    season_id: seasonId,
+    clan_id: clanId,
+    opponent_tag: c.tag,
+    opponent_name: c.name,
+    members: c.members.map((m) => ({ tag: m.tag, name: m.name, th: m.townHallLevel })),
+    is_own: c.tag === clanTag,
+    polled_at: new Date().toISOString(),
+  }));
+  if (groupRows.length) {
+    const { error: groupErr } = await supabase
+      .from('cwl_group_clans')
+      .upsert(groupRows, { onConflict: 'season_id,clan_id,opponent_tag' });
+    if (groupErr) console.error('CWL group clans upsert failed:', groupErr);
+  }
   const signup: ClanSignup | null = ourGroupClan
     ? {
         clanId,

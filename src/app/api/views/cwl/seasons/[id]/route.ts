@@ -35,10 +35,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         supabase.from('cwl_allocations').select(ALLOCATION_SELECT).eq('season_id', seasonId),
         transfersReq,
         supabase.from('cwl_rounds').select('*').eq('season_id', seasonId),
-        supabase
-          .from('cwl_season_optouts')
-          .select('player_account_tag, unavailable_from_round, unavailable_to_round')
-          .eq('season_id', seasonId),
+        supabase.from('cwl_season_optouts').select('player_account_tag').eq('season_id', seasonId),
         // Filtered through the round's season by an inner embed (as TRANSFER_SELECT does), so it joins
         // this batch rather than waiting for the rounds to come back first.
         supabase.from('cwl_war_members').select('*, round:cwl_rounds!inner(season_id)').eq('round.season_id', seasonId),

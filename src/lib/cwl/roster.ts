@@ -2,7 +2,6 @@ import { supabase } from '@/lib/supabase';
 import type { EligiblePlayer } from './allocation';
 import { normalizeLeagueTier } from './leagues';
 import { detectTransferOutcomes, type TransferObservation } from './transferDetect';
-import { STRIKE_WINDOW_DAYS } from '@/lib/strikes/status';
 import type { CWLSeasonStatus } from '@/types/database';
 
 /**
@@ -53,59 +52,41 @@ export async function loadEligiblePlayers(): Promise<EligiblePlayer[]> {
 }
 
 /**
- * Load the set of account tags that are currently WAR-INELIGIBLE because of the Strike system: they
- * hold at least one active (not yet 90-day-expired) strike that leadership has not resolved
- * (leadership_approved = false). Strikes are per-account, so this excludes only the specific account —
- * a struck alt never holds out the person's other accounts. This mirrors `isWarEligible` in
- * lib/strikes/status.ts — an account is war-ineligible exactly when its unresolved-active strike count
- * is > 0. Fed to `allocate()` (matched against each person's fielded account) so struck accounts are
- * pulled from the CWL pool automatically. Fail-safe: on error returns an empty set (never blocks
- * allocation — worst case a struck account isn't auto-excluded and a leader sees them).
+ * Load the accounts leadership has BANNED from CWL (cwl_player_flags, migration 046). A ban is a
+ * standing leader statement, kept until someone lifts it, and it is the only thing that keeps an
+ * account out of CWL for conduct — strikes deliberately no longer do. Fed to `allocate()` so a banned
+ * account is never rostered. Fail-safe: on error returns an empty set (never blocks allocation —
+ * worst case a banned account shows on the board, where a leader sees it).
  */
-export async function loadWarIneligibleAccountTags(): Promise<Set<string>> {
-  // Expiry is derived, not stored (see 019_strike_system.sql), so filter on issued_at against the
-  // same window constant the pure status module uses.
-  const cutoffIso = new Date(Date.now() - STRIKE_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+export async function loadCwlBannedAccountTags(): Promise<Set<string>> {
   const { data, error } = await supabase
-    .from('strikes')
+    .from('cwl_player_flags')
     .select('player_account_tag')
-    .gt('issued_at', cutoffIso) // still within the 90-day active window
-    .eq('leadership_approved', false); // and not resolved/acknowledged by leadership
+    .eq('flag', 'banned');
   if (error) {
-    console.error('loadWarIneligibleAccountTags failed (non-fatal):', error);
+    console.error('loadCwlBannedAccountTags failed (non-fatal):', error);
     return new Set();
   }
-  return new Set(
-    (data as { player_account_tag: string | null }[] | null)
-      ?.map((r) => r.player_account_tag)
-      .filter((t): t is string => !!t) || [],
-  );
+  return new Set((data as { player_account_tag: string }[] | null)?.map((r) => r.player_account_tag) || []);
 }
 
 /**
  * Load the account tags a leader has marked NOT PARTICIPATING in this season (migration 031).
  *
  * This is the availability the engine cannot derive: nothing in a player's TH level, Ranked tier or
- * strike record says they are away this week. It lives in its own table rather than on the
- * allocation row precisely so it SURVIVES a re-allocation — generateAllocation deletes and rebuilds
- * every allocation, so an opt-out recorded there would silently un-do itself the next time anyone
- * reordered the clan priorities.
+ * record says they are away this week. It lives in its own table rather than on the allocation row
+ * precisely so it SURVIVES a re-allocation — generateAllocation deletes and rebuilds every
+ * allocation, so an opt-out recorded there would silently un-do itself the next time anyone
+ * reordered the clan priorities. Missing a single war is a per-war override instead (migration 046).
  *
- * Only FULL-SEASON opt-outs are returned (migration 032's null window). A partial one — away for the
- * first two rounds, gone after the fifth — must still be rostered, because it has to be in a clan to
- * fight the rounds it IS available for; that constraint is the rotation suggester's, not the
- * allocation engine's. Excluding it here would cost the clan a body for seven rounds to solve a
- * problem that exists for two. See cwl/availability.ts.
- *
- * Fail-safe like its war-ineligible sibling: on error it returns an empty set, so a broken read
+ * Fail-safe like its banned sibling: on error it returns an empty set, so a broken read
  * over-includes (a leader sees someone they meant to sit out) rather than blocking allocation.
  */
 export async function loadOptedOutAccountTags(seasonId: string): Promise<Set<string>> {
   const { data, error } = await supabase
     .from('cwl_season_optouts')
     .select('player_account_tag')
-    .eq('season_id', seasonId)
-    .is('unavailable_from_round', null);
+    .eq('season_id', seasonId);
   if (error) {
     console.error('loadOptedOutAccountTags failed (non-fatal):', error);
     return new Set();

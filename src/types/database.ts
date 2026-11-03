@@ -338,6 +338,9 @@ export interface CWLSeason {
   digest_message_id: string | null;
   transfer_call_posted_at: string | null;
   created_at: string;
+  // The season's clans, embedded by the season lists (`season_clans:cwl_season_clans(clan_id)`) so a
+  // season can be named by its clans — labels default to the month, and every clan may run its own.
+  season_clans?: { clan_id: string }[];
 }
 
 export interface CWLSeasonClan {

@@ -128,7 +128,7 @@ export default function RosterPostModal({ onClose }: { onClose: () => void }) {
 }
 
 /** A readable rendering of one Discord payload — same shape as Discord draws it, minus the styling. */
-function MessagePreview({ label, message }: { label: string; message: DiscordMessage }) {
+export function MessagePreview({ label, message }: { label: string; message: DiscordMessage }) {
   const embed = message.embeds?.[0];
   return (
     <div style={{ marginBottom: 'var(--space-lg)' }}>
