@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildPlannerInput, enemyThByPosition, livePendingStars, plannerRoster, type PlannerSource } from './plannerInput';
+import { buildPlannerInput, enemyThByPosition, livePendingStars, plannerRoster, warMapSlots, type PlannerSource } from './plannerInput';
+import { slotExpectedStars as expectedStars, UNRATED } from './attackModel';
+
+const cwl = (attackerTh: number, defenderTh: number, leagueTier: number | null) => ({ attackerTh, defenderTh, leagueTier, cwl: true });
 
 function source(over: Partial<PlannerSource> = {}): PlannerSource {
   return {
@@ -54,8 +57,8 @@ describe('buildPlannerInput', () => {
         members: [{ round_id: 'r1', player_tag: '#B', attacks_used: 0, stars: 0, map_position: 1 }],
       }),
     );
-    // #B is TH16 weak hitting a TH17: 50% triple → 1.8 + 0.6.
-    expect(input.accounts.find((a) => a.playerTag === '#B')!.pendingExpected).toBeCloseTo(2.4);
+    // #B is a TH16 in Dragon 28 hitting its mirror, a TH17.
+    expect(input.accounts.find((a) => a.playerTag === '#B')!.pendingExpected).toBeCloseTo(expectedStars(cwl(16, 17, 28)));
   });
 
   it('carries flags, opt-outs and per-war overrides onto the right account and round', () => {
@@ -67,7 +70,7 @@ describe('buildPlannerInput', () => {
       }),
     );
     expect(input.accounts.find((a) => a.playerTag === '#A')).toMatchObject({ ruleBreaker: true, banned: false, optedOut: true });
-    expect(input.accounts.find((a) => a.playerTag === '#B')).toMatchObject({ banned: true });
+    expect(input.accounts.find((a) => a.playerTag === '#B')).toMatchObject({ banned: true, rating: null });
     expect([...input.rounds[2].forceIn!]).toEqual(['#B']);
     expect([...input.rounds[3].forceOut!]).toEqual(['#A']);
     expect(input.rounds[0].forceIn!.size).toBe(0);
@@ -158,6 +161,16 @@ describe('plannerRoster', () => {
     expect(roster[0].untracked).toBeUndefined();
   });
 
+  it('carries the left-the-family flag of a signed-up account', () => {
+    const roster = plannerRoster({
+      signup: [{ tag: '#L', name: 'Left', th: 16 }],
+      accounts: new Map([['#L', { ...known('#L'), leftFamily: true }]]),
+      planned: [],
+      excluded: [],
+    });
+    expect(roster[0]).toMatchObject({ playerTag: '#L', leftFamily: true });
+  });
+
   it('falls back to the planned allocation before signup', () => {
     const roster = plannerRoster({ signup: null, accounts: new Map(), planned: [known('#A')], excluded: [] });
     expect(roster.map((a) => a.playerTag)).toEqual(['#A']);
@@ -193,7 +206,43 @@ describe('livePendingStars', () => {
       ],
     });
     expect([...pending.keys()].sort()).toEqual(['live:#A', 'live:#G']);
-    expect(pending.get('live:#A')).toBeCloseTo(1.8 + 1.2 * 0.95); // strong, +1
-    expect(pending.get('live:#G')).toBeCloseTo(1.8 + 1.2 * 0.95); // unknown league → medium, same TH
+    expect(pending.get('live:#A')).toBeCloseTo(expectedStars(cwl(16, 17, 32))); // +1 against slot 1
+    expect(pending.get('live:#G')).toBeCloseTo(expectedStars(cwl(16, 16, null))); // unknown league, same TH
+  });
+
+  it('finds the mirror base by war-map slot, not by the raw CWL map position', () => {
+    // CWL positions count benched sign-ups, so a war's members read 3, 7, 12 — slots 1, 2, 3.
+    const pending = livePendingStars({
+      roster: [{ playerTag: '#A', name: 'A', thLevel: 16, leagueTier: 30 }],
+      rounds: [{ id: 'live', round_number: 1, state: 'inWar', opponent_tag: '#X', team_size: 3,
+        opponent_lineup: [{ tag: 'e1', th: 18, pos: 2 }, { tag: 'e2', th: 17, pos: 5 }, { tag: 'e3', th: 15, pos: 9 }] }],
+      members: [
+        { round_id: 'live', player_tag: '#TOP', attacks_used: 1, stars: 3, map_position: 3 },
+        { round_id: 'live', player_tag: '#MID', attacks_used: 1, stars: 3, map_position: 7 },
+        { round_id: 'live', player_tag: '#A', attacks_used: 0, stars: 0, map_position: 12 },
+      ],
+    });
+    expect(pending.get('live:#A')).toBeCloseTo(expectedStars(cwl(16, 15, 30))); // slot 3 → their TH15, a hit down
+  });
+
+  it('uses the account’s rating', () => {
+    const src = (mean: number) => livePendingStars({
+      roster: [{ playerTag: '#A', name: 'A', thLevel: 16, leagueTier: 30, rating: { ...UNRATED, mean, variance: 0.05, attacks: 30 } }],
+      rounds: [{ id: 'live', round_number: 1, state: 'inWar', opponent_tag: '#X', team_size: 1, opponent_lineup: [{ tag: 'e1', th: 16, pos: 1 }] }],
+      members: [{ round_id: 'live', player_tag: '#A', attacks_used: 0, stars: 0, map_position: 1 }],
+    }).get('live:#A')!;
+    expect(src(0.5)).toBeGreaterThan(src(-0.5));
+  });
+});
+
+describe('warMapSlots', () => {
+  it('ranks map positions within each war', () => {
+    const slots = warMapSlots([
+      { round_id: 'r1', player_tag: '#B', attacks_used: 0, stars: 0, map_position: 40 },
+      { round_id: 'r1', player_tag: '#A', attacks_used: 0, stars: 0, map_position: 2 },
+      { round_id: 'r2', player_tag: '#A', attacks_used: 0, stars: 0, map_position: 5 },
+      { round_id: 'r2', player_tag: '#C', attacks_used: 0, stars: 0, map_position: null },
+    ]);
+    expect([...slots]).toEqual([['r1:#A', 1], ['r1:#B', 2], ['r2:#A', 1]]);
   });
 });

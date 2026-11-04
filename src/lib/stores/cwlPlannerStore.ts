@@ -11,6 +11,8 @@
 import { create } from 'zustand';
 import type { CWLSeason } from '@/types/database';
 import type { RosterAccount, SourceGroupClan } from '@/lib/cwl/plannerInput';
+import type { ObservedLineup } from '@/lib/cwl/warOrder';
+import type { FamilyRanking } from '@/lib/cwl/familyStrength';
 import type { FlagRow, OverrideRow, PlannerData, PlannerMember, PlannerRound } from '@/lib/cwl/plannerLoad';
 
 import type { LineupPostPreview } from '@/lib/cwl/nextLineupPostNotify';
@@ -35,6 +37,10 @@ interface PlannerState {
   flags: FlagRow[];
   optedOut: Set<string>;
   groupClans: SourceGroupClan[];
+  /** Past lineups the roster was fielded in — the observed war-map order (warOrder.ts). */
+  lineupHistory: ObservedLineup[];
+  /** The family strength ranking the labels are read against (familyStrength.ts). */
+  ranking: FamilyRanking | undefined;
 
   loading: boolean;
   savingOverrideKey: string | null; // `${round}:${tag}`
@@ -81,6 +87,8 @@ export const useCwlPlannerStore = create<PlannerState>((set, get) => ({
   flags: [],
   optedOut: new Set(),
   groupClans: [],
+  lineupHistory: [],
+  ranking: undefined,
   loading: true,
   savingOverrideKey: null,
   savingFlagTag: null,

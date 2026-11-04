@@ -16,6 +16,8 @@ import {
   type SourceRound,
 } from './plannerInput';
 import type { ObservedLineup } from './warOrder';
+import { loadAccountHistory } from './ratingLoad';
+import { loadFamilyRanking } from './familyStrengthLoad';
 
 export interface PlannerRound extends SourceRound {
   opponent_name: string | null;
@@ -50,9 +52,10 @@ type AccountEmbed = {
   league_tier_id: number | null;
   war_preference?: 'in' | 'out' | null;
   war_preference_checked_at?: string | null;
+  status?: string | null;
 };
 
-const ACCOUNT_FIELDS = 'in_game_name, th_level, league, league_tier_id, war_preference, war_preference_checked_at';
+const ACCOUNT_FIELDS = 'in_game_name, th_level, league, league_tier_id, war_preference, war_preference_checked_at, status';
 
 /** How far back past lineups inform the war order — war weight drifts as bases are upgraded. */
 const WAR_ORDER_WINDOW_DAYS = 45;
@@ -72,6 +75,7 @@ function toRosterAccount(tag: string, account: AccountEmbed | null, personName: 
     leagueTier: normalizeLeagueTier(account?.league ?? null, account?.league_tier_id ?? null),
     warPreference: account?.war_preference ?? null,
     warPreferenceCheckedAt: account?.war_preference_checked_at ?? null,
+    ...(account?.status && account.status !== 'active' ? { leftFamily: true } : {}),
   };
 }
 
@@ -197,20 +201,33 @@ export async function loadPlannerData(seasonId: string, clanId: string): Promise
       accounts.set(a.player_tag, toRosterAccount(a.player_tag, a, a.person?.display_name ?? null));
     }
   }
-  const roster = plannerRoster({ signup: ownSignup, accounts, planned, excluded });
+  const unrated = plannerRoster({ signup: ownSignup, accounts, planned, excluded });
 
   const rounds = (roundsRes.data as PlannerRound[]) || [];
-  const [membersRes, lineupHistory] = await Promise.all([
+  const [membersRes, lineupHistory, { ratings, carries }, ranking] = await Promise.all([
     rounds.length
       ? supabase
           .from('cwl_war_members')
           .select('round_id, player_tag, name, attacks_used, stars, map_position')
           .in('round_id', rounds.map((r) => r.id))
       : Promise.resolve({ data: [], error: null }),
-    loadLineupHistory(roster.map((a) => a.playerTag)),
+    loadLineupHistory(unrated.map((a) => a.playerTag)),
+    loadAccountHistory(unrated),
+    // Labels are read against the whole family's ranking, so "goat" means the same here as on the
+    // Strength page: one of its top five.
+    loadFamilyRanking(),
   ]);
   if (membersRes.error) throw membersRes.error;
   const members = (membersRes.data as PlannerMember[]) || [];
+  // Each account's attack-model rating, learned from its war history (absent = no history yet).
+  const roster = unrated.map((a) => {
+    const c = carries.get(a.playerTag);
+    return {
+      ...a,
+      rating: ratings.get(a.playerTag) ?? null,
+      leagueCarry: c ? { strength: c.strength, weekStart: c.from.weekStart, th: c.from.th, tier: c.from.tier } : null,
+    };
+  });
 
   return {
     warSize: clanRows.find((c) => c.clan_id === clanId)?.war_size ?? 15,
@@ -222,5 +239,6 @@ export async function loadPlannerData(seasonId: string, clanId: string): Promise
     optedOut,
     groupClans: groupRows.filter((g) => !g.is_own),
     lineupHistory,
+    ranking,
   };
 }

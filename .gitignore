@@ -43,3 +43,7 @@ next-env.d.ts
 
 # tokensave MCP local code index
 .tokensave/
+
+# local data: prod dumps, scraped pages, analysis output — never committed
+/data/
+*.dump

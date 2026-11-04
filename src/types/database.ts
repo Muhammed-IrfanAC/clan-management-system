@@ -112,6 +112,7 @@ export interface WarRound {
   state: string;              // 'preparation' | 'inWar' | 'warEnded'
   team_size: number | null;
   attacks_per_member: number | null; // regular war = 2
+  battle_modifier: string | null; // 'none' | 'hardMode' | … ; null = not recorded (migration 048)
   opponent_name: string | null;
   opponent_tag: string | null;
   opponent_lineup: LineupBase[]; // every enemy base + TH, incl. ones nobody attacked (see migration 016)
@@ -143,6 +144,7 @@ export interface WarAttack {
   attacker_person_id: string | null;
   attacker_th: number | null;
   attacker_rank: DatabaseRole | null;
+  attacker_league_tier_id: number | null; // Ranked tier id at first sighting (migration 048)
   defender_tag: string;
   defender_th: number | null;
   stars: number;

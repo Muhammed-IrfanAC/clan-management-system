@@ -42,6 +42,7 @@ async function ingestClan(clanId: string, clanTag: string): Promise<number> {
         state: war.state,
         team_size: war.teamSize ?? null,
         attacks_per_member: war.attacksPerMember ?? 2,
+        battle_modifier: war.battleModifier ?? null,
         opponent_name: them.name,
         opponent_tag: them.tag,
         opponent_lineup: buildLineup(them.members),
@@ -61,19 +62,22 @@ async function ingestClan(clanId: string, clanTag: string): Promise<number> {
     return 0;
   }
 
-  // Resolve our members' tags -> persons (attribution) and -> db_role (rank, for the late-snipe
-  // detector) in one lookup — same global-by-tag resolution as CWL.
+  // Resolve our members' tags -> persons (attribution), -> db_role (rank, for the late-snipe
+  // detector) and -> Ranked tier (recorded on each new attack for the attack model) in one lookup —
+  // same global-by-tag resolution as CWL.
   const tagsInWar = us.members.map((m) => m.tag);
   const personByTag = new Map<string, string>();
   const rankByTag = new Map<string, string>();
+  const leagueByTag = new Map<string, number>();
   if (tagsInWar.length) {
     const { data: accts } = await supabase
       .from('player_accounts')
-      .select('player_tag, person_id, db_role')
+      .select('player_tag, person_id, db_role, league_tier_id')
       .in('player_tag', tagsInWar);
-    for (const a of (accts as { player_tag: string; person_id: string | null; db_role: string | null }[] | null) || []) {
+    for (const a of (accts as { player_tag: string; person_id: string | null; db_role: string | null; league_tier_id: number | null }[] | null) || []) {
       if (a.person_id) personByTag.set(a.player_tag, a.person_id);
       if (a.db_role) rankByTag.set(a.player_tag, a.db_role);
+      if (a.league_tier_id) leagueByTag.set(a.player_tag, a.league_tier_id);
     }
   }
 
@@ -104,6 +108,7 @@ async function ingestClan(clanId: string, clanTag: string): Promise<number> {
     opponentMembers: them.members,
     personByTag,
     rankByTag,
+    leagueByTag,
   });
 
   return 1;

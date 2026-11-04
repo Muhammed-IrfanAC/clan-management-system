@@ -35,6 +35,14 @@ export const UNRANKED_TIER = 0;
 /** The highest ordinal on the scale (Legend I). */
 export const MAX_LEAGUE_TIER = 36;
 
+/**
+ * True when the account has no Ranked league. Everyone in the family plays Ranked, so the CWL planner
+ * never plans an unranked account and tells leadership to mark it banned.
+ */
+export function isUnranked(leagueTier: number | null | undefined): boolean {
+  return leagueTier == null || leagueTier <= UNRANKED_TIER;
+}
+
 /** One tier on the Ranked scale. `ordinal` is the sort key and the value we persist in rules. */
 export interface CWLLeagueTier {
   ordinal: number; // 0–36

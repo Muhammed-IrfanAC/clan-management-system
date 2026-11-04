@@ -1,4 +1,6 @@
 import type { AccountOutlook, BenchReason, SlotReason, UnavailableReason } from '@/lib/cwl/planner';
+// Strength labels are shared with the Strength page, so both describe an account the same way.
+export { TIER_COLOR, pct } from '@/components/strength/tiers';
 
 /** Shared wording for the planner's reason codes, so every panel says the same thing. */
 export const SLOT_REASON: Record<SlotReason, string> = {

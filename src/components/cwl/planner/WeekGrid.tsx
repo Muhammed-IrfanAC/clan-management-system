@@ -3,11 +3,11 @@
 import { useMemo, useState } from 'react';
 import { MoreVertical } from 'lucide-react';
 import { useCwlPlannerStore } from '@/lib/stores/cwlPlannerStore';
-import { isSettled, livePendingStars, optedOutInGame, SEASON_ROUNDS } from '@/lib/cwl/plannerInput';
+import { isSettled, livePendingStars, optedOutInGame, SEASON_ROUNDS, warMapSlots } from '@/lib/cwl/plannerInput';
 import { tierLabel } from '@/lib/cwl/leagues';
 import type { AccountOutlook } from '@/lib/cwl/planner';
 import { usePlan } from './usePlan';
-import { STATUS_LABEL, UNAVAILABLE_REASON, BENCH_REASON, SLOT_REASON, statusColor } from './labels';
+import { STATUS_LABEL, UNAVAILABLE_REASON, BENCH_REASON, SLOT_REASON, statusColor, TIER_COLOR, pct } from './labels';
 
 const th: React.CSSProperties = { padding: '6px 6px', fontSize: '0.64rem', textTransform: 'uppercase', color: 'var(--color-muted)', whiteSpace: 'nowrap', textAlign: 'center' };
 const td: React.CSSProperties = { padding: '4px 6px', fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
@@ -17,10 +17,6 @@ function nextMode(current: 'in' | 'out' | undefined): 'in' | 'out' | null {
   if (!current) return 'in';
   return current === 'in' ? 'out' : null;
 }
-
-const STRENGTH_COLOR = { strong: 'var(--color-cta)', medium: 'var(--color-text)', weak: 'var(--color-warning)' } as const;
-/** Goats are strong for every calculation; red only picks out the few strongest players. */
-const GOAT_COLOR = 'var(--color-danger)';
 
 /**
  * The whole week for the clan: one row per account, one column per war.
@@ -41,6 +37,9 @@ export default function WeekGrid() {
   const roster = useCwlPlannerStore((s) => s.roster);
   // Same freshness rule as the planner, so the chip never claims an opt-out the plan is ignoring.
   const inGameOut = new Set(roster.filter((a) => optedOutInGame(a)).map((a) => a.playerTag));
+  const leftFamily = new Set(roster.filter((a) => a.leftFamily).map((a) => a.playerTag));
+  // In our database but linked to no member — usually a candidate for a CWL ban.
+  const unlinked = new Set(roster.filter((a) => !a.untracked && !a.personName).map((a) => a.playerTag));
 
   // How fresh the in-game war preferences are: sync re-reads them every ~10 minutes during CWL.
   const checkedTimes = roster
@@ -54,6 +53,7 @@ export default function WeekGrid() {
   // mirror base. The planner already counts these; the grid shows them so a leader planning the next
   // war a few hours early can see what the current day is still expected to bring.
   const pending = useMemo(() => livePendingStars({ roster, rounds, members }), [roster, rounds, members]);
+  const slots = useMemo(() => warMapSlots(members), [members]);
 
   const roundByNumber = new Map(rounds.map((r) => [r.round_number, r] as const));
   const planByNumber = new Map(plan.rounds.map((r) => [r.roundNumber, r] as const));
@@ -83,10 +83,11 @@ export default function WeekGrid() {
         return <span title="Missed attack" style={{ color: 'var(--color-danger)', fontWeight: 600 }}>✗</span>;
       }
       const e = pending.get(`${stored.id}:${account.playerTag}`);
+      const slot = slots.get(`${stored.id}:${account.playerTag}`);
       return (
         <span
           className="text-muted"
-          title={`Has not attacked yet${e != null ? ` — expected ~${e.toFixed(2)}★ against their mirror base${m.map_position ? ` #${m.map_position}` : ''}` : ''}`}
+          title={`Has not attacked yet${e != null ? ` — expected ~${e.toFixed(2)}★ against their mirror base${slot ? ` #${slot}` : ''}` : ''}`}
           style={{ fontStyle: 'italic' }}
         >
           {e != null ? `~${e.toFixed(1)}` : '…'}
@@ -107,7 +108,7 @@ export default function WeekGrid() {
     let style: React.CSSProperties = {};
     if (slot) {
       content = slot.expectedStars.toFixed(1);
-      title = `Plays at #${slot.mapPosition}, ~${slot.expectedStars.toFixed(2)}★ — ${SLOT_REASON[slot.reason]}`;
+      title = `Plays at #${slot.mapPosition}: ${pct(slot.tripleChance)} triple chance, ~${slot.expectedStars.toFixed(2)}★ — ${SLOT_REASON[slot.reason]}`;
       style = { background: 'rgba(34,197,94,0.14)', color: 'var(--color-text)' };
     } else if (out) {
       content = out.reason === 'forced_out' ? 'OUT' : out.reason === 'war_preference' ? 'OPT' : '—';
@@ -152,7 +153,7 @@ export default function WeekGrid() {
             <tr>
               <th style={{ ...th, textAlign: 'left' }}>Account</th>
               <th style={th}>TH</th>
-              <th style={{ ...th, textAlign: 'left' }}>Strength</th>
+              <th style={{ ...th, textAlign: 'left' }}>Rating</th>
               {Array.from({ length: SEASON_ROUNDS }, (_, i) => i + 1).map((n) => {
                 const h = header(n);
                 return (
@@ -174,26 +175,40 @@ export default function WeekGrid() {
               const isBanned = flagSet.has(`${a.playerTag}:banned`);
               return (
                 <tr key={a.playerTag} style={{ borderTop: '1px solid rgba(255,255,255,0.05)', opacity: a.status === 'excluded' ? 0.6 : 1 }}>
-                  <td style={{ ...td, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {a.name}
-                    {isBanned && <Chip color="var(--color-danger)">BANNED</Chip>}
-                    {isRb && <Chip color="var(--color-warning)">RULE BREAKER</Chip>}
-                    {optedOut.has(a.playerTag) && <Chip color="var(--color-muted)">NOT PLAYING</Chip>}
-                    {inGameOut.has(a.playerTag) && (
-                      <Chip color="var(--color-warning)" title="War preference set to OUT in game — kept out of the next war only. Force them in to field them anyway.">
-                        OPTED OUT (IN GAME)
-                      </Chip>
-                    )}
-                    {a.excludedReason === 'unranked' && <Chip color="var(--color-warning)">UNRANKED</Chip>}
-                    {a.untracked && (
-                      <Chip color="var(--color-muted)" title="Signed up, but not in our database — probably left the clan after sign-up. League unknown, so rated medium. Force them out if they are gone.">
-                        NOT SYNCED
-                      </Chip>
-                    )}
+                  <td style={{ ...td, whiteSpace: 'normal', minWidth: 140, maxWidth: 260 }}>
+                    {/* Chips wrap onto the next line (the row grows) instead of being cut off. */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '3px 6px' }}>
+                      <span style={{ overflowWrap: 'anywhere' }}>{a.name}</span>
+                      {isBanned && <Chip color="var(--color-danger)">BANNED</Chip>}
+                      {isRb && <Chip color="var(--color-warning)">RULE BREAKER</Chip>}
+                      {optedOut.has(a.playerTag) && <Chip color="var(--color-muted)">NOT PLAYING</Chip>}
+                      {inGameOut.has(a.playerTag) && (
+                        <Chip color="var(--color-warning)" title="War preference set to OUT in game — kept out of the next war only. Force them in to field them anyway.">
+                          OPTED OUT (IN GAME)
+                        </Chip>
+                      )}
+                      {a.excludedReason === 'unranked' && <Chip color="var(--color-warning)">UNRANKED</Chip>}
+                      {leftFamily.has(a.playerTag) && (
+                        <Chip color="var(--color-warning)" title="Signed up for CWL but no longer in any family clan. Still planned on what we know — force them out if they cannot play.">
+                          LEFT FAMILY
+                        </Chip>
+                      )}
+                      {a.untracked && (
+                        <Chip color="var(--color-muted)" title="Signed up, but not in our database — probably left the clan after sign-up. League unknown, so rated as a typical family account minus the newcomer discount. Force them out if they are gone.">
+                          NOT SYNCED
+                        </Chip>
+                      )}
+                      {unlinked.has(a.playerTag) && (
+                        <Chip color="var(--color-warning)" title="Not linked to any member — consider banning from CWL.">
+                          UNLINKED
+                        </Chip>
+                      )}
+                    </div>
                   </td>
                   <td style={{ ...td, textAlign: 'center' }}>{a.thLevel}</td>
-                  <td style={{ ...td, color: a.goat ? GOAT_COLOR : a.strength ? STRENGTH_COLOR[a.strength] : 'var(--color-muted)', fontWeight: a.goat ? 700 : undefined, fontSize: '0.74rem' }}>
-                    {a.goat ? 'goat' : a.strength ?? '—'}
+                  <td style={{ ...td, color: a.tier ? TIER_COLOR[a.tier] : 'var(--color-muted)', fontWeight: a.tier === 'goat' ? 700 : undefined, fontSize: '0.74rem' }}>
+                    {a.tier ?? '—'}
+                    {a.mirrorChance != null && <span style={{ color: 'var(--color-text)' }}> {pct(a.mirrorChance)}</span>}
                     <span className="text-muted" style={{ fontSize: '0.64rem' }}> · {tierLabel(a.leagueTier)}</span>
                   </td>
                   {Array.from({ length: SEASON_ROUNDS }, (_, i) => i + 1).map((n) => (
@@ -226,7 +241,7 @@ export default function WeekGrid() {
 
 function Chip({ color, title, children }: { color: string; title?: string; children: React.ReactNode }) {
   return (
-    <span title={title} style={{ marginLeft: 6, fontSize: '0.56rem', fontWeight: 700, letterSpacing: '0.04em', color, border: `1px solid ${color}`, borderRadius: 999, padding: '0 5px', verticalAlign: 'middle' }}>
+    <span title={title} style={{ fontSize: '0.56rem', fontWeight: 700, letterSpacing: '0.04em', color, border: `1px solid ${color}`, borderRadius: 999, padding: '0 5px', whiteSpace: 'nowrap' }}>
       {children}
     </span>
   );
