@@ -4,6 +4,7 @@ import { loadPlannerData } from './plannerLoad';
 import { buildPlannerInput } from './plannerInput';
 import { planSeason } from './planner';
 import { renderLineupPost } from './nextLineupPost';
+import { lineupSwaps } from './swaps';
 
 /**
  * The DB/send half of the "next war lineup" Discord post (`nextLineupPost.ts` is the pure renderer).
@@ -61,6 +62,10 @@ async function build(seasonId: string, clanId: string, ping: boolean) {
     })),
     bench: next.bench.map((b) => b.name),
     ping,
+    swaps: (() => {
+      const s = lineupSwaps({ planned: next.lineup, nextRoundNumber: next.roundNumber, rounds: data.rounds, members: data.members });
+      return { fromRound: s.fromRound, fromCurrentPrep: s.fromCurrentPrep, out: s.out.map((x) => x.name), in: s.in.map((x) => x.name) };
+    })(),
   });
   const existingId = stored.lineup_message_round === next.roundNumber ? stored.lineup_message_id : null;
   return { roundNumber: next.roundNumber, message, existingId };

@@ -11,6 +11,7 @@ import Toast from '@/components/ui/Toast';
 import PlanSummary from '@/components/cwl/planner/PlanSummary';
 import NextWarPanel from '@/components/cwl/planner/NextWarPanel';
 import WeekGrid from '@/components/cwl/planner/WeekGrid';
+import SwapsPanel from '@/components/cwl/planner/SwapsPanel';
 
 /**
  * The per-clan CWL war planner: who plays which war this week. Everyone to 8★ first, then the most
@@ -105,6 +106,7 @@ export default function CwlClanPlannerPage({
         <>
           <PlanSummary />
           <NextWarPanel />
+          <SwapsPanel />
           <WeekGrid />
         </>
       )}

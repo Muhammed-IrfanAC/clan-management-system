@@ -70,4 +70,19 @@ describe('renderLineupPost', () => {
     // Embed titles render no markdown, so they carry the name as written.
     expect(msg.embeds![0].title).toBe('War 3 lineup vs __Red*Giant__');
   });
+
+  it('appends the swaps from the current lineup', () => {
+    const fields = renderLineupPost(
+      input({ swaps: { fromRound: 2, fromCurrentPrep: false, out: ['Zed', '*Bob*'], in: ['Alpha'] } }),
+    ).embeds![0].fields!;
+    expect(fields).toContainEqual({ name: '⬇️ Out (from war 2) — 2', value: 'Zed, \\*Bob\\*' });
+    expect(fields).toContainEqual({ name: '⬆️ In — 1', value: 'Alpha' });
+  });
+
+  it('says there is nothing to change, and appends nothing before any lineup exists', () => {
+    const same = renderLineupPost(input({ swaps: { fromRound: 3, fromCurrentPrep: true, out: [], in: [] } })).embeds![0].fields!;
+    expect(same).toContainEqual({ name: 'Changes from the war 3 lineup set in game', value: 'None — same lineup.' });
+    const none = renderLineupPost(input({ swaps: { fromRound: null, fromCurrentPrep: false, out: [], in: [] } })).embeds![0].fields!;
+    expect(none.some((f) => f.name.includes('Out') || f.name.startsWith('Changes'))).toBe(false);
+  });
 });

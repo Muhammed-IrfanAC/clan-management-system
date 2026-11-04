@@ -37,6 +37,11 @@ export interface LineupPostInput {
   bench: string[];
   /** Mention the players in the lineup. */
   ping: boolean;
+  /**
+   * The in-game edits from the lineup that exists now (swaps.ts). Absent or `fromRound: null` when
+   * there is no lineup to swap from yet; then nothing is appended.
+   */
+  swaps?: { fromRound: number | null; fromCurrentPrep: boolean; out: string[]; in: string[] };
 }
 
 /** Strip the characters that would break a code fence or a mention. */
@@ -95,6 +100,20 @@ export function renderLineupPost(input: LineupPostInput): DiscordMessage {
   if (bench.length) {
     const value = bench.map(md).join(', ');
     fields.push({ name: `Sitting out — ${bench.length}`, value: value.length > FIELD_LIMIT ? value.slice(0, FIELD_LIMIT - 1) + '…' : value });
+  }
+  if (input.swaps && input.swaps.fromRound != null) {
+    const { fromRound, fromCurrentPrep, out, in: incoming } = input.swaps;
+    const list = (names: string[]) => {
+      const value = names.length ? names.map(md).join(', ') : '—';
+      return value.length > FIELD_LIMIT ? value.slice(0, FIELD_LIMIT - 1) + '…' : value;
+    };
+    const from = fromCurrentPrep ? `the war ${fromRound} lineup set in game` : `war ${fromRound}`;
+    if (out.length + incoming.length === 0) {
+      fields.push({ name: `Changes from ${from}`, value: 'None — same lineup.' });
+    } else {
+      fields.push({ name: `⬇️ Out (from ${from}) — ${out.length}`, value: list(out) });
+      fields.push({ name: `⬆️ In — ${incoming.length}`, value: list(incoming) });
+    }
   }
 
   const short = Math.max(0, warSize - lineup.length);

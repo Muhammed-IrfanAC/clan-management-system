@@ -9,6 +9,7 @@ import { alertKickedArrivals } from './kicks/arrivals';
 import { alertUnlinkedArrivals, settleUnlinkedJoinAlerts } from './unlinked/joinAlert';
 import { syncTownHallRoles } from './members/thRoleSync';
 import { postWeeklyStats } from './warStats/weeklyPost';
+import { refreshWarPreferences } from './cwl/warPreferenceSync';
 import type { ClanArrival } from './kicks/watch';
 
 /**
@@ -284,6 +285,20 @@ async function safeScanViolations() {
  * (`members/thRoleSync.ts` gates itself). Runs last, after the roster is settled. Fail-safe like the
  * other post-roster steps. Returns null on any error.
  */
+/**
+ * Refresh the in-game war preference of CWL signups (`cwl/warPreferenceSync.ts`) — what the war
+ * planner reads to keep an opted-out player out of the next war. Runs after the CWL poll, which
+ * stores the signup lists it works from, and stops at the pass's deadline. Fail-safe.
+ */
+async function safeRefreshWarPreferences(syncStartedAt: number) {
+  try {
+    return await refreshWarPreferences({ deadline: syncStartedAt + SYNC_DEADLINE_MS });
+  } catch (err) {
+    console.error('War preference refresh error (non-fatal):', err);
+    return null;
+  }
+}
+
 async function safeSyncTownHallRoles(syncStartedAt: number) {
   try {
     return await syncTownHallRoles({ deadline: syncStartedAt + SYNC_DEADLINE_MS });
@@ -385,6 +400,7 @@ async function runSyncPass(clanId?: string) {
     results.flatMap((r) => r.arrivals),
     results.flatMap((r) => (r.firstSync ? [] : r.arrivals)),
   );
+  const warPreferences = await safeRefreshWarPreferences(syncStartedAt);
   const thRoles = await safeSyncTownHallRoles(syncStartedAt);
   const weeklyStats = await safePostWeeklyStats(syncStartedAt);
 
@@ -393,6 +409,7 @@ async function runSyncPass(clanId?: string) {
     clansSynced: results.length,
     totalUpdated: results.reduce((acc, r) => acc + r.count, 0),
     ...steps,
+    warPreferences,
     thRoles,
     weeklyStats,
   };

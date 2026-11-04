@@ -15,6 +15,7 @@ import {
   type SourceOverride,
   type SourceRound,
 } from './plannerInput';
+import type { ObservedLineup } from './warOrder';
 
 export interface PlannerRound extends SourceRound {
   opponent_name: string | null;
@@ -42,7 +43,21 @@ export interface PlannerData extends PlannerSource {
   groupClans: SourceGroupClan[];
 }
 
-type AccountEmbed = { in_game_name: string | null; th_level: number | null; league: string | null; league_tier_id: number | null };
+type AccountEmbed = {
+  in_game_name: string | null;
+  th_level: number | null;
+  league: string | null;
+  league_tier_id: number | null;
+  war_preference?: 'in' | 'out' | null;
+  war_preference_checked_at?: string | null;
+};
+
+const ACCOUNT_FIELDS = 'in_game_name, th_level, league, league_tier_id, war_preference, war_preference_checked_at';
+
+/** How far back past lineups inform the war order — war weight drifts as bases are upgraded. */
+const WAR_ORDER_WINDOW_DAYS = 45;
+/** PostgREST returns at most this many rows per request, so longer reads are paged. */
+const PAGE = 1000;
 
 type AccountRow = AccountEmbed & { player_tag: string; person: { display_name: string } | null };
 
@@ -55,7 +70,64 @@ function toRosterAccount(tag: string, account: AccountEmbed | null, personName: 
     personName,
     thLevel: account?.th_level ?? 0,
     leagueTier: normalizeLeagueTier(account?.league ?? null, account?.league_tier_id ?? null),
+    warPreference: account?.war_preference ?? null,
+    warPreferenceCheckedAt: account?.war_preference_checked_at ?? null,
   };
+}
+
+type PositionRow = { round_id: string; player_tag: string; map_position: number | null };
+
+/** Every row of a paged read, PAGE at a time. */
+async function readAll(page: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>): Promise<PositionRow[]> {
+  const out: PositionRow[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await page(from, from + PAGE - 1);
+    if (error) throw error;
+    const rows = (data as PositionRow[]) || [];
+    out.push(...rows);
+    if (rows.length < PAGE) return out;
+  }
+}
+
+/**
+ * The map positions these accounts were given in recent wars — CWL and regular, any family clan —
+ * grouped into one lineup per war. Only pairs within the roster matter for ordering it, so only the
+ * roster's own rows are read. See warOrder.ts for why positions, not profile data.
+ */
+async function loadLineupHistory(tags: string[]): Promise<ObservedLineup[]> {
+  if (tags.length === 0) return [];
+  const since = new Date(Date.now() - WAR_ORDER_WINDOW_DAYS * 86_400_000).toISOString();
+  const [cwl, regular] = await Promise.all([
+    readAll((from, to) =>
+      supabase
+        .from('cwl_war_members')
+        .select('round_id, player_tag, map_position, round:cwl_rounds!inner(start_time)')
+        .in('player_tag', tags)
+        .gte('round.start_time', since)
+        .order('id')
+        .range(from, to),
+    ),
+    readAll((from, to) =>
+      supabase
+        .from('war_members')
+        .select('round_id, player_tag, map_position, round:war_rounds!inner(start_time)')
+        .in('player_tag', tags)
+        .gte('round.start_time', since)
+        .order('id')
+        .range(from, to),
+    ),
+  ]);
+  const byWar = new Map<string, ObservedLineup>();
+  for (const [kind, rows] of [['cwl', cwl], ['war', regular]] as const) {
+    for (const r of rows) {
+      if (r.map_position == null) continue;
+      const key = `${kind}:${r.round_id}`;
+      const lineup = byWar.get(key) ?? { members: [] };
+      lineup.members.push({ tag: r.player_tag, pos: r.map_position });
+      byWar.set(key, lineup);
+    }
+  }
+  return [...byWar.values()];
 }
 
 type AllocationRow = {
@@ -74,7 +146,7 @@ export async function loadPlannerData(seasonId: string, clanId: string): Promise
       .from('cwl_allocations')
       .select(
         'player_account_tag, recommended_clan_id, actual_clan_id, status, person:persons(display_name), ' +
-          'account:player_accounts(in_game_name, th_level, league, league_tier_id)',
+          `account:player_accounts(${ACCOUNT_FIELDS})`,
       )
       .eq('season_id', seasonId),
     supabase
@@ -118,7 +190,7 @@ export async function loadPlannerData(seasonId: string, clanId: string): Promise
   if (ownSignup?.length) {
     const { data, error } = await supabase
       .from('player_accounts')
-      .select('player_tag, in_game_name, th_level, league, league_tier_id, person:persons(display_name)')
+      .select(`player_tag, ${ACCOUNT_FIELDS}, person:persons(display_name)`)
       .in('player_tag', ownSignup.map((m) => m.tag));
     if (error) throw error;
     for (const a of (data as unknown as AccountRow[]) || []) {
@@ -128,15 +200,17 @@ export async function loadPlannerData(seasonId: string, clanId: string): Promise
   const roster = plannerRoster({ signup: ownSignup, accounts, planned, excluded });
 
   const rounds = (roundsRes.data as PlannerRound[]) || [];
-  let members: PlannerMember[] = [];
-  if (rounds.length) {
-    const { data, error } = await supabase
-      .from('cwl_war_members')
-      .select('round_id, player_tag, name, attacks_used, stars, map_position')
-      .in('round_id', rounds.map((r) => r.id));
-    if (error) throw error;
-    members = (data as PlannerMember[]) || [];
-  }
+  const [membersRes, lineupHistory] = await Promise.all([
+    rounds.length
+      ? supabase
+          .from('cwl_war_members')
+          .select('round_id, player_tag, name, attacks_used, stars, map_position')
+          .in('round_id', rounds.map((r) => r.id))
+      : Promise.resolve({ data: [], error: null }),
+    loadLineupHistory(roster.map((a) => a.playerTag)),
+  ]);
+  if (membersRes.error) throw membersRes.error;
+  const members = (membersRes.data as PlannerMember[]) || [];
 
   return {
     warSize: clanRows.find((c) => c.clan_id === clanId)?.war_size ?? 15,
@@ -147,5 +221,6 @@ export async function loadPlannerData(seasonId: string, clanId: string): Promise
     flags,
     optedOut,
     groupClans: groupRows.filter((g) => !g.is_own),
+    lineupHistory,
   };
 }

@@ -17,8 +17,25 @@ import type { LineupBase } from '@/types/database';
 import { expectedStars } from './starModel';
 import { rateStrength } from './strength';
 import type { PlannerAccount, PlannerInput, PlannerRound } from './planner';
+import { observedWarOrder, type ObservedLineup } from './warOrder';
 
 export const SEASON_ROUNDS = 7;
+
+/**
+ * How old an in-game war preference may be and still count. Sync re-reads it every ~10 minutes
+ * while CWL runs and never outside it, so an older value is one that stopped being refreshed —
+ * typically last month's toggle at the start of a new season — and is treated as unknown.
+ */
+export const WAR_PREFERENCE_MAX_AGE_MS = 60 * 60_000;
+
+/** Is this account's stored war preference an "out" fresh enough to act on? */
+export function optedOutInGame(
+  a: Pick<SourceAccount, 'warPreference' | 'warPreferenceCheckedAt'>,
+  now: number = Date.now(),
+): boolean {
+  if (a.warPreference !== 'out' || !a.warPreferenceCheckedAt) return false;
+  return now - new Date(a.warPreferenceCheckedAt).getTime() <= WAR_PREFERENCE_MAX_AGE_MS;
+}
 
 export interface SourceAccount {
   playerTag: string;
@@ -27,6 +44,9 @@ export interface SourceAccount {
   leagueTier: number | null;
   /** Signed up but not in our database (never synced, or left the clan since) — league unknown. */
   untracked?: boolean;
+  /** The in-game war toggle as last read by sync (migration 047); null/absent when never read. */
+  warPreference?: 'in' | 'out' | null;
+  warPreferenceCheckedAt?: string | null;
 }
 
 export interface SourceRound {
@@ -96,6 +116,8 @@ export function plannerRoster(params: {
           personName: known?.personName ?? null,
           thLevel: known?.thLevel || m.th || 0,
           leagueTier: known?.leagueTier ?? null,
+          warPreference: known?.warPreference ?? null,
+          warPreferenceCheckedAt: known?.warPreferenceCheckedAt ?? null,
           ...(known ? {} : { untracked: true }),
         };
       })
@@ -115,6 +137,10 @@ export interface PlannerSource {
   flags: SourceFlag[];
   optedOut: ReadonlySet<string>;
   groupClans: SourceGroupClan[];
+  /** Recent lineups (CWL and regular wars) the roster was fielded in, for the war order. */
+  lineupHistory?: ObservedLineup[];
+  /** The clock for freshness checks; defaults to now (tests pin it). */
+  now?: number;
 }
 
 export function isSettled(state: string | null | undefined): boolean {
@@ -182,6 +208,10 @@ export function buildPlannerInput(src: PlannerSource): PlannerInput {
     flagsByTag.set(f.player_account_tag, set);
   }
 
+  const warOrder = observedWarOrder(src.lineupHistory ?? []);
+  // The in-game "out" toggle is a short-term request, so it applies to the next war only.
+  const preferenceOut = new Set(src.roster.filter((a) => optedOutInGame(a, src.now)).map((a) => a.playerTag));
+
   const accounts: PlannerAccount[] = src.roster.map((a) => ({
     playerTag: a.playerTag,
     name: a.name,
@@ -193,6 +223,7 @@ export function buildPlannerInput(src: PlannerSource): PlannerInput {
     banned: flagsByTag.get(a.playerTag)?.has('banned') ?? false,
     ruleBreaker: flagsByTag.get(a.playerTag)?.has('rule_breaker') ?? false,
     optedOut: src.optedOut.has(a.playerTag),
+    warOrder: warOrder.get(a.playerTag) ?? null,
   }));
 
   const rounds: PlannerRound[] = [];
@@ -205,6 +236,7 @@ export function buildPlannerInput(src: PlannerSource): PlannerInput {
       enemyLineup: r ? enemyThByPosition(r.opponent_lineup) : null,
       forceIn: new Set(overrides.filter((o) => o.mode === 'in').map((o) => o.player_account_tag)),
       forceOut: new Set(overrides.filter((o) => o.mode === 'out').map((o) => o.player_account_tag)),
+      ...(rounds.length === 0 ? { preferenceOut } : {}),
     });
   }
 

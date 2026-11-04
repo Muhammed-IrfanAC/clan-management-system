@@ -87,6 +87,47 @@ describe('buildPlannerInput', () => {
   });
 });
 
+describe('buildPlannerInput — war preference and war order', () => {
+  const NOW = Date.parse('2026-11-03T18:00:00Z');
+  const fresh = '2026-11-03T17:50:00Z';
+
+  it('keeps an in-game opt-out out of the next war only', () => {
+    const input = buildPlannerInput(
+      source({
+        now: NOW,
+        roster: [
+          { playerTag: '#A', name: 'A', thLevel: 16, leagueTier: 32, warPreference: 'out', warPreferenceCheckedAt: fresh },
+          { playerTag: '#B', name: 'B', thLevel: 16, leagueTier: 28, warPreference: 'in', warPreferenceCheckedAt: fresh },
+        ],
+        rounds: [{ id: 'r1', round_number: 1, state: 'warEnded', opponent_tag: '#X', opponent_lineup: [], team_size: 15 }],
+      }),
+    );
+    expect(input.rounds[0].roundNumber).toBe(2);
+    expect([...input.rounds[0].preferenceOut!]).toEqual(['#A']);
+    expect(input.rounds.slice(1).every((r) => !r.preferenceOut)).toBe(true);
+  });
+
+  it('ignores an opt-out that stopped being refreshed, e.g. last season’s toggle', () => {
+    const input = buildPlannerInput(
+      source({
+        now: NOW,
+        roster: [{ playerTag: '#A', name: 'A', thLevel: 16, leagueTier: 32, warPreference: 'out', warPreferenceCheckedAt: '2026-10-09T12:00:00Z' }],
+      }),
+    );
+    expect(input.rounds[0].preferenceOut!.size).toBe(0);
+  });
+
+  it('scores each account by where the game placed it in past lineups', () => {
+    const input = buildPlannerInput(
+      source({
+        lineupHistory: [{ members: [{ tag: '#B', pos: 1 }, { tag: '#A', pos: 2 }] }],
+      }),
+    );
+    expect(input.accounts.find((a) => a.playerTag === '#B')!.warOrder).toBe(1);
+    expect(input.accounts.find((a) => a.playerTag === '#A')!.warOrder).toBe(-1);
+  });
+});
+
 describe('enemyThByPosition', () => {
   it('orders by map position and treats an empty lineup as unknown', () => {
     expect(enemyThByPosition([{ tag: 'b', th: 14, pos: 2 }, { tag: 'a', th: 16, pos: 1 }])).toEqual([16, 14]);
