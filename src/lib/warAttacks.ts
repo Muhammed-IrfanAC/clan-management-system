@@ -23,6 +23,8 @@ export function buildLineup(members: Member[]): { tag: string; th: number; pos: 
 /**
  * Upsert our side's attacks for one round. `personByTag`/`rankByTag` attribute each attacker; TH
  * levels come from our members (attacker) and a tag->TH map of the opponent lineup (defender).
+ * `leagueByTag` is each attacker's Ranked tier id as synced now — written once with the row, so it
+ * records the tier of the week the attack was made in (the attack model's league input).
  */
 export async function persistWarAttacks(params: {
   table: 'war_attacks' | 'cwl_war_attacks';
@@ -32,8 +34,9 @@ export async function persistWarAttacks(params: {
   opponentMembers: Member[];
   personByTag: Map<string, string>;
   rankByTag: Map<string, string>;
+  leagueByTag?: Map<string, number>;
 }): Promise<void> {
-  const { table, roundId, state, ourMembers, opponentMembers, personByTag, rankByTag } = params;
+  const { table, roundId, state, ourMembers, opponentMembers, personByTag, rankByTag, leagueByTag } = params;
 
   const thByTag = new Map(opponentMembers.map((m) => [m.tag, m.townhallLevel] as const));
 
@@ -48,6 +51,7 @@ export async function persistWarAttacks(params: {
         attacker_person_id: personByTag.get(m.tag) ?? null,
         attacker_th: m.townhallLevel,
         attacker_rank: rankByTag.get(m.tag) ?? null,
+        attacker_league_tier_id: leagueByTag?.get(m.tag) ?? null,
         defender_tag: a.defenderTag,
         defender_th: thByTag.get(a.defenderTag) ?? null,
         stars: a.stars,

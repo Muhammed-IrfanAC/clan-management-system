@@ -15,7 +15,8 @@ import {
   X,
   User,
   Swords,
-  Ban
+  Ban,
+  Gauge
 } from 'lucide-react';
 import { useClan } from '@/lib/ClanContext';
 import { fetchCurrentUser } from '@/lib/currentUser';
@@ -142,6 +143,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <nav style={{ flex: 1 }}>
           <SidebarItem href="/dashboard" icon={<LayoutDashboard size={20} />} label="Overview" active={pathname === '/dashboard'} />
           <SidebarItem href="/dashboard/members" icon={<Users size={20} />} label="Members" active={pathname === '/dashboard/members'} />
+          <SidebarItem href="/dashboard/strength" icon={<Gauge size={20} />} label="Strength" active={pathname === '/dashboard/strength'} />
           <SidebarItem href="/dashboard/strikes" icon={<AlertTriangle size={20} />} label="Strikes" active={pathname === '/dashboard/strikes'} />
           <SidebarItem href="/dashboard/kicks" icon={<Ban size={20} />} label="Kick List" active={pathname === '/dashboard/kicks'} />
           <SidebarItem href="/dashboard/cwl" icon={<Swords size={20} />} label="Clan War League" active={pathname.startsWith('/dashboard/cwl')} />

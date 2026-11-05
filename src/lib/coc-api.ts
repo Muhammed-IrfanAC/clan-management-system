@@ -160,7 +160,10 @@ export interface CoCBattle {
   opponentTownHallLevel: number;
   stars: number;
   destructionPercentage: number;
+  /** Duration in seconds. */
   battleTime: number;
+  /** The army used, as the game's share code. */
+  armyShareCode?: string;
   /** Compact CoC timestamp — see `cocTime.ts`. */
   battleTimestamp: string;
 }
@@ -332,6 +335,8 @@ export interface CoCCurrentWar {
   state: string; // 'notInWar' | 'preparation' | 'inWar' | 'warEnded'
   teamSize?: number;
   attacksPerMember?: number;
+  /** 'none' | 'hardMode' | 'minusTwo' | 'minusThree' | … — absent when not in war. */
+  battleModifier?: string;
   preparationStartTime?: string;
   startTime?: string;
   endTime?: string;

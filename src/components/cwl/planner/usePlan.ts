@@ -23,7 +23,11 @@ const planFor = (() => {
   };
 })();
 
-/** The derived plan for the clan currently loaded in the planner store. */
+/**
+ * The derived plan for the clan currently loaded in the planner store. Every input the server's plan
+ * (the Discord post, `plannerLoad` → `buildPlannerInput`) reads must be passed here too, or the page
+ * and the post plan differently — `PlannerSource` is spelled out field by field below for that reason.
+ */
 export function usePlan(): SeasonPlan {
   const warSize = useCwlPlannerStore((s) => s.warSize);
   const roster = useCwlPlannerStore((s) => s.roster);
@@ -33,9 +37,15 @@ export function usePlan(): SeasonPlan {
   const flags = useCwlPlannerStore((s) => s.flags);
   const optedOut = useCwlPlannerStore((s) => s.optedOut);
   const groupClans = useCwlPlannerStore((s) => s.groupClans);
+  const lineupHistory = useCwlPlannerStore((s) => s.lineupHistory);
+  const ranking = useCwlPlannerStore((s) => s.ranking);
 
   return useMemo(
-    () => planFor({ warSize, roster, rounds, members, overrides, flags, optedOut, groupClans }),
-    [warSize, roster, rounds, members, overrides, flags, optedOut, groupClans],
+    () =>
+      planFor({
+        warSize, roster, rounds, members, overrides, flags, optedOut, groupClans, lineupHistory, ranking,
+        // Fails to compile if PlannerSource grows a field this hook does not pass (the clock excepted).
+      } satisfies Record<Exclude<keyof PlannerSource, 'now'>, unknown>),
+    [warSize, roster, rounds, members, overrides, flags, optedOut, groupClans, lineupHistory, ranking],
   );
 }

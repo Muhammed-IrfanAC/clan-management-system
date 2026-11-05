@@ -131,6 +131,7 @@ class QueryBuilder implements PromiseLike<{ data: any; error: DbError | null; co
   private cardinality: 'many' | 'single' | 'maybeSingle' = 'many';
   private orderBy: { col: string; asc: boolean }[] = [];
   private limitN: number | null = null;
+  private rangeFrom: number | null = null;
   private upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
 
   constructor(private db: FakeDb, private table: string) {}
@@ -205,6 +206,12 @@ class QueryBuilder implements PromiseLike<{ data: any; error: DbError | null; co
     this.limitN = n;
     return this;
   }
+  /** PostgREST paging: rows from..to inclusive, after ordering. */
+  range(from: number, to: number) {
+    this.rangeFrom = from;
+    this.limitN = to - from + 1;
+    return this;
+  }
   single() {
     this.cardinality = 'single';
     return this;
@@ -240,6 +247,7 @@ class QueryBuilder implements PromiseLike<{ data: any; error: DbError | null; co
     for (const { col, asc } of [...this.orderBy].reverse()) {
       out = [...out].sort((a, b) => (a[col] === b[col] ? 0 : (a[col] > b[col] ? 1 : -1) * (asc ? 1 : -1)));
     }
+    if (this.rangeFrom != null) out = out.slice(this.rangeFrom);
     if (this.limitN != null) out = out.slice(0, this.limitN);
     const data = this.project(out);
     const countField = this.countMode ? { count: count ?? rows.length } : {};
@@ -286,7 +294,9 @@ class QueryBuilder implements PromiseLike<{ data: any; error: DbError | null; co
       }
 
       case 'upsert': {
-        const key = this.upsertOpts.onConflict ?? pk;
+        // onConflict may name several columns ('round_id,attack_order'): a row conflicts only when
+        // every one of them matches.
+        const keys = (this.upsertOpts.onConflict ?? pk).split(',').map((k) => k.trim());
         // PostgREST sends one column set for the whole batch: keys missing from a row are written
         // as NULL (supabase-js defaultToNull), which is why heterogeneous upsert batches are risky.
         const columns = new Set(this.payload.flatMap((r) => Object.keys(r)));
@@ -295,7 +305,7 @@ class QueryBuilder implements PromiseLike<{ data: any; error: DbError | null; co
         for (const raw of this.payload) {
           const row: Row = {};
           for (const c of columns) row[c] = c in raw ? raw[c] : null;
-          const i = staged.findIndex((t) => t[key] === row[key]);
+          const i = staged.findIndex((t) => keys.every((k) => t[k] === row[k]));
           if (i >= 0) {
             if (this.upsertOpts.ignoreDuplicates) continue;
             staged[i] = { ...staged[i], ...row };
@@ -393,6 +403,8 @@ export function createClanOpsDb() {
     },
     foreignKeys: [
       { table: 'player_accounts', column: 'person_id', refTable: 'persons', refColumn: 'id', onDelete: 'restrict' },
+      { table: 'ranked_attacks', column: 'player_tag', refTable: 'player_accounts', refColumn: 'player_tag', onDelete: 'cascade' },
+      { table: 'ranked_league_weeks', column: 'player_tag', refTable: 'player_accounts', refColumn: 'player_tag', onDelete: 'cascade' },
       { table: 'player_accounts', column: 'clan_id', refTable: 'clans', refColumn: 'id', onDelete: 'restrict' },
       { table: 'warnings', column: 'player_account_tag', refTable: 'player_accounts', refColumn: 'player_tag', onDelete: 'restrict' },
       { table: 'warnings', column: 'person_id', refTable: 'persons', refColumn: 'id', onDelete: 'cascade' },

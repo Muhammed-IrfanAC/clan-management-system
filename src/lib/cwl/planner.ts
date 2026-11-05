@@ -12,7 +12,9 @@
  *    is predicted as TH, then where the game placed each account in past lineups (warOrder.ts —
  *    the API has no war weight), then Ranked tier. Because positions shift whenever the lineup changes,
  *    a round is always evaluated as a whole lineup, never one player at a time.
- *  - Per-attack expectation comes from starModel.ts (strength band × TH levels hit up).
+ *  - Per-attack expectation comes from the attack model (attackModel.ts): the chance of a triple from
+ *    the TH levels hit up or down, the attacker's TH and league, and the account's own rating learned
+ *    from its war history.
  *  - The next war's opponent is known once its prep day starts; for later rounds we only know WHICH
  *    clans are left, not the order, so an unrevealed round is scored as the average over every
  *    remaining opponent. Only revealed rounds can therefore be told apart as easy or tough — the
@@ -29,9 +31,19 @@
  *
  * Pure: no I/O, unit-tested beside it.
  */
-import { expectedStars } from './starModel';
-import { isGoat, isUnranked, rateStrength, type AttackerStrength } from './strength';
-import { tierOrder } from './leagues';
+import {
+  attackerSkill,
+  leagueTopShare,
+  mirrorChance,
+  slotExpectedStars,
+  slotTripleChance,
+  UNRATED,
+  type AccountRating,
+  type AttackContext,
+  type SkillTier,
+} from './attackModel';
+import { isUnranked, tierOrder } from './leagues';
+import { rankedTier, type FamilyRanking, type LeagueCarryView } from './familyStrength';
 
 /** The family's goal per account per season. */
 export const STAR_TARGET = 8;
@@ -48,15 +60,19 @@ export interface PlannerAccount {
   thLevel: number;
   leagueTier: number | null;
   /**
-   * Not in our database, so its league is UNKNOWN — not the same as unranked. Rated medium (the
-   * house rating for anything the bands do not cover) and planned like anyone else.
+   * Not in our database, so its league is UNKNOWN — not the same as unranked. Rated as a typical
+   * family account and planned like anyone else.
    */
   untracked?: boolean;
+  /** The attack-model rating from the account's war history; null/absent = none yet (rated on league). */
+  rating?: AccountRating | null;
+  /** A carried league standing (a recent week beating the current tier, e.g. before a TH upgrade). */
+  leagueCarry?: LeagueCarryView | null;
   /** Stars from attacks already made this season. */
   starsSoFar: number;
   /**
    * Expected stars already locked in but not yet scored: the account is in the lineup of a war at
-   * battle day and has not attacked yet. The I/O layer computes it with starModel.
+   * battle day and has not attacked yet. The I/O layer computes it with the attack model.
    */
   pendingExpected?: number;
   banned?: boolean;
@@ -99,6 +115,8 @@ export interface PlannerInput {
    */
   futureOpponents: number[][];
   starTarget?: number;
+  /** The family ranking the labels are read against (familyStrength.ts); display only. */
+  ranking?: FamilyRanking;
 }
 
 export type ExclusionReason = 'banned' | 'opted_out' | 'unranked';
@@ -110,12 +128,13 @@ export interface PlannedSlot {
   playerTag: string;
   name: string;
   thLevel: number;
-  strength: AttackerStrength;
-  /** Display-only highlight for the strongest players (strength.ts `isGoat`); still `strong` here. */
-  goat: boolean;
+  /** Display label from the account's skill on the family ranking (familyStrength.ts); the plan never reads it. */
+  tier: SkillTier;
   mapPosition: number; // 1-based
   /** The mirror base's TH when the opponent is revealed; null while it is an average over opponents. */
   enemyTh: number | null;
+  /** Chance of tripling the base at this slot (averaged over opponents while unrevealed). */
+  tripleChance: number;
   expectedStars: number;
   reason: SlotReason;
 }
@@ -147,8 +166,16 @@ export interface AccountOutlook {
   name: string;
   thLevel: number;
   leagueTier: number | null;
-  strength: AttackerStrength | null; // null when unranked
-  goat: boolean; // display-only, see PlannedSlot.goat
+  /** Share of players at this TH in the account's league or above (0–1); null when unknown. */
+  leagueShare: number | null;
+  /** Display label and the TH-free skill behind it (attackModel); null when unranked. */
+  tier: SkillTier | null;
+  skill: number | null;
+  /** Chance of tripling a same-TH base in CWL; null when unranked. */
+  mirrorChance: number | null;
+  /** The account's own rating (logit offset) and how many attacks it rests on; null = no history. */
+  rating: { mean: number; attacks: number } | null;
+  leagueCarry: LeagueCarryView | null;
   untracked: boolean;
   ruleBreaker: boolean;
   starsSoFar: number;
@@ -178,9 +205,41 @@ export interface SeasonPlan {
 // ---------------------------------------------------------------------------------------------
 
 interface Acc extends PlannerAccount {
-  strength: AttackerStrength;
+  /** Expected stars / triple chance against a base of this TH (a CWL hit), memoised per TH. */
+  expect: (enemyTh: number) => number;
+  chance: (enemyTh: number) => number;
   committed: number;
   exclusion: ExclusionReason | null;
+}
+
+/** The attack model bound to one account, cached per enemy TH — the search asks the same few THs thousands of times. */
+function modelFor(a: PlannerAccount): Pick<Acc, 'expect' | 'chance'> {
+  const ctx = (enemyTh: number): AttackContext => ({
+    attackerTh: a.thLevel,
+    defenderTh: enemyTh,
+    leagueTier: a.untracked ? null : a.leagueTier,
+    cwl: true,
+    leagueStrength: a.leagueCarry?.strength,
+  });
+  const rating = a.rating ?? UNRATED;
+  const memo = (fn: (th: number) => number) => {
+    const cache = new Map<number, number>();
+    return (th: number) => {
+      let v = cache.get(th);
+      if (v === undefined) cache.set(th, (v = fn(th)));
+      return v;
+    };
+  };
+  return {
+    // A planned slot: the attack's chance and the risk it is never made (attackModel RELIABILITY).
+    expect: memo((th) => slotExpectedStars(ctx(th), rating)),
+    chance: memo((th) => slotTripleChance(ctx(th), rating)),
+  };
+}
+
+/** Average of a per-TH value over the bases a slot may face; the account's own TH when unknown. */
+function over(ths: number[] | null, a: Acc, fn: (th: number) => number): number {
+  return ths ? ths.reduce((s, th) => s + fn(th), 0) / ths.length : fn(a.thLevel);
 }
 
 /** Predicted map order: TH, then observed war order, then Ranked tier, then name/tag for stability. */
@@ -253,7 +312,7 @@ export function planSeason(input: PlannerInput): SeasonPlan {
 
   const accs: Acc[] = input.accounts.map((a) => ({
     ...a,
-    strength: a.untracked ? 'medium' : rateStrength(a.thLevel, a.leagueTier),
+    ...modelFor(a),
     committed: a.starsSoFar + (a.pendingExpected ?? 0),
     exclusion: exclusionOf(a),
   }));
@@ -289,10 +348,7 @@ export function planSeason(input: PlannerInput): SeasonPlan {
     const stars = new Map<string, number>();
     let total = 0;
     order.forEach((a, k) => {
-      const ths = ctx.enemy[k];
-      const e = ths
-        ? ths.reduce((s, th) => s + expectedStars(a.strength, a.thLevel, th), 0) / ths.length
-        : expectedStars(a.strength, a.thLevel, a.thLevel);
+      const e = over(ctx.enemy[k], a, a.expect);
       stars.set(a.playerTag, e);
       total += e;
     });
@@ -303,15 +359,12 @@ export function planSeason(input: PlannerInput): SeasonPlan {
   const chosen: Set<string>[] = ctxs.map(() => new Set());
   const capacity = ctxs.map((c) => warSize - c.forced.length);
 
-  // A rough per-round estimate for seeding: the account at its strength rank within the round's pool.
+  // A rough per-round estimate for seeding: the account at its map-order rank within the round's pool.
   const roughStars = (a: Acc, ri: number): number => {
     const ctx = ctxs[ri];
     const all = [...ctx.forced, ...ctx.pool].sort(byMapOrder);
     const k = Math.min(all.indexOf(a), warSize - 1);
-    const ths = ctx.enemy[k];
-    return ths
-      ? ths.reduce((s, th) => s + expectedStars(a.strength, a.thLevel, th), 0) / ths.length
-      : expectedStars(a.strength, a.thLevel, a.thLevel);
+    return over(ctx.enemy[k], a, a.expect);
   };
 
   const forcedStars = (a: Acc): number =>
@@ -448,6 +501,16 @@ export function planSeason(input: PlannerInput): SeasonPlan {
   const projected = projectedOf(evals);
   const reached = (tag: string) => projected.get(tag)! >= target - EPS;
 
+  const display = new Map(
+    accs.map((a) => {
+      const tier = a.untracked ? null : a.leagueTier;
+      const rating = a.rating ?? UNRATED;
+      const carried = a.leagueCarry?.strength;
+      const skill = attackerSkill(a.thLevel, tier, rating, carried);
+      return [a.playerTag, { skill, tier: rankedTier(a.playerTag, skill, input.ranking), mirror: mirrorChance(a.thLevel, tier, rating, carried) }] as const;
+    }),
+  );
+
   const roundPlans: RoundPlan[] = ctxs.map((ctx, ri) => {
     const ev = evals[ri];
     const known = ctx.round.enemyLineup != null;
@@ -455,10 +518,10 @@ export function planSeason(input: PlannerInput): SeasonPlan {
       playerTag: a.playerTag,
       name: a.name,
       thLevel: a.thLevel,
-      strength: a.strength,
-      goat: !a.untracked && isGoat(a.thLevel, a.leagueTier),
+      tier: display.get(a.playerTag)!.tier,
       mapPosition: k + 1,
       enemyTh: known ? (ctx.enemy[k]?.[0] ?? null) : null,
+      tripleChance: over(ctx.enemy[k], a, a.chance),
       expectedStars: ev.stars.get(a.playerTag)!,
       reason: ctx.forced.includes(a) ? 'forced_in' : a.committed < target - EPS ? 'chasing' : 'strength',
     }));
@@ -496,13 +559,19 @@ export function planSeason(input: PlannerInput): SeasonPlan {
       else if (a.exclusion && plannedRounds.length === 0) status = 'excluded';
       else if (p >= target - EPS) status = 'on_track';
       else status = plannedRounds.length ? 'short' : 'not_planned';
+      const unranked = a.exclusion === 'unranked';
+      const d = display.get(a.playerTag)!;
       return {
         playerTag: a.playerTag,
         name: a.name,
         thLevel: a.thLevel,
         leagueTier: a.leagueTier,
-        strength: a.exclusion === 'unranked' ? null : a.strength,
-        goat: !a.untracked && isGoat(a.thLevel, a.leagueTier),
+        leagueShare: a.untracked ? null : leagueTopShare(a.thLevel, a.leagueTier),
+        tier: unranked ? null : d.tier,
+        skill: unranked ? null : d.skill,
+        mirrorChance: unranked ? null : d.mirror,
+        rating: a.rating && a.rating.attacks > 0 ? { mean: a.rating.mean, attacks: a.rating.attacks } : null,
+        leagueCarry: a.leagueCarry ?? null,
         untracked: !!a.untracked,
         ruleBreaker: !!a.ruleBreaker,
         starsSoFar: a.starsSoFar,

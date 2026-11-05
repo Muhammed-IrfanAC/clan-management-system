@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { planSeason, type PlannerAccount, type PlannerRound } from './planner';
+import { attackerSkill, slotExpectedStars as expectedStars, slotTripleChance as tripleChance, UNRATED } from './attackModel';
 
-// TH16 tiers: 32+ strong, 30–31 medium, 29- weak.
+// TH16 leagues: Electro 32 is the top ~0.3% of TH16s, Dragon 28 the top ~18%.
 const STRONG = 32;
 const WEAK = 28;
+const cwl = (attackerTh: number, defenderTh: number, leagueTier: number | null) => ({ attackerTh, defenderTh, leagueTier, cwl: true });
 
 function acc(tag: string, over: Partial<PlannerAccount> = {}): PlannerAccount {
   return { playerTag: tag, name: tag, thLevel: 16, leagueTier: STRONG, starsSoFar: 0, ...over };
@@ -69,8 +71,8 @@ describe('planSeason', () => {
       warSize: 1,
       accounts: [acc('strong', { starsSoFar: 8 }), acc('weak', { leagueTier: WEAK, starsSoFar: 6 })],
       rounds: [
-        { roundNumber: 1, enemyLineup: [18] }, // +2: weak expects 1.92 — not enough
-        { roundNumber: 2, enemyLineup: [14] }, // hitting down: always a triple, 3★
+        { roundNumber: 1, enemyLineup: [18] }, // +2: the strong account loses less here
+        { roundNumber: 2, enemyLineup: [14] }, // a hit down: a near-certain triple for anyone
       ],
       futureOpponents: [],
     });
@@ -104,7 +106,7 @@ describe('planSeason', () => {
       expect(r.shortBy).toBe(2);
       expect(r.unavailable.map((u) => u.reason).sort()).toEqual(['banned', 'opted_out', 'unranked']);
     }
-    expect(plan.accounts.find((a) => a.playerTag === 'unranked')).toMatchObject({ status: 'excluded', strength: null });
+    expect(plan.accounts.find((a) => a.playerTag === 'unranked')).toMatchObject({ status: 'excluded', tier: null, mirrorChance: null });
   });
 
   it('applies a force-in or force-out to that one war only', () => {
@@ -145,10 +147,10 @@ describe('planSeason', () => {
     const [first, second] = plan.rounds[0].lineup;
     expect(plan.rounds[0].enemyKnown).toBe(false);
     expect(first).toMatchObject({ playerTag: 'high', mapPosition: 1, enemyTh: null });
-    // TH17 strong vs #1 bases TH17 (3.0) and TH18 (+1 → 0.95 → 2.94).
-    expect(first.expectedStars).toBeCloseTo((3 + 2.94) / 2);
-    // TH15 strong vs #2 bases TH15 (3.0) and TH16 (+1 → 2.94).
-    expect(second.expectedStars).toBeCloseTo((3 + 2.94) / 2);
+    // #1 bases of the two remaining opponents: TH17 and TH18; #2 bases: TH15 and TH16.
+    expect(first.expectedStars).toBeCloseTo((expectedStars(cwl(17, 17, 33)) + expectedStars(cwl(17, 18, 33))) / 2);
+    expect(first.tripleChance).toBeCloseTo((tripleChance(cwl(17, 17, 33)) + tripleChance(cwl(17, 18, 33))) / 2);
+    expect(second.expectedStars).toBeCloseTo((expectedStars(cwl(15, 15, 31)) + expectedStars(cwl(15, 16, 31))) / 2);
   });
 
   it('caps a war that has more forced-in accounts than slots', () => {
@@ -173,7 +175,7 @@ describe('planSeason', () => {
     expect(plan.accounts.find((x) => x.playerTag === 'a')!.status).toBe('on_track');
   });
 
-  it('rates an account with an unknown league medium and plans it, unlike an unranked one', () => {
+  it('plans an account with an unknown league, unlike an unranked one, and rates it below one with a record', () => {
     const plan = planSeason({
       warSize: 2,
       accounts: [acc('ghost', { leagueTier: null, untracked: true }), acc('unranked', { leagueTier: null }), acc('ok')],
@@ -181,7 +183,10 @@ describe('planSeason', () => {
       futureOpponents: [],
     });
     expect(tagsOf(plan.rounds[0].lineup)).toEqual(['ghost', 'ok']);
-    expect(plan.rounds[0].lineup.find((s) => s.playerTag === 'ghost')!.strength).toBe('medium');
+    // Unknown league = a typical family account's, minus the newcomer discount for having no record.
+    const ghost = plan.accounts.find((a) => a.playerTag === 'ghost')!;
+    expect(ghost.skill!).toBeCloseTo(attackerSkill(16, null));
+    expect(ghost.skill!).toBeLessThan(attackerSkill(16, null, { ...UNRATED, attacks: 50 }));
     expect(plan.accounts.find((a) => a.playerTag === 'ghost')).toMatchObject({ untracked: true, excludedReason: null });
   });
 
@@ -213,5 +218,28 @@ describe('planSeason', () => {
     });
     expect(plan.rounds[0].lineup.map((s) => s.playerTag)).toEqual(['high', 'low', 'new']);
     expect(plan.accounts.map((a) => a.playerTag)).toEqual(['high', 'low', 'new']);
+  });
+
+  it('fields the account whose war record is better when the league is the same', () => {
+    const plan = planSeason({
+      warSize: 1,
+      accounts: [
+        acc('cold', { starsSoFar: 8, rating: { ...UNRATED, mean: -0.6, variance: 0.05, attacks: 40 } }),
+        acc('hot', { starsSoFar: 8, rating: { ...UNRATED, mean: 0.6, variance: 0.05, attacks: 40 } }),
+      ],
+      rounds: [{ roundNumber: 1, enemyLineup: [17] }],
+      futureOpponents: [],
+    });
+    expect(plan.rounds[0].lineup[0].playerTag).toBe('hot');
+    const [hot, cold] = ['hot', 'cold'].map((t) => plan.accounts.find((a) => a.playerTag === t)!);
+    expect(hot.mirrorChance!).toBeGreaterThan(cold.mirrorChance!);
+    expect(hot.skill! - cold.skill!).toBeCloseTo(1.2);
+    expect(hot.rating).toEqual({ mean: 0.6, attacks: 40 });
+  });
+
+  it('reports no rating for an account without war history', () => {
+    const plan = planSeason({ warSize: 1, accounts: [acc('new')], rounds: rounds(1), futureOpponents: [] });
+    expect(plan.accounts[0]).toMatchObject({ rating: null, tier: expect.any(String) });
+    expect(plan.accounts[0].leagueShare).toBeGreaterThan(0);
   });
 });

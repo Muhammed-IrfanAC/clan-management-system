@@ -5,14 +5,10 @@ import { Megaphone } from 'lucide-react';
 import { usePlan } from './usePlan';
 import LineupPostModal from './LineupPostModal';
 import { useCwlPlannerStore } from '@/lib/stores/cwlPlannerStore';
-import { BENCH_REASON, SLOT_REASON, UNAVAILABLE_REASON } from './labels';
+import { BENCH_REASON, pct, SLOT_REASON, TIER_COLOR, UNAVAILABLE_REASON } from './labels';
 
 const th: React.CSSProperties = { textAlign: 'left', padding: '5px 8px', fontSize: '0.66rem', textTransform: 'uppercase', color: 'var(--color-muted)', whiteSpace: 'nowrap' };
 const td: React.CSSProperties = { padding: '5px 8px', fontSize: '0.82rem', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
-
-const STRENGTH_COLOR = { strong: 'var(--color-cta)', medium: 'var(--color-text)', weak: 'var(--color-warning)' } as const;
-/** Goats are strong for every calculation; red only picks out the few strongest players. */
-const GOAT_COLOR = 'var(--color-danger)';
 
 /**
  * The next war that can still be changed: the suggested lineup in mirror order against the enemy
@@ -64,8 +60,9 @@ export default function NextWarPanel() {
               <th style={th}>#</th>
               <th style={th}>Account</th>
               <th style={th}>TH</th>
-              <th style={th}>Strength</th>
+              <th style={th}>Rating</th>
               <th style={th}>Hits</th>
+              <th style={{ ...th, textAlign: 'right' }} title="Chance to triple the base at this slot">3★</th>
               <th style={{ ...th, textAlign: 'right' }}>Exp. ★</th>
               <th style={th}>Why</th>
             </tr>
@@ -76,7 +73,7 @@ export default function NextWarPanel() {
                 <td style={{ ...td, color: 'var(--color-muted)' }}>{s.mapPosition}</td>
                 <td style={td}>{s.name}</td>
                 <td style={td}>{s.thLevel}</td>
-                <td style={{ ...td, color: s.goat ? GOAT_COLOR : STRENGTH_COLOR[s.strength], fontWeight: s.goat ? 700 : undefined }}>{s.goat ? 'goat' : s.strength}</td>
+                <td style={{ ...td, color: TIER_COLOR[s.tier], fontWeight: s.tier === 'goat' ? 700 : undefined }}>{s.tier}</td>
                 <td style={td}>
                   {s.enemyTh != null ? (
                     <span style={{ color: s.enemyTh > s.thLevel ? 'var(--color-warning)' : undefined }}>
@@ -87,6 +84,7 @@ export default function NextWarPanel() {
                     <span className="text-muted">mirror</span>
                   )}
                 </td>
+                <td style={{ ...td, textAlign: 'right' }}>{pct(s.tripleChance)}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{s.expectedStars.toFixed(2)}</td>
                 <td style={{ ...td, color: s.reason === 'forced_in' ? 'var(--color-cta)' : 'var(--color-muted)', fontSize: '0.75rem' }}>{SLOT_REASON[s.reason]}</td>
               </tr>

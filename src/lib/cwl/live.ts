@@ -136,18 +136,21 @@ async function ingestClan(
     if (roundErr || !roundRow) { console.error('CWL round upsert failed:', roundErr); continue; }
     upserted++;
 
-    // Resolve our members' tags -> persons (attribution) and -> db_role (rank, for late-snipe).
+    // Resolve our members' tags -> persons (attribution), -> db_role (rank, for late-snipe) and ->
+    // Ranked tier (recorded on each new attack for the attack model).
     const tagsInWar = side.us.members.map((m) => m.tag);
     const personByTag = new Map<string, string>();
     const rankByTag = new Map<string, string>();
+    const leagueByTag = new Map<string, number>();
     if (tagsInWar.length) {
       const { data: accts } = await supabase
         .from('player_accounts')
-        .select('player_tag, person_id, db_role')
+        .select('player_tag, person_id, db_role, league_tier_id')
         .in('player_tag', tagsInWar);
-      for (const a of (accts as { player_tag: string; person_id: string | null; db_role: string | null }[] | null) || []) {
+      for (const a of (accts as { player_tag: string; person_id: string | null; db_role: string | null; league_tier_id: number | null }[] | null) || []) {
         if (a.person_id) personByTag.set(a.player_tag, a.person_id);
         if (a.db_role) rankByTag.set(a.player_tag, a.db_role);
+        if (a.league_tier_id) leagueByTag.set(a.player_tag, a.league_tier_id);
       }
     }
 
@@ -222,6 +225,7 @@ async function ingestClan(
       opponentMembers: side.them.members,
       personByTag,
       rankByTag,
+      leagueByTag,
     });
 
     // Announce the revealed lineup and how it differs from the formed roster. Runs after the member

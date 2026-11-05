@@ -14,9 +14,9 @@
  *    scored against the group's clans this clan has not been drawn against yet.
  */
 import type { LineupBase } from '@/types/database';
-import { expectedStars } from './starModel';
-import { rateStrength } from './strength';
+import { slotExpectedStars, UNRATED, type AccountRating } from './attackModel';
 import type { PlannerAccount, PlannerInput, PlannerRound } from './planner';
+import type { FamilyRanking, LeagueCarryView } from './familyStrength';
 import { observedWarOrder, type ObservedLineup } from './warOrder';
 
 export const SEASON_ROUNDS = 7;
@@ -47,6 +47,12 @@ export interface SourceAccount {
   /** The in-game war toggle as last read by sync (migration 047); null/absent when never read. */
   warPreference?: 'in' | 'out' | null;
   warPreferenceCheckedAt?: string | null;
+  /** The attack-model rating learned from the account's war history; null/absent = no history yet. */
+  rating?: AccountRating | null;
+  /** In our database but no longer in any family clan (left, or inactive) — e.g. left after signing up. */
+  leftFamily?: boolean;
+  /** A carried league standing (a recent week beating the current tier, e.g. before a TH upgrade). */
+  leagueCarry?: LeagueCarryView | null;
 }
 
 export interface SourceRound {
@@ -95,8 +101,9 @@ export interface RosterAccount extends SourceAccount {
  * routine in the mini clan, and as much in need of their 8★ as anyone. Name, TH and Ranked tier come
  * from the synced account where there is one. The signup only carries name and TH, so an account we
  * have never synced (or that left the clan after signing up) is marked `untracked`: its league is
- * UNKNOWN, which is not the same as unranked, and the planner rates it medium rather than excluding it. Accounts the clan lost to a ban or a season opt-out are kept on
- * the list so the page can lift the flag, even though they are not signed up.
+ * UNKNOWN, which is not the same as unranked, and the planner rates it as a typical family account
+ * rather than excluding it. Accounts the clan lost to a ban or a season opt-out are kept on the list
+ * so the page can lift the flag, even though they are not signed up.
  *
  * Before signup there is no in-game list yet, so the season's planned allocation stands in.
  */
@@ -118,6 +125,7 @@ export function plannerRoster(params: {
           leagueTier: known?.leagueTier ?? null,
           warPreference: known?.warPreference ?? null,
           warPreferenceCheckedAt: known?.warPreferenceCheckedAt ?? null,
+          ...(known?.leftFamily ? { leftFamily: true } : {}),
           ...(known ? {} : { untracked: true }),
         };
       })
@@ -141,6 +149,8 @@ export interface PlannerSource {
   lineupHistory?: ObservedLineup[];
   /** The clock for freshness checks; defaults to now (tests pin it). */
   now?: number;
+  /** The family ranking the strength labels are read against (display only). */
+  ranking?: FamilyRanking;
 }
 
 export function isSettled(state: string | null | undefined): boolean {
@@ -157,10 +167,31 @@ export function enemyThByPosition(lineup: LineupBase[] | null | undefined): numb
 }
 
 /**
+ * Each member's slot on the war map (1 = top), by round: the RANK of its map position among that
+ * war's members. A CWL `mapPosition` is a position on the signed-up roster, benched accounts
+ * included, so a 30v30 reads positions up to ~44 with gaps — usable for ordering, never as a slot.
+ */
+export function warMapSlots(members: readonly SourceMember[]): Map<string, number> {
+  const byRound = new Map<string, SourceMember[]>();
+  for (const m of members) {
+    if (m.map_position == null) continue;
+    byRound.set(m.round_id, [...(byRound.get(m.round_id) ?? []), m]);
+  }
+  const out = new Map<string, number>();
+  for (const [roundId, list] of byRound) {
+    list
+      .slice()
+      .sort((a, b) => a.map_position! - b.map_position!)
+      .forEach((m, i) => out.set(`${roundId}:${m.player_tag}`, i + 1));
+  }
+  return out;
+}
+
+/**
  * Expected stars still to come from a war at battle day: every account in its lineup that has not
- * attacked yet, scored against its mirror base (our map position k hits theirs at k). Keyed
- * `${round_id}:${player_tag}`. This is what lets a leader plan the next war a few hours before it
- * starts, while the current one is still being fought, without the planner either ignoring those
+ * attacked yet, scored by the attack model against its mirror base (our slot k hits their slot k).
+ * Keyed `${round_id}:${player_tag}`. This is what lets a leader plan the next war a few hours before
+ * it starts, while the current one is still being fought, without the planner either ignoring those
  * attacks or counting them as already scored.
  */
 export function livePendingStars(
@@ -168,16 +199,23 @@ export function livePendingStars(
 ): Map<string, number> {
   const liveById = new Map(src.rounds.filter((r) => r.state === 'inWar').map((r) => [r.id, r] as const));
   const accountByTag = new Map(src.roster.map((a) => [a.playerTag, a] as const));
+  const slots = warMapSlots(src.members.filter((m) => liveById.has(m.round_id)));
   const out = new Map<string, number>();
   for (const m of src.members) {
     const live = liveById.get(m.round_id);
     if (!live || m.attacks_used > 0) continue;
+    const key = `${m.round_id}:${m.player_tag}`;
     const acc = accountByTag.get(m.player_tag);
     const thLevel = acc?.thLevel ?? 0;
-    const strength = !acc || acc.untracked ? 'medium' : rateStrength(acc.thLevel, acc.leagueTier);
-    const enemy = enemyThByPosition(live.opponent_lineup);
-    const defenderTh = (m.map_position != null ? enemy?.[m.map_position - 1] : undefined) ?? thLevel;
-    out.set(`${m.round_id}:${m.player_tag}`, expectedStars(strength, thLevel, defenderTh));
+    const slot = slots.get(key);
+    const defenderTh = (slot != null ? enemyThByPosition(live.opponent_lineup)?.[slot - 1] : undefined) ?? thLevel;
+    out.set(
+      key,
+      slotExpectedStars(
+        { attackerTh: thLevel, defenderTh, leagueTier: acc && !acc.untracked ? acc.leagueTier : null, cwl: true, leagueStrength: acc?.leagueCarry?.strength },
+        acc?.rating ?? UNRATED,
+      ),
+    );
   }
   return out;
 }
@@ -224,6 +262,8 @@ export function buildPlannerInput(src: PlannerSource): PlannerInput {
     ruleBreaker: flagsByTag.get(a.playerTag)?.has('rule_breaker') ?? false,
     optedOut: src.optedOut.has(a.playerTag),
     warOrder: warOrder.get(a.playerTag) ?? null,
+    rating: a.rating ?? null,
+    leagueCarry: a.leagueCarry ?? null,
   }));
 
   const rounds: PlannerRound[] = [];
@@ -246,5 +286,5 @@ export function buildPlannerInput(src: PlannerSource): PlannerInput {
     .filter((g) => !drawnTags.has(g.opponent_tag))
     .map((g) => g.members.map((m) => m.th).filter((th) => Number.isFinite(th)));
 
-  return { warSize, accounts, rounds, futureOpponents };
+  return { warSize, accounts, rounds, futureOpponents, ranking: src.ranking };
 }

@@ -10,6 +10,8 @@ import { alertUnlinkedArrivals, settleUnlinkedJoinAlerts } from './unlinked/join
 import { syncTownHallRoles } from './members/thRoleSync';
 import { postWeeklyStats } from './warStats/weeklyPost';
 import { refreshWarPreferences } from './cwl/warPreferenceSync';
+import { syncRankedAttacks } from './ranked/attackSync';
+import { syncLeagueWeeks } from './ranked/leagueSync';
 import type { ClanArrival } from './kicks/watch';
 
 /**
@@ -299,6 +301,34 @@ async function safeRefreshWarPreferences(syncStartedAt: number) {
   }
 }
 
+/**
+ * Store the Ranked attacks from each active account's battle log (`ranked/attackSync.ts`), building up
+ * data for a later attack model. Last of all — nothing reads it yet, so it only gets what time the
+ * pass has left; due accounts carry over to the next sync. Fail-safe.
+ */
+/**
+ * Keep each account's finished Ranked weeks (`ranked/leagueSync.ts`) — what carries a player's league
+ * standing across a TH upgrade. Once per account per week (a backfill on the first read), within what
+ * the pass has left. Fail-safe.
+ */
+async function safeSyncLeagueWeeks(syncStartedAt: number) {
+  try {
+    return await syncLeagueWeeks({ deadline: syncStartedAt + SYNC_DEADLINE_MS });
+  } catch (err) {
+    console.error('League week sync error (non-fatal):', err);
+    return null;
+  }
+}
+
+async function safeSyncRankedAttacks(syncStartedAt: number) {
+  try {
+    return await syncRankedAttacks({ deadline: syncStartedAt + SYNC_DEADLINE_MS });
+  } catch (err) {
+    console.error('Ranked attack sync error (non-fatal):', err);
+    return null;
+  }
+}
+
 async function safeSyncTownHallRoles(syncStartedAt: number) {
   try {
     return await syncTownHallRoles({ deadline: syncStartedAt + SYNC_DEADLINE_MS });
@@ -403,6 +433,8 @@ async function runSyncPass(clanId?: string) {
   const warPreferences = await safeRefreshWarPreferences(syncStartedAt);
   const thRoles = await safeSyncTownHallRoles(syncStartedAt);
   const weeklyStats = await safePostWeeklyStats(syncStartedAt);
+  const rankedAttacks = await safeSyncRankedAttacks(syncStartedAt);
+  const leagueWeeks = await safeSyncLeagueWeeks(syncStartedAt);
 
   return {
     success: true,
@@ -412,5 +444,7 @@ async function runSyncPass(clanId?: string) {
     warPreferences,
     thRoles,
     weeklyStats,
+    rankedAttacks,
+    leagueWeeks,
   };
 }
